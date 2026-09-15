@@ -11,8 +11,7 @@
   // 系统内部 HTTP 客户端配置（用于下载远程规则集等内部网络请求）
   "http_clients": [
     {
-      "tag": "rule-set-direct",          // HTTP 客户端的唯一标识标签
-      "detour": "direct"                 // 指定该客户端发出的请求绕过代理，直接连接
+      "tag": "rule-set-direct"         // HTTP 客户端的唯一标识标签
     }
   ],
 
