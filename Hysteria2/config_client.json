@@ -1,0 +1,34 @@
+{
+  // 入站协议配置：定义客户端如何接收本地流量
+  "inbounds": [
+    {
+      "type": "mixed",                  // 混合入站类型，同时支持 HTTP 和 SOCKS5 代理协议
+      "listen": "::",                   // 监听地址，"::" 表示监听所有 IPv4 和 IPv6 网络接口
+      "listen_port": 10000              // 本地代理监听端口
+    }
+  ],
+  // 出站协议配置：定义流量发往远程服务器的规则
+  "outbounds": [
+    {
+      "type": "hysteria2",              // 出站协议类型为 Hysteria 2（基于 QUIC/UDP 的高性能协议）
+      "tag": "hysteria2",               // 该出站节点的标识标签（用于路由规则引用）
+      "server": "example.com",          // 远程服务器域名或 IP 地址
+      "server_port": 1080,              // 远程服务器默认主端口
+      "server_ports": [                 // 端口跳跃范围配置（用于绕过 QoS 或单端口限速）
+        "2080:3000"                     // 允许在 2080 到 3000 端口范围内动态切换
+      ],
+      "hop_interval": "30s",            // 端口跳跃时间间隔，每 30 秒自动切换一次发包端口
+      "up_mbps": 20,                    // 客户端最大上行带宽（Mbps），用于拥塞控制算法估算
+      "down_mbps": 100,                 // 客户端最大下行带宽（Mbps），用于拥塞控制算法估算
+      "password": "8JCsPssfgS8tiRwiMlhARg==", // 用户认证密码
+      // TLS 传输层安全配置（Hysteria 2 必须启用 TLS）
+      "tls": {
+        "enabled": true,                // 启用 TLS 加密传输
+        "server_name": "example.com",   // SNI 域名，用于 TLS 握手及证书校验
+        "alpn": [                       // 应用层协议协商，Hysteria 2 必须协商为 h3
+          "h3"
+        ]
+      }
+    }
+  ]
+}
