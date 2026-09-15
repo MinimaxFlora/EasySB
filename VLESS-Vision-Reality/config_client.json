@@ -28,7 +28,7 @@
         // REALITY 协议扩展配置
         "reality": {
           "enabled": true,              // 启用 REALITY 无证书伪装协议
-          "public_key": "n4nciHPu56Pi2XHaD0dZ_nB44dwq_AGnom0CjE7OYls", // REALITY 服务端公钥（Public Key）
+          "public_key": "jgcVPebui9A55ultlIF0VuESK8eMi9A0v24-wrYBpzU", // REALITY 服务端公钥（Public Key）
           "short_id": "5b6966df"        // REALITY 简短标识符（Short ID，需与服务端匹配）
         }
       },
