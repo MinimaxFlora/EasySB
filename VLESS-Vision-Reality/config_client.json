@@ -12,7 +12,7 @@
     {
       "type": "vless",                  // 出站协议类型为 VLESS
       "tag": "vless-vision-reality",    // 该出站节点的标识标签（用于路由规则引用）
-      "server": "ip",                   // 远程节点服务器地址
+      "server": "example.com",          // 远程节点服务器地址
       "server_port": 443,               // 远程服务器端口（REALITY 规范通常使用 443 端口）
       "uuid": "a9a6e2b5-5e34-4899-9865-f021e27bafc3", // 用户身份验证密钥 UUID（必须与服务端配置完全一致）
       "flow": "xtls-rprx-vision",       // 启用 Vision 流控算法（用于消解 TLS 握手特征与长度特征）
