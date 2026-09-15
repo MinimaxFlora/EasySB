@@ -212,7 +212,7 @@
         "2080:3000"                      // 端口跳跃范围从 2080 到 3000
       ],
       "hop_interval": "30s",             // 自动跳跃/切换端口的时间间隔
-      "up_mbps": 20,                     // 客户端预测的最大上行带宽（Mbps），用于拥塞控制
+      "up_mbps": 20,                      // 客户端预测的最大上行带宽（Mbps），用于拥塞控制
       "down_mbps": 100,                  // 客户端预测的最大下行带宽（Mbps），用于拥塞控制
       "password": "8JCsPssfgS8tiRwiMlhARg==", // 用户验证密码
       "tls": {                           // TLS 配置
@@ -225,7 +225,33 @@
     },
 
     // -------------------------------------------------------------------
-    // 节点 3：VMess + WebSocket + TLS + Mux 多路复用节点
+    // 节点 3：TUIC 协议节点 (基于 QUIC/UDP 的低延迟高性能传输)
+    // -------------------------------------------------------------------
+    {
+      "type": "tuic",                    // 节点类型：TUIC（客户端）
+      "tag": "tuic",                     // 该节点的标识标签（用于策略组和路由绑定）
+      "server": "example.com",           // 远程 TUIC 服务器地址（IP 或域名）
+      "server_port": 2000,               // 远程服务器监听端口
+      "uuid": "a9a6e2b5-5e34-4899-9865-f021e27bafc3", // 用户身份验证 UUID（需与服务端一致）
+      "password": "hello",              // 用户认证密码（需与服务端一致）
+      "congestion_control": "bbr",      // QUIC 拥塞控制算法（建议 bbr，可大幅优化高丢包高延迟网络）
+      "udp_relay_mode": "native",       // UDP 转发模式（native: 原生 UDP 数据包转发，适合游戏与实时音视频）
+      "udp_over_stream": false,         // 是否开启 UDP Over Stream（false 表示原生的 QUIC 数据包传输）
+      "zero_rtt_handshake": false,      // 是否开启 0-RTT 快速握手（false 可防重放攻击，true 降低握手延迟）
+      "heartbeat": "10s",               // 保活心跳包间隔（维持长连接并检测链路连通性）
+      "network": "tcp",                 // 标示请求传输承载类型
+      // TLS 传输层安全配置
+      "tls": {
+        "enabled": true,                // 开启 TLS 加密传输
+        "server_name": "us.kejizero.xyz",   // TLS 握手 SNI 验证域名（需匹配服务端证书）
+        "alpn": [                       // 应用层协议协商
+          "h3"                          // TUIC 基于 QUIC，必须配置为 h3
+        ]
+      }
+    },
+
+    // -------------------------------------------------------------------
+    // 节点 4：VMess + WebSocket + TLS + Mux 多路复用节点
     // -------------------------------------------------------------------
     {
       "type": "vmess",                   // 节点类型：VMess
@@ -263,7 +289,7 @@
     },
 
     // -------------------------------------------------------------------
-    // 节点 4：VLESS + Vision + REALITY 节点 (抗封锁与免证书伪装)
+    // 节点 5：VLESS + Vision + REALITY 节点 (抗封锁与免证书伪装)
     // -------------------------------------------------------------------
     {
       "type": "vless",                   // 节点类型：VLESS
@@ -299,8 +325,9 @@
         "auto",                          // 关联选项：自动测速策略组
         "anytls",                        // 关联节点 1
         "hysteria2",                     // 关联节点 2
-        "vmess-ws-tls",                  // 关联节点 3
-        "vless-vision-reality"           // 关联节点 4
+        "tuic",                          // 关联节点 3
+        "vmess-ws-tls",                  // 关联节点 4
+        "vless-vision-reality"           // 关联节点 5
       ]
     },
 
@@ -313,12 +340,13 @@
       "outbounds": [                     // 参与自动延迟测试的节点列表
         "anytls",
         "hysteria2",
+        "tuic",
         "vmess-ws-tls",
         "vless-vision-reality"
       ],
       "url": "http://www.gstatic.com/generate_204", // 用于测试节点连通性与延迟的 204 测试 URL
       "interval": "10m",                 // 自动定期触发延迟测试的时间间隔（每 10 分钟）
-      "tolerance": 30,                   // 切换节点的延迟容忍差值（毫秒）；只有新节点比当前节点快 30ms 以上时才切换，避免频繁切换
+      "tolerance": 30,                    // 切换节点的延迟容忍差值（毫秒）；只有新节点比当前节点快 30ms 以上时才切换，避免频繁切换
       "idle_timeout": "30m"              // 超过 30 分钟无流量使用时停止后台定时测速以省电/省流量
     },
 
