@@ -1,0 +1,258 @@
+{
+  "$schema": "https://sing-box.sagernet.org/schema.json",
+  "log": {
+    "level": "info",
+    "timestamp": true
+  },
+  "http_clients": [
+    {
+      "tag": "rule-set-direct"
+    }
+  ],
+  "dns": {
+    "servers": [
+      {"type": "fakeip", "tag": "fakeip", "inet4_range": "198.18.0.0/15", "inet6_range": "fc00::/18"},
+      {"type": "udp", "tag": "dns-cn", "server": "223.5.5.5", "server_port": 53},
+      {"type": "https", "tag": "dns-proxy", "server": "dns.google", "domain_resolver": "dns-cn", "detour": "proxy"}
+    ],
+    "rules": [
+      {"rule_set": ["geosite-cn"], "action": "route", "server": "dns-cn"},
+      {"query_type": ["A", "AAAA"], "action": "route", "server": "fakeip"}
+    ],
+    "final": "dns-proxy",
+    "strategy": "prefer_ipv4",
+    "cache_capacity": 8192,
+    "optimistic": {
+      "enabled": true,
+      "timeout": "1h"
+    },
+    "timeout": "10s",
+    "reverse_mapping": true
+  },
+  "inbounds": [
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "address": [
+        "172.19.0.1/30",
+        "fdfe:dcba:9876::1/126"
+      ],
+      "auto_route": true,
+      "strict_route": true,
+      "stack": "gvisor",
+      "mtu": 1420
+    }
+  ],
+  "route": {
+    "default_http_client": "rule-set-direct",
+    "default_domain_resolver": "dns-cn",
+    "auto_detect_interface": true,
+    "rule_set": [
+      {
+        "tag": "geosite-cn",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/cn.srs"
+      },
+      {
+        "tag": "geoip-cn",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geoip/cn.srs"
+      }
+    ],
+    "rules": [
+      {
+        "inbound": [
+          "tun-in"
+        ],
+        "protocol": [
+          "dns"
+        ],
+        "action": "hijack-dns"
+      },
+      {
+        "clash_mode": "Global",
+        "action": "route",
+        "outbound": "proxy"
+      },
+      {
+        "ip_is_private": true,
+        "action": "route",
+        "outbound": "direct"
+      },
+      {
+        "rule_set": [
+          "geosite-cn"
+        ],
+        "action": "route",
+        "outbound": "direct"
+      },
+      {
+        "rule_set": [
+          "geoip-cn"
+        ],
+        "action": "route",
+        "outbound": "direct"
+      },
+      {
+        "clash_mode": "Direct",
+        "action": "route",
+        "outbound": "direct"
+      },
+      {
+        "network": [
+          "tcp",
+          "udp"
+        ],
+        "port": 853,
+        "action": "reject"
+      }
+    ],
+    "final": "proxy"
+  },
+  "experimental": {
+    "cache_file": {
+      "enabled": true,
+      "store_dns": true
+    },
+    "clash_api": {
+      "external_controller": "127.0.0.1:9090",
+      "external_ui": "ui",
+      "default_mode": "Rule"
+    }
+  },
+  "outbounds": [
+    {
+      "type": "vless",
+      "tag": "vless-us-4415760854",
+      "server": "",
+      "server_port": 64956,
+      "uuid": "92d0b301-52ee-43c4-95cc-91e20f630314",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "apple.com",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "n4nciHPu56Pi2XHaD0dZ_nB44dwq_AGnom0CjE7OYls",
+          "short_id": "5b6966df"
+        }
+      }
+    },
+    {
+      "server": "",
+      "server_port": 39492,
+      "tag": "vmess-us-4415760854",
+      "tls": {
+        "enabled": false,
+        "server_name": "www.bing.com",
+        "insecure": false,
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        }
+      },
+      "packet_encoding": "packetaddr",
+      "transport": {
+        "headers": {
+          "Host": [
+            "www.bing.com"
+          ]
+        },
+        "path": "92d0b301-52ee-43c4-95cc-91e20f630314-vm",
+        "type": "ws"
+      },
+      "type": "vmess",
+      "security": "auto",
+      "uuid": "92d0b301-52ee-43c4-95cc-91e20f630314"
+    },
+    {
+      "type": "hysteria2",
+      "tag": "hy2-us-4415760854",
+      "server": "",
+      "server_port": 56842,
+      "password": "92d0b301-52ee-43c4-95cc-91e20f630314",
+      "tls": {
+        "enabled": true,
+        "server_name": "www.bing.com",
+        "insecure": true,
+        "alpn": [
+          "h3"
+        ]
+      }
+    },
+    {
+      "type": "tuic",
+      "tag": "tuic5-us-4415760854",
+      "server": "",
+      "server_port": 16676,
+      "uuid": "92d0b301-52ee-43c4-95cc-91e20f630314",
+      "password": "92d0b301-52ee-43c4-95cc-91e20f630314",
+      "congestion_control": "bbr",
+      "udp_relay_mode": "native",
+      "udp_over_stream": false,
+      "zero_rtt_handshake": false,
+      "heartbeat": "10s",
+      "tls": {
+        "enabled": true,
+        "server_name": "www.bing.com",
+        "insecure": true,
+        "alpn": [
+          "h3"
+        ]
+      }
+    },
+    {
+      "type": "anytls",
+      "tag": "anytls-us-4415760854",
+      "server": "",
+      "server_port": 22569,
+      "password": "92d0b301-52ee-43c4-95cc-91e20f630314",
+      "idle_session_check_interval": "30s",
+      "idle_session_timeout": "30s",
+      "min_idle_session": 5,
+      "tls": {
+        "enabled": true,
+        "insecure": true,
+        "server_name": "www.bing.com"
+      }
+    },
+    {
+      "tag": "proxy",
+      "type": "selector",
+      "default": "auto",
+      "outbounds": [
+        "auto",
+        "vless-us-4415760854",
+        "vmess-us-4415760854",
+        "hy2-us-4415760854",
+        "tuic5-us-4415760854",
+        "anytls-us-4415760854"
+      ]
+    },
+    {
+      "tag": "auto",
+      "type": "urltest",
+      "outbounds": [
+        "vless-us-4415760854",
+        "vmess-us-4415760854",
+        "hy2-us-4415760854",
+        "tuic5-us-4415760854",
+        "anytls-us-4415760854"
+      ],
+      "url": "http://www.gstatic.com/generate_204",
+      "interval": "10m",
+      "tolerance": 30,
+      "idle_timeout": "30m"
+    },
+    {
+      "type": "direct",
+      "tag": "direct"
+    }
+  ]
+}
