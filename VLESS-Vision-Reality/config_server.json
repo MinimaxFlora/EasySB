@@ -1,0 +1,35 @@
+{
+    "inbounds": [
+        {
+            "type": "vless",
+            "listen": "::",
+            "listen_port": 443,
+            "users": [
+                {
+                    "uuid": "a9a6e2b5-5e34-4899-9865-f021e27bafc3",
+                    "flow": "xtls-rprx-vision"
+                }
+            ],
+            "tls": {
+                "enabled": true,
+                "server_name": "", // 不支持 * 通配符
+                "reality": {
+                    "enabled": true,
+                    "handshake": {
+                        "server": "", // 要求网站支持 TLS 1.3、X25519 与 H2，域名非跳转用
+                        "server_port": 443
+                    },
+                    "private_key": "SCytw0AxhrG8S2HNArRWsXXM6xZup0HdSOa2OExE9Gc",
+                    "short_id": [
+                        "5b6966df"
+                    ]
+                }
+            }
+        }
+    ],
+    "outbounds": [
+        {
+            "type": "direct"
+        }
+    ]
+}
