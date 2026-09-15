@@ -268,7 +268,7 @@
     {
       "type": "vless",                   // 节点类型：VLESS
       "tag": "vless-vision-reality",    // 节点标签名称
-      "server": "ip",                    // 远程 VPS 的真实 IP 地址或域名
+      "server": "example.com",          // 远程 VPS 的真实 IP 地址或域名
       "server_port": 443,                // 服务器监听端口（REALITY 必须为 443）
       "uuid": "a9a6e2b5-5e34-4899-9865-f021e27bafc3", // 用户唯一身份验证 UUID
       "flow": "xtls-rprx-vision",        // 流控算法：Vision，消解双重 TLS 与数据包特征
