@@ -13,15 +13,6 @@
           "alterId": 0                 // VMess 额外 ID，现代 VMess AEAD 规范要求固定设为 0
         }
       ],
-      // 多路复用配置 (Mux)
-      "multiplex": {
-        "enabled": true,               // 启用多路复用支持，允许客户端在单个连接中传输多个并发请求
-        "protocol": "smux",            // 多路复用传输协议类型
-        "max_connections": 4,          // 允许客户端建立的最大并发 TCP 物理连接数
-        "min_streams": 4,              // 单条物理连接包含的最少数据流数量
-        "max_streams": 0,              // 单条物理连接允许的最大数据流数量（0 表示不限制）
-        "padding": false               // 是否开启数据包随机填充（关闭可降低 CPU 开销）
-      },
       // 传输层协议扩展配置
       "transport": {
         "type": "ws",                  // 传输协议使用 WebSocket
