@@ -1,0 +1,46 @@
+{
+  // 入站协议配置：定义客户端如何接收本地流量
+  "inbounds": [
+    {
+      "type": "mixed",          // 混合入站类型，同时支持 HTTP 和 SOCKS5 代理协议
+      "listen": "::",           // 监听地址，"::" 表示监听所有 IPv4 和 IPv6 网络接口
+      "listen_port": 10000      // 本地代理监听端口
+    }
+  ],
+  // 出站协议配置：定义流量如何发往远程服务器
+  "outbounds": [
+    {
+      "type": "vmess",          // 出站协议类型为 VMess
+      "server": "",             // 节点服务器地址（域名或 IP，需填写）
+      "server_port": 443,       // 节点服务器端口（通常 TLS 为 443）
+      "uuid": "",               // 用户 UUID 身份校验密钥（需填写）
+      "security": "auto",       // 加密方式，auto 为自动选择（推荐）
+      "alter_id": 0,            // VMess 变种 ID，现代节点通常设为 0
+      "global_padding": false,  // 是否开启全局填充
+      "authenticated_length": true, // 是否对数据包长度进行认证处理（防探测）
+      "network": "tcp",         // 基础传输层网络协议
+      // TLS 传输层安全配置
+      "tls": {
+        "enabled": true,        // 启用 TLS 加密
+        "server_name": "",      // SNI 域名，用于 TLS 握手及证书校验（通常填节点域名）
+        // uTLS 指纹伪装配置
+        "utls": {
+          "enabled": true,      // 启用 uTLS 客户端指纹伪装
+          "fingerprint": "chrome" // 伪装为 Chrome 浏览器的 TLS 握手特征
+        }
+      },
+      "packet_encoding": "packetaddr", // UDP 打包编码格式，用于优化 UDP 转发
+      // 多路复用配置 (Mux)
+      "multiplex": {
+        "enabled": true         // 启用多路复用，在单个 TCP 连接中并发传输多条流以降低延迟
+      },
+      // 传输层协议扩展配置
+      "transport": {
+        "type": "ws",           // 使用 WebSocket 传输协议
+        "path": "/vmess",             // WebSocket HTTP 请求路径（例如 "/vmess"，需与服务端一致）
+        "max_early_data": 2048, // 0-RTT 早期数据传输的最大字节数
+        "early_data_header_name": "Sec-WebSocket-Protocol" // 用于传输早期数据的 HTTP Header 名称
+      }
+    }
+  ]
+}
