@@ -12,7 +12,7 @@
     {
       "type": "anytls",                 // 出站协议类型为 AnyTLS
       "tag": "",                        // 该出站节点的标签名称（用于路由规则引用）
-      "server": "",                     // 远程 AnyTLS 服务器地址（域名或 IP）
+      "server": "example.com",          // 远程 AnyTLS 服务器地址（域名或 IP）
       "server_port": 443,              // 远程服务器端口
       "password": "你的密码",            // 身份校验密码（需替换为实际密码）
       "idle_session_check_interval": "30s", // 空闲连接/会话检测的时间间隔
@@ -26,7 +26,7 @@
           "http/1.1"
         ],
         "enabled": true,                // 启用 TLS 加密传输
-        "server_name": "",              // SNI 验证域名（留空时默认使用 server 字段中的域名）
+        "server_name": "example.com",   // SNI 验证域名（留空时默认使用 server 字段中的域名）
         // uTLS 客户端指纹伪装配置
         "utls": {
           "enabled": true,              // 启用 uTLS 指纹伪装
