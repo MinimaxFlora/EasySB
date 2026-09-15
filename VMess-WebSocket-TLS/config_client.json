@@ -14,7 +14,7 @@
       "tag": "",                // 该出站节点的标签名称（用于路由规则引用）
       "server": "",             // 节点服务器地址（域名或 IP，需填写）
       "server_port": 443,       // 节点服务器端口（通常 TLS 为 443）
-      "uuid": "",               // 用户 UUID 身份校验密钥（需填写）
+      "uuid": "a9a6e2b5-5e34-4899-9865-f021e27bafc3",               // 用户 UUID 身份校验密钥（需填写）
       "security": "auto",       // 加密方式，auto 为自动选择（推荐）
       "alter_id": 0,            // VMess 变种 ID，现代节点通常设为 0
       "global_padding": false,  // 是否开启全局填充
@@ -22,7 +22,7 @@
       // TLS 传输层安全配置
       "tls": {
         "enabled": true,        // 启用 TLS 加密
-        "server_name": "",      // SNI 域名，用于 TLS 握手及证书校验（通常填节点域名）
+        "server_name": "example.com",      // SNI 域名，用于 TLS 握手及证书校验（通常填节点域名）
         // uTLS 指纹伪装配置
         "utls": {
           "enabled": true,      // 启用 uTLS 客户端指纹伪装
