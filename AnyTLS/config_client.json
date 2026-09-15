@@ -13,7 +13,7 @@
       "type": "anytls",                 // 出站协议类型为 AnyTLS
       "tag": "",                        // 该出站节点的标签名称（用于路由规则引用）
       "server": "",                     // 远程 AnyTLS 服务器地址（域名或 IP）
-      "server_port": 1080,              // 远程服务器端口
+      "server_port": 443,              // 远程服务器端口
       "password": "你的密码",            // 身份校验密码（需替换为实际密码）
       "idle_session_check_interval": "30s", // 空闲连接/会话检测的时间间隔
       "idle_session_timeout": "30s",    // 会话空闲超时时间，超时后自动释放连接
