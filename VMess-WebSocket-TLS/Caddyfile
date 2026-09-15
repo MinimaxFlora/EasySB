@@ -1,0 +1,10 @@
+example.com {
+    # VMess WebSocket
+    @vmess path /vmess
+    reverse_proxy @vmess 127.0.0.1:8001
+
+    # 其他请求转发到伪装站
+    reverse_proxy https://www.lovelive-anime.jp {
+        header_up Host www.lovelive-anime.jp
+    }
+}
