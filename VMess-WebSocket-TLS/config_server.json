@@ -13,6 +13,11 @@
           "alterId": 0                 // VMess 额外 ID，现代 VMess AEAD 规范要求固定设为 0
         }
       ],
+      // 多路复用配置 (Mux)
+      "multiplex": {
+          "enabled": true,            // 启用多路复用，降低并发连接建立时的延迟
+          "padding": false            // 是否对 Mux 数据包启用随机填充（防流量特征分析）
+      },
       // 传输层协议扩展配置
       "transport": {
         "type": "ws",                  // 传输协议使用 WebSocket
