@@ -15,7 +15,7 @@
       // TLS 传输层安全及 REALITY 伪装配置
       "tls": {
         "enabled": true,                // 启用 TLS 服务端加密
-        "server_name": "ip",            // 服务端匹配的 SNI 名称（可填写允许的伪装域名或特定标识）
+        "server_name": "apple.com",     // 服务端匹配的 SNI 名称（可填写允许的伪装域名或特定标识）
         // REALITY 无证书伪装服务端配置
         "reality": {
           "enabled": true,              // 启用 REALITY 无证书伪装协议
