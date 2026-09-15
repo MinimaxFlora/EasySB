@@ -17,7 +17,7 @@
       "security": "auto",       // 加密方式，auto 为自动选择（推荐）
       "alter_id": 0,            // VMess 变种 ID，现代节点通常设为 0
       "global_padding": false,  // 是否开启全局填充
-      "authenticated_length": true, // 是否对数据包长度进行认证处理（防探测）
+      "authenticated_length": true, // 启用 VMess 数据长度认证
       // TLS 传输层安全配置
       "tls": {
         "enabled": true,        // 启用 TLS 加密
@@ -28,7 +28,7 @@
           "fingerprint": "chrome" // 伪装为 Chrome 浏览器的 TLS 握手特征
         }
       },
-      "packet_encoding": "packetaddr", // VMess 数据包编码方式（优化 UDP 传输）
+      "packet_encoding": "packetaddr", // VMess 数据包编码方式
       // 多路复用配置 (Mux)
       "multiplex": {
         "enabled": true,        // 启用多路复用，降低并发连接建立时的延迟
