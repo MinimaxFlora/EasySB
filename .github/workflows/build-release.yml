@@ -270,18 +270,18 @@ jobs:
           - { arch: ppc64le, debian: ppc64el }
 
     steps:
-      - name: 下载对应架构构建产物
-        uses: actions/download-artifact@v4
-        with:
-          name: sing-box-${{ needs.check.outputs.version }}-linux-${{ matrix.arch }}${{ matrix.goarm && format('-arm{0}', matrix.goarm) || '' }}
-          path: input
-
       - name: 检出 Release 资源
         uses: actions/checkout@v5
         with:
           sparse-checkout: |
             Release
           sparse-checkout-cone-mode: true
+
+      - name: 下载对应架构构建产物
+        uses: actions/download-artifact@v4
+        with:
+          name: sing-box-${{ needs.check.outputs.version }}-linux-${{ matrix.arch }}${{ matrix.goarm && format('-arm{0}', matrix.goarm) || '' }}
+          path: input
 
       - name: 安装 FPM
         shell: bash
