@@ -93,7 +93,7 @@ jobs:
           keep_minimum_runs: 20
 
   build:
-    name: ${{ matrix.os }}-${{ matrix.arch }}{{ matrix.goarm && format('-arm{0}', matrix.goarm) || '' }}
+    name: ${{ format('{0}-{1}{2}', matrix.os, matrix.arch, matrix.goarm && format('-arm{0}', matrix.goarm) || '') }}
     needs: check
     if: needs.check.outputs.should_build == 'true'
     runs-on: ubuntu-24.04
@@ -347,7 +347,6 @@ jobs:
             -p "sing-box_${DEB_VERSION}_${{ matrix.debian }}.deb" \
             .
 
-          # 使用 debsigs 对生成的 DEB 包进行 GPG 签名
           debsigs --sign=origin --default-key "${{ secrets.GPG_KEY_ID }}" --passphrase "${{ secrets.GPG_PASSPHRASE }}" "sing-box_${DEB_VERSION}_${{ matrix.debian }}.deb"
 
           mv "sing-box_${DEB_VERSION}_${{ matrix.debian }}.deb" dist/
