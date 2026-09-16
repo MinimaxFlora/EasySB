@@ -1,16 +1,18 @@
 name: 编译 sing-box
 
 on:
-  # 每天北京时间 11:00 和 04:00 自动检测上游更新
   schedule:
+    # UTC 03:00 / 20:00
+    # 北京时间 11:00 / 次日 04:00
     - cron: "0 3,20 * * *"
 
   workflow_dispatch:
     inputs:
       branch:
-        description: "指定编译的版本号，例如 v1.12.0；留空则自动获取最新版本"
+        description: "指定编译版本，例如 1.14.1 或 v1.14.1；留空自动检测最新版本"
         required: false
         default: ""
+        type: string
 
 permissions:
   contents: write
@@ -19,108 +21,155 @@ permissions:
 env:
   TZ: Asia/Shanghai
 
+concurrency:
+  group: sing-box-build
+  cancel-in-progress: false
+
 jobs:
 
   # ============================================================
   # 检查版本
   # ============================================================
   check:
-    name: 检查 sing-box 版本
+    name: 检查版本
     runs-on: ubuntu-latest
 
     outputs:
       tag: ${{ steps.getversion.outputs.tag }}
-      ver: ${{ steps.getversion.outputs.ver }}
+      version: ${{ steps.getversion.outputs.version }}
+      local_tag: ${{ steps.getversion.outputs.local_tag }}
       should_build: ${{ steps.getversion.outputs.should_build }}
 
     steps:
-      - name: 获取版本号
+      - name: 获取版本
         id: getversion
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
           echo "========================================"
-          echo "检查 SagerNet/sing-box 最新版本"
+          echo "检查 sing-box 版本"
           echo "========================================"
 
-          # 获取上游最新 Release
-          UPSTREAM_TAG=$(curl -sL \
-            https://api.github.com/repos/SagerNet/sing-box/releases/latest \
-            | jq -r '.tag_name // empty')
+          # ------------------------------------------------------
+          # 上游最新 Release
+          # ------------------------------------------------------
+          UPSTREAM_TAG="$(
+            curl -sSL \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/SagerNet/sing-box/releases/latest" \
+              | jq -r '.tag_name // empty'
+          )"
 
-          # 获取当前仓库最新 Release
+          # ------------------------------------------------------
+          # 当前仓库最新 Release
           #
-          # 第一次构建时本仓库没有 Release：
-          # GitHub API 会返回 404，但普通 curl 不会因此退出。
-          # jq 最终得到空值。
-          LOCAL_TAG=$(curl -sL \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/latest" \
-            | jq -r '.tag_name // empty')
+          # 第一次运行没有 Release：
+          # GitHub API 返回 404。
+          #
+          # 这里故意不使用 curl -f，
+          # 因此 404 不会导致 workflow 直接失败。
+          # ------------------------------------------------------
+          LOCAL_TAG="$(
+            curl -sSL \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/latest" \
+              | jq -r '.tag_name // empty'
+          )"
 
-          INPUT_TAG="${{ github.event.inputs.branch }}"
+          INPUT_VERSION="${{ inputs.branch }}"
 
           echo "========================================"
-          echo "上游最新版本：${UPSTREAM_TAG}"
+          echo "上游最新版本：${UPSTREAM_TAG:-获取失败}"
           echo "当前仓库版本：${LOCAL_TAG:-无 Release}"
-          echo "手动指定版本：${INPUT_TAG:-无}"
+          echo "手动指定版本：${INPUT_VERSION:-无}"
           echo "========================================"
 
-          # 防止 GitHub API 异常导致错误版本继续编译
-          if [[ -z "${UPSTREAM_TAG}" && -z "${INPUT_TAG}" ]]; then
-            echo "::error::无法获取 SagerNet/sing-box 最新版本"
-            exit 1
-          fi
-
+          # ------------------------------------------------------
           # 手动指定版本
-          if [[ -n "${INPUT_TAG}" ]]; then
-            TAG="${INPUT_TAG}"
+          # ------------------------------------------------------
+          if [[ -n "${INPUT_VERSION}" ]]; then
+
+            VERSION="${INPUT_VERSION#v}"
+            TAG="v${VERSION}"
             SHOULD_BUILD=true
 
             echo "使用手动指定版本：${TAG}"
 
+          # ------------------------------------------------------
           # 第一次构建
+          # ------------------------------------------------------
           elif [[ -z "${LOCAL_TAG}" ]]; then
+
+            if [[ -z "${UPSTREAM_TAG}" ]]; then
+              echo "::error::无法获取 SagerNet/sing-box 最新版本"
+              exit 1
+            fi
+
             TAG="${UPSTREAM_TAG}"
+            VERSION="${TAG#v}"
             SHOULD_BUILD=true
 
             echo "当前仓库没有 Release"
             echo "开始首次构建：${TAG}"
 
+          # ------------------------------------------------------
           # 上游有新版本
+          # ------------------------------------------------------
           elif [[ "${UPSTREAM_TAG}" != "${LOCAL_TAG}" ]]; then
+
             TAG="${UPSTREAM_TAG}"
+            VERSION="${TAG#v}"
             SHOULD_BUILD=true
 
-            echo "检测到新版本：${LOCAL_TAG} -> ${TAG}"
+            echo "检测到新版本"
+            echo "${LOCAL_TAG} -> ${TAG}"
 
+          # ------------------------------------------------------
           # 已经是最新版本
+          # ------------------------------------------------------
           else
+
             TAG="${UPSTREAM_TAG}"
+            VERSION="${TAG#v}"
             SHOULD_BUILD=false
 
             echo "当前已经是最新版本，无需构建"
+
           fi
 
+          echo "========================================"
+          echo "TAG=${TAG}"
+          echo "VERSION=${VERSION}"
+          echo "SHOULD_BUILD=${SHOULD_BUILD}"
+          echo "========================================"
+
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-          echo "ver=${LOCAL_TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "local_tag=${LOCAL_TAG}" >> "$GITHUB_OUTPUT"
           echo "should_build=${SHOULD_BUILD}" >> "$GITHUB_OUTPUT"
 
-      # 删除旧 Actions 运行记录
-      # 注意：这里只删除 Workflow Run，不会创建任何提交。
+      # ----------------------------------------------------------
+      # 清理旧 Actions 运行记录
+      #
+      # 这里只删除 Workflow Runs。
+      # 不会创建 commit。
+      # ----------------------------------------------------------
       - name: 删除旧流程记录
         uses: Mattraks/delete-workflow-runs@main
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          retain_days: 0
-          keep_minimum_runs: 0
+          retain_days: 7
+          keep_minimum_runs: 20
 
 
   # ============================================================
-  # 编译
+  # Linux / Windows 构建
   # ============================================================
   build:
-    name: 构建 ${{ matrix.os }}-${{ matrix.arch }}${{ matrix.variant && format('-{0}', matrix.variant) || '' }}
+    name: 构建 ${{ matrix.os }}-${{ matrix.arch }}${{ matrix.goarm && format('-arm{0}', matrix.goarm) || '' }}${{ matrix.variant && format('-{0}', matrix.variant) || '' }}
 
     needs: check
 
@@ -135,19 +184,22 @@ jobs:
       matrix:
         include:
 
+          # ====================================================
+          # Linux
+          # ====================================================
+
           # ----------------------------------------------------
-          # Linux amd64
+          # amd64 purego
           # ----------------------------------------------------
           - os: linux
             arch: amd64
             variant: purego
             naive: true
+            debian: amd64
 
-          - os: linux
-            arch: amd64
-            variant: glibc
-            naive: true
-
+          # ----------------------------------------------------
+          # amd64 musl
+          # ----------------------------------------------------
           - os: linux
             arch: amd64
             variant: musl
@@ -155,18 +207,17 @@ jobs:
             debian: amd64
 
           # ----------------------------------------------------
-          # Linux arm64
+          # arm64 purego
           # ----------------------------------------------------
           - os: linux
             arch: arm64
             variant: purego
             naive: true
+            debian: arm64
 
-          - os: linux
-            arch: arm64
-            variant: glibc
-            naive: true
-
+          # ----------------------------------------------------
+          # arm64 musl
+          # ----------------------------------------------------
           - os: linux
             arch: arm64
             variant: musl
@@ -174,18 +225,8 @@ jobs:
             debian: arm64
 
           # ----------------------------------------------------
-          # Linux 386
+          # 386 musl
           # ----------------------------------------------------
-          - os: linux
-            arch: "386"
-            go386: sse2
-
-          - os: linux
-            arch: "386"
-            variant: glibc
-            naive: true
-            go386: sse2
-
           - os: linux
             arch: "386"
             variant: musl
@@ -194,18 +235,8 @@ jobs:
             debian: i386
 
           # ----------------------------------------------------
-          # Linux ARM
+          # armv7 musl
           # ----------------------------------------------------
-          - os: linux
-            arch: arm
-            goarm: "7"
-
-          - os: linux
-            arch: arm
-            variant: glibc
-            naive: true
-            goarm: "7"
-
           - os: linux
             arch: arm
             variant: musl
@@ -213,134 +244,110 @@ jobs:
             goarm: "7"
             debian: armhf
 
-          # ARMv5
+          # ----------------------------------------------------
+          # armv6
+          # ----------------------------------------------------
           - os: linux
             arch: arm
-            goarm: "5"
-
-          # ARMv6
-          - os: linux
-            arch: arm
+            variant: other
             goarm: "6"
             debian: armel
 
           # ----------------------------------------------------
-          # Linux mips
-          # ----------------------------------------------------
-          - os: linux
-            arch: mips
-            gomips: softfloat
-
-          # ----------------------------------------------------
-          # Linux mipsle
+          # mipsle
           # ----------------------------------------------------
           - os: linux
             arch: mipsle
-            gomips: hardfloat
-            variant: glibc
-            naive: true
-
-          - os: linux
-            arch: mipsle
-            gomips: softfloat
             variant: musl
             naive: true
+            gomips: softfloat
             debian: mipsel
 
           # ----------------------------------------------------
-          # Linux mips64
-          # ----------------------------------------------------
-          - os: linux
-            arch: mips64
-            gomips: softfloat
-
-          # ----------------------------------------------------
-          # Linux mips64le
+          # mips64le
           # ----------------------------------------------------
           - os: linux
             arch: mips64le
-            gomips: hardfloat
-            variant: glibc
-            naive: true
-
-          - os: linux
-            arch: mips64le
-            gomips: softfloat
-            variant: musl
-            naive: true
+            variant: other
             debian: mips64el
 
           # ----------------------------------------------------
-          # Linux riscv64
+          # riscv64
           # ----------------------------------------------------
           - os: linux
             arch: riscv64
-            naive: true
-            variant: glibc
-
-          - os: linux
-            arch: riscv64
-            naive: true
             variant: musl
+            naive: true
             debian: riscv64
 
           # ----------------------------------------------------
-          # Linux loong64
+          # loong64
           # ----------------------------------------------------
           - os: linux
             arch: loong64
-            naive: true
-            variant: glibc
-
-          - os: linux
-            arch: loong64
-            naive: true
             variant: musl
+            naive: true
             debian: loongarch64
 
           # ----------------------------------------------------
-          # Linux s390x
+          # s390x
           # ----------------------------------------------------
           - os: linux
             arch: s390x
+            variant: other
             debian: s390x
 
           # ----------------------------------------------------
-          # Linux ppc64le
+          # ppc64le
           # ----------------------------------------------------
           - os: linux
             arch: ppc64le
+            variant: other
             debian: ppc64el
 
-          # ----------------------------------------------------
-          # Windows amd64
-          # ----------------------------------------------------
+          # ====================================================
+          # Windows
+          # ====================================================
+
           - os: windows
             arch: amd64
+            variant: windows
 
-          # ----------------------------------------------------
-          # Windows 386
-          # ----------------------------------------------------
           - os: windows
             arch: "386"
+            variant: windows
 
-    env:
-      GOOS: ${{ matrix.os }}
-      GOARCH: ${{ matrix.arch }}
-      GO386: ${{ matrix.go386 }}
-      GOARM: ${{ matrix.goarm }}
-      GOMIPS: ${{ matrix.gomips }}
 
     steps:
 
       # --------------------------------------------------------
-      # 检出本仓库
+      # Checkout 当前仓库
       # --------------------------------------------------------
       - name: 检出仓库
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       # --------------------------------------------------------
-      # 安装 Go
+      # 获取 sing-box 源码
+      # --------------------------------------------------------
+      - name: 获取 sing-box ${{ needs.check.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TAG="${{ needs.check.outputs.tag }}"
+
+          echo "克隆 sing-box ${TAG}"
+
+          git clone \
+            --depth 1 \
+            --branch "${TAG}" \
+            https://github.com/SagerNet/sing-box.git \
+            sing-box
+
+      # --------------------------------------------------------
+      # Setup Go
       # --------------------------------------------------------
       - name: 安装 Go
         uses: actions/setup-go@v5
@@ -349,37 +356,13 @@ jobs:
           cache: false
 
       # --------------------------------------------------------
-      # 获取 sing-box 源码
+      # 安装 Linux 构建依赖
       # --------------------------------------------------------
-      - name: 获取 sing-box 源码
-        shell: bash
-        run: |
-          set -e
-
-          TAG="${{ needs.check.outputs.tag }}"
-
-          echo "========================================"
-          echo "准备构建 sing-box"
-          echo "版本：${TAG}"
-          echo "系统：${{ matrix.os }}"
-          echo "架构：${{ matrix.arch }}"
-          echo "变体：${{ matrix.variant || 'default' }}"
-          echo "========================================"
-
-          git clone \
-            --depth 1 \
-            --branch "${TAG}" \
-            https://github.com/SagerNet/sing-box.git \
-            /opt/sing-box
-
-      # --------------------------------------------------------
-      # 准备构建环境
-      # --------------------------------------------------------
-      - name: 安装构建依赖
+      - name: 安装 Linux 构建依赖
         if: matrix.os == 'linux'
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
           sudo apt-get update
 
@@ -387,103 +370,296 @@ jobs:
             build-essential \
             pkg-config \
             file \
-            jq
+            jq \
+            git
 
-          # musl 构建
-          if [[ "${{ matrix.variant }}" == "musl" ]]; then
-            sudo apt-get install -y musl-tools
+      # --------------------------------------------------------
+      # 获取 cronet-go
+      #
+      # naive 架构按照 sing-box 官方构建方式处理。
+      # --------------------------------------------------------
+      - name: 获取 cronet-go
+        if: matrix.naive == true
+        shell: bash
+        working-directory: sing-box
+        run: |
+          set -xeuo pipefail
+
+          CRONET_GO_VERSION="$(cat .github/CRONET_GO_VERSION)"
+
+          echo "CRONET_GO_VERSION=${CRONET_GO_VERSION}"
+
+          git init "${HOME}/cronet-go"
+
+          git -C "${HOME}/cronet-go" \
+            remote add origin \
+            https://github.com/sagernet/cronet-go.git
+
+          git -C "${HOME}/cronet-go" \
+            fetch \
+            --depth=1 \
+            origin \
+            "${CRONET_GO_VERSION}"
+
+          git -C "${HOME}/cronet-go" \
+            checkout FETCH_HEAD
+
+          git -C "${HOME}/cronet-go" \
+            submodule update \
+            --init \
+            --recursive \
+            --depth=1
+
+      # --------------------------------------------------------
+      # Debian keyring
+      # --------------------------------------------------------
+      - name: 重新生成 Debian keyring
+        if: matrix.naive == true
+        shell: bash
+        run: |
+          set -xeuo pipefail
+
+          KEYRING="${HOME}/cronet-go/naiveproxy/src/build/linux/sysroot_scripts/keyring.gpg"
+
+          rm -f "${KEYRING}"
+
+          cd "${HOME}/cronet-go"
+
+          GPG_TTY=/dev/null \
+            ./naiveproxy/src/build/linux/sysroot_scripts/generate_keyring.sh
+
+      # --------------------------------------------------------
+      # Chromium toolchain Cache
+      # --------------------------------------------------------
+      - name: 缓存 Chromium toolchain
+        if: matrix.naive == true
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/cronet-go/naiveproxy/src/third_party/llvm-build/
+            ~/cronet-go/naiveproxy/src/gn/out/
+            ~/cronet-go/naiveproxy/src/chrome/build/pgo_profiles/
+            ~/cronet-go/naiveproxy/src/out/sysroot-build/
+          key: chromium-toolchain-${{ matrix.arch }}-musl-${{ hashFiles('sing-box/.github/CRONET_GO_VERSION') }}
+
+      # --------------------------------------------------------
+      # 下载 Chromium toolchain
+      # --------------------------------------------------------
+      - name: 下载 Chromium toolchain
+        if: matrix.naive == true
+        shell: bash
+        run: |
+          set -xeuo pipefail
+
+          cd "${HOME}/cronet-go"
+
+          go run ./cmd/build-naive \
+            --target=linux/${{ matrix.arch }} \
+            --libc=musl \
+            download-toolchain
+
+      # --------------------------------------------------------
+      # 设置 Chromium 环境
+      # --------------------------------------------------------
+      - name: 设置 Chromium toolchain 环境
+        if: matrix.naive == true
+        shell: bash
+        run: |
+          set -xeuo pipefail
+
+          cd "${HOME}/cronet-go"
+
+          go run ./cmd/build-naive \
+            --target=linux/${{ matrix.arch }} \
+            --libc=musl \
+            env >> "${GITHUB_ENV}"
+
+      # --------------------------------------------------------
+      # 设置构建参数
+      # --------------------------------------------------------
+      - name: 设置构建 Tags
+        shell: bash
+        working-directory: sing-box
+        run: |
+          set -xeuo pipefail
+
+          if [[ "${{ matrix.os }}" == "windows" ]]; then
+
+            TAGS="$(cat release/DEFAULT_BUILD_TAGS_WINDOWS)"
+
+          elif [[ "${{ matrix.naive }}" == "true" ]]; then
+
+            TAGS="$(cat release/DEFAULT_BUILD_TAGS),with_musl"
+
+          else
+
+            TAGS="$(cat release/DEFAULT_BUILD_TAGS_OTHERS)"
+
           fi
 
-      # --------------------------------------------------------
-      # 编译
-      # --------------------------------------------------------
-      - name: 编译 sing-box
-        shell: bash
-        working-directory: /opt/sing-box
-        run: |
-          set -e
+          echo "BUILD_TAGS=${TAGS}" >> "${GITHUB_ENV}"
 
-          VERSION="${{ needs.check.outputs.tag }}"
+          echo "BUILD_TAGS=${TAGS}"
+
+      # --------------------------------------------------------
+      # 设置官方 LDFLAGS
+      # --------------------------------------------------------
+      - name: 设置官方 LDFLAGS
+        shell: bash
+        working-directory: sing-box
+        run: |
+          set -euo pipefail
+
+          LDFLAGS_SHARED="$(cat release/LDFLAGS)"
+
+          echo "LDFLAGS_SHARED=${LDFLAGS_SHARED}" >> "${GITHUB_ENV}"
+
+          echo "官方 LDFLAGS："
+          cat release/LDFLAGS
+
+      # --------------------------------------------------------
+      # Linux naive / CGO 构建
+      # --------------------------------------------------------
+      - name: 构建 Linux naive
+        if: matrix.os == 'linux' && matrix.naive == true
+        shell: bash
+        working-directory: sing-box
+        env:
+          CGO_ENABLED: "1"
+          GOOS: linux
+          GOARCH: ${{ matrix.arch }}
+          GOARM: ${{ matrix.goarm }}
+          GO386: ${{ matrix.go386 }}
+          GOMIPS: ${{ matrix.gomips }}
+          GOMIPS64: ${{ matrix.gomips }}
+        run: |
+          set -xeuo pipefail
 
           mkdir -p dist
 
-          # 使用官方 sing-box 构建参数
-          BUILD_TAGS="$(go run -v ./cmd/internal/read_tag --ci)"
-
-          LDFLAGS="$(go run -v ./cmd/internal/read_tag --ci --ldflags)"
-
-          echo "========================================"
-          echo "版本：${VERSION}"
-          echo "GOOS：${GOOS}"
-          echo "GOARCH：${GOARCH}"
-          echo "GO386：${GO386}"
-          echo "GOARM：${GOARM}"
-          echo "GOMIPS：${GOMIPS}"
-          echo "Variant：${{ matrix.variant }}"
-          echo "========================================"
-
-          # ----------------------------------------------------
-          # 默认 / purego
-          # ----------------------------------------------------
-          if [[ -z "${{ matrix.variant }}" || "${{ matrix.variant }}" == "purego" ]]; then
-
-            export CGO_ENABLED=0
-
-            go build \
-              -v \
-              -trimpath \
-              -tags "${BUILD_TAGS}" \
-              -ldflags "${LDFLAGS} -X github.com/sagernet/sing-box/constant.Version=${VERSION}" \
-              -o "dist/sing-box-${VERSION}-${GOOS}-${GOARCH}"
-
-          # ----------------------------------------------------
-          # glibc
-          # ----------------------------------------------------
-          elif [[ "${{ matrix.variant }}" == "glibc" ]]; then
-
-            export CGO_ENABLED=1
-
-            go build \
-              -v \
-              -trimpath \
-              -tags "${BUILD_TAGS}" \
-              -ldflags "${LDFLAGS} -X github.com/sagernet/sing-box/constant.Version=${VERSION}" \
-              -o "dist/sing-box-${VERSION}-${GOOS}-${GOARCH}-glibc"
-
-          # ----------------------------------------------------
-          # musl
-          # ----------------------------------------------------
-          elif [[ "${{ matrix.variant }}" == "musl" ]]; then
-
-            export CGO_ENABLED=1
-
-            if [[ "${GOOS}" == "linux" && "${GOARCH}" == "amd64" ]]; then
-              export CC=musl-gcc
-            fi
-
-            go build \
-              -v \
-              -trimpath \
-              -tags "${BUILD_TAGS}" \
-              -ldflags "${LDFLAGS} -X github.com/sagernet/sing-box/constant.Version=${VERSION}" \
-              -o "dist/sing-box-${VERSION}-${GOOS}-${GOARCH}-musl"
-
-          fi
+          go build \
+            -v \
+            -trimpath \
+            -o dist/sing-box \
+            -tags "${BUILD_TAGS}" \
+            -ldflags "-X 'github.com/sagernet/sing-box/constant.Version=${{ needs.check.outputs.version }}' ${LDFLAGS_SHARED} -s -w -buildid=" \
+            ./cmd/sing-box
 
       # --------------------------------------------------------
-      # 文件检查
+      # Linux non-naive 构建
       # --------------------------------------------------------
-      - name: 检查构建文件
+      - name: 构建 Linux non-naive
+        if: matrix.os == 'linux' && matrix.naive != true
         shell: bash
-        working-directory: /opt/sing-box
+        working-directory: sing-box
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: ${{ matrix.arch }}
+          GOARM: ${{ matrix.goarm }}
+          GO386: ${{ matrix.go386 }}
+          GOMIPS: ${{ matrix.gomips }}
+          GOMIPS64: ${{ matrix.gomips }}
         run: |
-          set -e
+          set -xeuo pipefail
+
+          mkdir -p dist
+
+          go build \
+            -v \
+            -trimpath \
+            -o dist/sing-box \
+            -tags "${BUILD_TAGS}" \
+            -ldflags "-X 'github.com/sagernet/sing-box/constant.Version=${{ needs.check.outputs.version }}' ${LDFLAGS_SHARED} -s -w -buildid=" \
+            ./cmd/sing-box
+
+      # --------------------------------------------------------
+      # Windows 构建
+      # --------------------------------------------------------
+      - name: 构建 Windows
+        if: matrix.os == 'windows'
+        shell: bash
+        working-directory: sing-box
+        env:
+          CGO_ENABLED: "0"
+          GOOS: windows
+          GOARCH: ${{ matrix.arch }}
+        run: |
+          set -xeuo pipefail
+
+          mkdir -p dist
+
+          go build \
+            -v \
+            -trimpath \
+            -o dist/sing-box.exe \
+            -tags "${BUILD_TAGS}" \
+            -ldflags "-X 'github.com/sagernet/sing-box/constant.Version=${{ needs.check.outputs.version }}' ${LDFLAGS_SHARED} -s -w -buildid=" \
+            ./cmd/sing-box
+
+      # --------------------------------------------------------
+      # 固定 mtime
+      # --------------------------------------------------------
+      - name: 固定文件时间
+        if: matrix.os == 'linux'
+        shell: bash
+        working-directory: sing-box
+        run: |
+          TZ=UTC touch -t '197001010000' dist/sing-box
+
+      # --------------------------------------------------------
+      # 设置 Debian 版本
+      # --------------------------------------------------------
+      - name: 设置 DEB 版本
+        if: matrix.debian != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          PKG_VERSION="${{ needs.check.outputs.version }}"
+
+          # Debian 版本不能直接使用 -
+          PKG_VERSION="${PKG_VERSION//-/~}"
+
+          echo "PKG_VERSION=${PKG_VERSION}" >> "${GITHUB_ENV}"
+
+      # --------------------------------------------------------
+      # 创建 DEB
+      # --------------------------------------------------------
+      - name: 创建 DEB
+        if: matrix.debian != ''
+        shell: bash
+        working-directory: sing-box
+        run: |
+          set -xeuo pipefail
+
+          sudo gem install fpm
+
+          # 使用官方 .fpm_systemd
+          cp .fpm_systemd .fpm
+
+          fpm \
+            -t deb \
+            --name "sing-box" \
+            -v "${PKG_VERSION}" \
+            -p "dist/sing-box_${{ needs.check.outputs.version }}_linux_${{ matrix.debian }}.deb" \
+            --architecture "${{ matrix.debian }}" \
+            dist/sing-box=/usr/bin/sing-box
+
+      # --------------------------------------------------------
+      # 显示产物
+      # --------------------------------------------------------
+      - name: 检查构建产物
+        shell: bash
+        working-directory: sing-box
+        run: |
+          set -euo pipefail
 
           echo "========================================"
-          echo "构建产物"
+          echo "构建完成"
           echo "========================================"
 
-          find dist -type f -maxdepth 1 -print
+          ls -lah dist/
 
           echo
           echo "========================================"
@@ -494,165 +670,10 @@ jobs:
 
           echo
           echo "========================================"
-          echo "文件大小"
+          echo "SHA256"
           echo "========================================"
 
-          du -h dist/*
-
-      # --------------------------------------------------------
-      # 创建 DEB
-      # --------------------------------------------------------
-      - name: 创建 Debian DEB
-        if: matrix.debian != ''
-        shell: bash
-        working-directory: /opt/sing-box
-        run: |
-          set -e
-
-          sudo apt-get update
-          sudo apt-get install -y ruby ruby-dev build-essential
-
-          sudo gem install --no-document fpm
-
-          VERSION="${{ needs.check.outputs.tag }}"
-          DEB_ARCH="${{ matrix.debian }}"
-
-          case "${{ matrix.arch }}-${{ matrix.variant }}" in
-            amd64-musl)
-              BINARY="dist/sing-box-${VERSION}-linux-amd64-musl"
-              ;;
-            arm64-musl)
-              BINARY="dist/sing-box-${VERSION}-linux-arm64-musl"
-              ;;
-            386-musl)
-              BINARY="dist/sing-box-${VERSION}-linux-386-musl"
-              ;;
-            arm-musl)
-              BINARY="dist/sing-box-${VERSION}-linux-arm-musl"
-              ;;
-            mipsle-musl)
-              BINARY="dist/sing-box-${VERSION}-linux-mipsle-musl"
-              ;;
-            mips64le-musl)
-              BINARY="dist/sing-box-${VERSION}-linux-mips64le-musl"
-              ;;
-            riscv64-musl)
-              BINARY="dist/sing-box-${VERSION}-linux-riscv64-musl"
-              ;;
-            loong64-musl)
-              BINARY="dist/sing-box-${VERSION}-linux-loong64-musl"
-              ;;
-            *)
-              echo "当前架构没有对应的 DEB binary：${{ matrix.arch }}-${{ matrix.variant }}"
-              exit 1
-              ;;
-          esac
-
-          test -f "${BINARY}"
-
-          mkdir -p /tmp/sing-box-deb
-
-          # ----------------------------------------------------
-          # 安装官方 Release 资源
-          # ----------------------------------------------------
-
-          mkdir -p \
-            /tmp/sing-box-deb/usr/bin \
-            /tmp/sing-box-deb/usr/lib/systemd/system \
-            /tmp/sing-box-deb/usr/lib/sysusers.d \
-            /tmp/sing-box-deb/usr/lib/udev/rules.d \
-            /tmp/sing-box-deb/usr/share/bash-completion/completions \
-            /tmp/sing-box-deb/usr/share/fish/vendor_completions.d \
-            /tmp/sing-box-deb/usr/share/zsh/vendor-completions \
-            /tmp/sing-box-deb/usr/share/doc/sing-box
-
-          cp "${BINARY}" \
-            /tmp/sing-box-deb/usr/bin/sing-box
-
-          chmod 755 \
-            /tmp/sing-box-deb/usr/bin/sing-box
-
-          # systemd
-          if [[ -f "${GITHUB_WORKSPACE}/Release/sing-box.service" ]]; then
-            cp "${GITHUB_WORKSPACE}/Release/sing-box.service" \
-              /tmp/sing-box-deb/usr/lib/systemd/system/
-          fi
-
-          if [[ -f "${GITHUB_WORKSPACE}/Release/sing-box@.service" ]]; then
-            cp "${GITHUB_WORKSPACE}/Release/sing-box@.service" \
-              /tmp/sing-box-deb/usr/lib/systemd/system/
-          fi
-
-          # sysusers
-          if [[ -f "${GITHUB_WORKSPACE}/Release/sing-box.sysusers" ]]; then
-            cp "${GITHUB_WORKSPACE}/Release/sing-box.sysusers" \
-              /tmp/sing-box-deb/usr/lib/sysusers.d/sing-box.conf
-          fi
-
-          # udev rules
-          if [[ -f "${GITHUB_WORKSPACE}/Release/sing-box.rules" ]]; then
-            cp "${GITHUB_WORKSPACE}/Release/sing-box.rules" \
-              /tmp/sing-box-deb/usr/lib/udev/rules.d/99-sing-box.rules
-          fi
-
-          # bash completion
-          if [[ -f "${GITHUB_WORKSPACE}/Release/sing-box.bash" ]]; then
-            cp "${GITHUB_WORKSPACE}/Release/sing-box.bash" \
-              /tmp/sing-box-deb/usr/share/bash-completion/completions/sing-box
-          fi
-
-          # fish completion
-          if [[ -f "${GITHUB_WORKSPACE}/Release/sing-box.fish" ]]; then
-            cp "${GITHUB_WORKSPACE}/Release/sing-box.fish" \
-              /tmp/sing-box-deb/usr/share/fish/vendor_completions.d/sing-box.fish
-          fi
-
-          # zsh completion
-          if [[ -f "${GITHUB_WORKSPACE}/Release/sing-box.zsh" ]]; then
-            cp "${GITHUB_WORKSPACE}/Release/sing-box.zsh" \
-              /tmp/sing-box-deb/usr/share/zsh/vendor-completions/_sing-box
-          fi
-
-          # LICENSE
-          if [[ -f "${GITHUB_WORKSPACE}/Release/LICENSE" ]]; then
-            cp "${GITHUB_WORKSPACE}/Release/LICENSE" \
-              /tmp/sing-box-deb/usr/share/doc/sing-box/LICENSE
-          fi
-
-          # split DNS
-          if [[ -f "${GITHUB_WORKSPACE}/Release/sing-box-split-dns.xml" ]]; then
-            mkdir -p /tmp/sing-box-deb/usr/share/sing-box
-
-            cp "${GITHUB_WORKSPACE}/Release/sing-box-split-dns.xml" \
-              /tmp/sing-box-deb/usr/share/sing-box/
-          fi
-
-          # ----------------------------------------------------
-          # FPM
-          # ----------------------------------------------------
-
-          PKG_VERSION="${VERSION#v}"
-
-          fpm \
-            -s dir \
-            -t deb \
-            --name sing-box \
-            --version "${PKG_VERSION}" \
-            --architecture "${DEB_ARCH}" \
-            --description "The universal proxy platform" \
-            --license GPL-3.0 \
-            --url "https://github.com/SagerNet/sing-box" \
-            --maintainer "SagerNet" \
-            --after-install "${GITHUB_WORKSPACE}/Release/sing-box.postinst" \
-            -C /tmp/sing-box-deb \
-            -p "dist/sing-box_${PKG_VERSION}_${DEB_ARCH}.deb" \
-            .
-
-          echo "========================================"
-          echo "DEB 构建完成"
-          echo "========================================"
-
-          ls -lh dist/*.deb
+          sha256sum dist/*
 
       # --------------------------------------------------------
       # 上传 Artifact
@@ -660,15 +681,14 @@ jobs:
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
-          name: sing-box-${{ needs.check.outputs.tag }}-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.variant || 'default' }}
-          path: |
-            /opt/sing-box/dist/*
+          name: sing-box-${{ needs.check.outputs.version }}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.goarm && format('-arm{0}', matrix.goarm) || '' }}${{ matrix.variant && format('-{0}', matrix.variant) || '' }}
+          path: sing-box/dist/*
           if-no-files-found: error
           retention-days: 7
 
 
   # ============================================================
-  # 汇总所有构建产物
+  # 汇总所有构建结果
   # ============================================================
   collect:
     name: 汇总构建产物
@@ -678,78 +698,71 @@ jobs:
 
     if: needs.check.outputs.should_build == 'true'
 
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
 
     steps:
 
       - name: 下载全部构建产物
         uses: actions/download-artifact@v4
         with:
+          pattern: sing-box-${{ needs.check.outputs.version }}-*
           path: dist
-          pattern: sing-box-${{ needs.check.outputs.tag }}-*
           merge-multiple: true
 
-      - name: 整理文件
+      - name: 检查所有产物
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
-          mkdir -p release
+          echo "========================================"
+          echo "全部 Release 产物"
+          echo "========================================"
 
-          find dist -type f -print
+          find dist -maxdepth 1 -type f -print
 
-          # 把所有构建产物移动到 Release 目录
-          find dist -type f -exec cp {} release/ \;
-
-          # 删除重复的文件名冲突
-          find release -type f -printf '%f\n' | sort
+          echo
+          echo "数量：$(find dist -maxdepth 1 -type f | wc -l)"
 
       - name: 生成 SHA256
         shell: bash
-        working-directory: release
         run: |
-          set -e
+          set -euo pipefail
+
+          cd dist
 
           sha256sum * > sha256sums.txt
 
           echo "========================================"
-          echo "SHA256"
-          echo "========================================"
-
           cat sha256sums.txt
+          echo "========================================"
 
       - name: 生成构建信息
         shell: bash
-        working-directory: release
         run: |
-          set -e
+          set -euo pipefail
 
-          BUILD_TIME="$(date '+%Y-%m-%d %H:%M:%S %Z')"
-          VERSION="${{ needs.check.outputs.tag }}"
-
-          cat > build-info.txt <<EOF
+          cat > dist/build-info.txt <<EOF
           Project: sing-box
-          Version: ${VERSION}
-          Build Time: ${BUILD_TIME}
+          Version: ${{ needs.check.outputs.tag }}
+          Build Version: ${{ needs.check.outputs.version }}
           Repository: ${GITHUB_REPOSITORY}
           Commit: ${GITHUB_SHA}
+          Build Time: $(date '+%Y-%m-%d %H:%M:%S %Z')
           EOF
 
-          echo "========================================"
-          cat build-info.txt
-          echo "========================================"
+          cat dist/build-info.txt
 
-      - name: 上传最终 Release Artifact
+      - name: 上传最终产物
         uses: actions/upload-artifact@v4
         with:
-          name: sing-box-release-${{ needs.check.outputs.tag }}
-          path: release/
+          name: sing-box-release-${{ needs.check.outputs.version }}
+          path: dist/
           if-no-files-found: error
           retention-days: 7
 
 
   # ============================================================
-  # 发布 Release
+  # 发布 GitHub Release
   # ============================================================
   release:
     name: 发布 Release
@@ -759,51 +772,64 @@ jobs:
 
     if: needs.check.outputs.should_build == 'true'
 
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
 
     steps:
 
-      - name: 下载最终构建产物
+      - name: 下载最终产物
         uses: actions/download-artifact@v4
         with:
-          name: sing-box-release-${{ needs.check.outputs.tag }}
+          name: sing-box-release-${{ needs.check.outputs.version }}
           path: release
 
       - name: 发布 GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
+
           tag_name: ${{ needs.check.outputs.tag }}
+
           name: sing-box ${{ needs.check.outputs.tag }}
-          files: release/*
-          fail_on_unmatched_files: true
+
+          target_commitish: ${{ github.sha }}
+
           generate_release_notes: true
+
+          fail_on_unmatched_files: true
+
+          files: |
+            release/*
+
           body: |
-            ## sing-box ${{ needs.check.outputs.tag }}
+            # sing-box ${{ needs.check.outputs.tag }}
 
-            基于官方 SagerNet/sing-box ${{ needs.check.outputs.tag }} 构建。
+            基于官方
+            `SagerNet/sing-box ${{ needs.check.outputs.tag }}`
+            构建。
 
-            ### 支持平台
+            ## 支持平台
 
-            **Linux**
+            ### Linux
+
             - amd64
             - arm64
             - 386
-            - arm
-            - mips
+            - armv7
+            - armv6
             - mipsle
-            - mips64
             - mips64le
             - riscv64
             - loong64
             - s390x
             - ppc64le
 
-            **Windows**
+            ### Windows
+
             - amd64
             - 386
 
-            **Debian**
+            ## Debian
+
             - amd64
             - arm64
             - i386
@@ -816,37 +842,23 @@ jobs:
             - s390x
             - ppc64el
 
-            ### 构建说明
+            ## 构建信息
 
-            本 Release 基于：
+            上游项目：
 
             https://github.com/SagerNet/sing-box
 
+            版本：
+
+            `${{ needs.check.outputs.tag }}`
+
             构建时间：
 
-            ${{ github.event.head_commit.timestamp }}
+            `$(date '+%Y-%m-%d %H:%M:%S %Z')`
 
-            ### SHA256
+            ## SHA256
 
-            详见 `sha256sums.txt`。
+            请查看 Release 中的：
 
-
-  # ============================================================
-  # 清理 Workflow Runs
-  # ============================================================
-  cleanup:
-    name: 清理旧 Workflow Runs
-    needs:
-      - release
-
-    if: always()
-
-    runs-on: ubuntu-24.04
-
-    steps:
-      - name: 删除旧流程记录
-        uses: Mattraks/delete-workflow-runs@main
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          retain_days: 0
-          keep_minimum_runs: 0
+            `sha256sums.txt`
+            
