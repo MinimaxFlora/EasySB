@@ -246,7 +246,7 @@ jobs:
           VERSION="${{ needs.check.outputs.version }}"
           OS="${{ matrix.os }}"
           ARCH="${{ matrix.arch }}"
-          GOARM="${{ matrix.goarm:- }}"
+          GOARM="${{ matrix.goarm || '' }}"
           ARM_SUFFIX=""
           if [[ -n "${GOARM}" ]]; then
             ARM_SUFFIX="-arm${GOARM}"
@@ -296,7 +296,7 @@ jobs:
         run: |
           VERSION="${{ needs.check.outputs.version }}"
           ARCH="${{ matrix.arch }}"
-          GOARM="${{ matrix.goarm:- }}"
+          GOARM="${{ matrix.goarm || '' }}"
           ARM_SUFFIX=""
           if [[ -n "${GOARM}" ]]; then
             ARM_SUFFIX="-arm${GOARM}"
