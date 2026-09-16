@@ -47,7 +47,7 @@ jobs:
           echo "ver=$ver" >> $GITHUB_OUTPUT
 
       - name: 删除旧workflow记录
-        uses: Mattraks/delete-workflow-runs@main
+        uses: Mattraks/delete-workflow-runs@v2.1.0
         with:
           token: ${{ github.token }}
           retain_days: 0
@@ -91,17 +91,17 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7.0.1
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7.0.0
         with:
-          go-version: "1.26.x"
+          go-version: "1.27.1"
 
       - name: 安装UPX
-        uses: crazy-max/ghaction-upx@v3
+        uses: crazy-max/ghaction-upx@v4.0.0
         with:
-          version: v4.2.4
+          version: v5.2.1
           install-only: true
 
       - name: 设置版本
