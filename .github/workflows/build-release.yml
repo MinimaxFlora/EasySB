@@ -80,10 +80,6 @@ jobs:
             SHOULD_BUILD=false
           fi
 
-          echo "TAG=${TAG}"
-          echo "VERSION=${VERSION}"
-          echo "SHOULD_BUILD=${SHOULD_BUILD}"
-
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "local_tag=${LOCAL_TAG}" >> "$GITHUB_OUTPUT"
@@ -106,58 +102,21 @@ jobs:
       max-parallel: 13
       matrix:
         include:
-          - os: linux
-            arch: amd64
-            build_tags: default
-          - os: linux
-            arch: arm64
-            build_tags: default
-          - os: linux
-            arch: "386"
-            build_tags: others
-            go386: sse2
-          - os: linux
-            arch: arm
-            build_tags: others
-            goarm: "7"
-          - os: linux
-            arch: arm
-            build_tags: others
-            goarm: "6"
-          - os: linux
-            arch: mips
-            build_tags: others
-            gomips: hardfloat
-          - os: linux
-            arch: mipsle
-            build_tags: others
-            gomips: hardfloat
-          - os: linux
-            arch: mips64
-            build_tags: others
-            gomips64: hardfloat
-          - os: linux
-            arch: mips64le
-            build_tags: others
-            gomips64: hardfloat
-          - os: linux
-            arch: riscv64
-            build_tags: others
-          - os: linux
-            arch: loong64
-            build_tags: others
-          - os: linux
-            arch: s390x
-            build_tags: others
-          - os: linux
-            arch: ppc64le
-            build_tags: others
-          - os: windows
-            arch: amd64
-            build_tags: windows
-          - os: windows
-            arch: "386"
-            build_tags: others
+          - { os: linux, arch: amd64, build_tags: default }
+          - { os: linux, arch: arm64, build_tags: default }
+          - { os: linux, arch: "386", build_tags: others, go386: sse2 }
+          - { os: linux, arch: arm, build_tags: others, goarm: "7" }
+          - { os: linux, arch: arm, build_tags: others, goarm: "6" }
+          - { os: linux, arch: mips, build_tags: others, gomips: hardfloat }
+          - { os: linux, arch: mipsle, build_tags: others, gomips: hardfloat }
+          - { os: linux, arch: mips64, build_tags: others, gomips64: hardfloat }
+          - { os: linux, arch: mips64le, build_tags: others, gomips64: hardfloat }
+          - { os: linux, arch: riscv64, build_tags: others }
+          - { os: linux, arch: loong64, build_tags: others }
+          - { os: linux, arch: s390x, build_tags: others }
+          - { os: linux, arch: ppc64le, build_tags: others }
+          - { os: windows, arch: amd64, build_tags: windows }
+          - { os: windows, arch: "386", build_tags: others }
 
     steps:
       - name: 检出仓库
@@ -175,11 +134,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git clone \
-            --depth 1 \
-            --branch "${{ needs.check.outputs.tag }}" \
-            https://github.com/SagerNet/sing-box.git \
-            sing-box
+          git clone --depth 1 --branch "${{ needs.check.outputs.tag }}" \
+            https://github.com/SagerNet/sing-box.git sing-box
 
       - name: 安装 Linux 构建依赖
         if: matrix.os == 'linux'
@@ -187,30 +143,19 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config file jq git
+          sudo apt-get install -y build-essential pkg-config file jq git curl
 
       - name: 设置官方 Build Tags
         shell: bash
         working-directory: sing-box
         run: |
           set -euo pipefail
-
           case "${{ matrix.build_tags }}" in
-            default)
-              TAGS="$(cat release/DEFAULT_BUILD_TAGS),with_purego"
-              ;;
-            others)
-              TAGS="$(cat release/DEFAULT_BUILD_TAGS_OTHERS)"
-              ;;
-            windows)
-              TAGS="$(cat release/DEFAULT_BUILD_TAGS_WINDOWS)"
-              ;;
-            *)
-              echo "::error::未知 build_tags：${{ matrix.build_tags }}"
-              exit 1
-              ;;
+            default) TAGS="$(cat release/DEFAULT_BUILD_TAGS),with_purego" ;;
+            others) TAGS="$(cat release/DEFAULT_BUILD_TAGS_OTHERS)" ;;
+            windows) TAGS="$(cat release/DEFAULT_BUILD_TAGS_WINDOWS)" ;;
+            *) echo "::error::未知 build_tags：${{ matrix.build_tags }}"; exit 1 ;;
           esac
-
           echo "BUILD_TAGS=${TAGS}" >> "$GITHUB_ENV"
           echo "BUILD_TAGS=${TAGS}"
 
@@ -219,8 +164,7 @@ jobs:
         working-directory: sing-box
         run: |
           set -euo pipefail
-          LDFLAGS_SHARED="$(cat release/LDFLAGS)"
-          echo "LDFLAGS_SHARED=${LDFLAGS_SHARED}" >> "$GITHUB_ENV"
+          echo "LDFLAGS_SHARED=$(cat release/LDFLAGS)" >> "$GITHUB_ENV"
 
       - name: 编译 Linux
         if: matrix.os == 'linux'
@@ -236,33 +180,24 @@ jobs:
           GOMIPS64: ${{ matrix.gomips64 }}
         run: |
           set -euo pipefail
-
           mkdir -p dist
           VERSION="${{ needs.check.outputs.version }}"
           OUTPUT="sing-box-${VERSION}-linux-${GOARCH}"
-
-          if [[ -n "${GOARM:-}" ]]; then
-            OUTPUT="${OUTPUT}-arm${GOARM}"
-          fi
-
-          echo "编译 ${OUTPUT}"
-          echo "BUILD_TAGS=${BUILD_TAGS}"
-
-          go build \
-            -v \
-            -trimpath \
-            -tags "${BUILD_TAGS}" \
+          [[ -z "${GOARM:-}" ]] || OUTPUT="${OUTPUT}-arm${GOARM}"
+          go build -v -trimpath -tags "${BUILD_TAGS}" \
             -ldflags "-X 'github.com/sagernet/sing-box/constant.Version=${VERSION}' ${LDFLAGS_SHARED} -s -w -buildid=" \
-            -o "dist/${OUTPUT}" \
-            ./cmd/sing-box
+            -o "dist/${OUTPUT}" ./cmd/sing-box
 
-          # Linux amd64/arm64 的 with_purego NaiveProxy 需要 libcronet.so。
           if [[ "${GOARCH}" == "amd64" || "${GOARCH}" == "arm64" ]]; then
-            CRONET_URL="https://github.com/SagerNet/cronet-go/releases/latest/download/libcronet-linux-${GOARCH}.so"
-            echo "下载 ${CRONET_URL}"
-            curl -fL --retry 3 --retry-all-errors \
-              "${CRONET_URL}" \
-              -o "dist/libcronet.so"
+            CRONET_GO_VERSION="$(cat .github/CRONET_GO_VERSION)"
+            LIBRARY_PATH="lib/linux_${GOARCH}/libcronet.so"
+            rm -rf "$RUNNER_TEMP/cronet-go-lib"
+            git init "$RUNNER_TEMP/cronet-go-lib"
+            git -C "$RUNNER_TEMP/cronet-go-lib" remote add origin https://github.com/SagerNet/cronet-go.git
+            git -C "$RUNNER_TEMP/cronet-go-lib" sparse-checkout set --no-cone "/${LIBRARY_PATH}"
+            git -C "$RUNNER_TEMP/cronet-go-lib" fetch --depth=1 --filter=blob:none origin "$CRONET_GO_VERSION"
+            git -C "$RUNNER_TEMP/cronet-go-lib" checkout FETCH_HEAD
+            cp "$RUNNER_TEMP/cronet-go-lib/${LIBRARY_PATH}" dist/libcronet.so
             chmod 0755 dist/libcronet.so
           fi
 
@@ -276,29 +211,23 @@ jobs:
           GOARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
-
           mkdir -p dist
           VERSION="${{ needs.check.outputs.version }}"
           OUTPUT="sing-box-${VERSION}-windows-${GOARCH}.exe"
-
-          echo "编译 ${OUTPUT}"
-          echo "BUILD_TAGS=${BUILD_TAGS}"
-
-          go build \
-            -v \
-            -trimpath \
-            -tags "${BUILD_TAGS}" \
+          go build -v -trimpath -tags "${BUILD_TAGS}" \
             -ldflags "-X 'github.com/sagernet/sing-box/constant.Version=${VERSION}' ${LDFLAGS_SHARED} -s -w -buildid=" \
-            -o "dist/${OUTPUT}" \
-            ./cmd/sing-box
+            -o "dist/${OUTPUT}" ./cmd/sing-box
 
-          # Windows amd64 的 with_purego NaiveProxy 需要 libcronet.dll。
           if [[ "${GOARCH}" == "amd64" ]]; then
-            CRONET_URL="https://github.com/SagerNet/cronet-go/releases/latest/download/libcronet-windows-amd64.dll"
-            echo "下载 ${CRONET_URL}"
-            curl -fL --retry 3 --retry-all-errors \
-              "${CRONET_URL}" \
-              -o "dist/libcronet.dll"
+            CRONET_GO_VERSION="$(cat .github/CRONET_GO_VERSION)"
+            LIBRARY_PATH="lib/windows_amd64/libcronet.dll"
+            rm -rf "$RUNNER_TEMP/cronet-go-lib"
+            git init "$RUNNER_TEMP/cronet-go-lib"
+            git -C "$RUNNER_TEMP/cronet-go-lib" remote add origin https://github.com/SagerNet/cronet-go.git
+            git -C "$RUNNER_TEMP/cronet-go-lib" sparse-checkout set --no-cone "/${LIBRARY_PATH}"
+            git -C "$RUNNER_TEMP/cronet-go-lib" fetch --depth=1 --filter=blob:none origin "$CRONET_GO_VERSION"
+            git -C "$RUNNER_TEMP/cronet-go-lib" checkout FETCH_HEAD
+            cp "$RUNNER_TEMP/cronet-go-lib/${LIBRARY_PATH}" dist/libcronet.dll
           fi
 
       - name: 检查构建产物
@@ -321,49 +250,33 @@ jobs:
 
   deb:
     name: 构建 Debian DEB
-    needs:
-      - check
-      - build
+    needs: [check, build]
     if: needs.check.outputs.should_build == 'true'
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
         include:
-          - arch: amd64
-            debian: amd64
-          - arch: arm64
-            debian: arm64
-          - arch: "386"
-            debian: i386
-          - arch: arm
-            goarm: "7"
-            debian: armhf
-          - arch: arm
-            goarm: "6"
-            debian: armel
-          - arch: mipsle
-            debian: mipsel
-          - arch: mips64le
-            debian: mips64el
-          - arch: riscv64
-            debian: riscv64
-          - arch: loong64
-            debian: loongarch64
-          - arch: s390x
-            debian: s390x
-          - arch: ppc64le
-            debian: ppc64el
+          - { arch: amd64, debian: amd64 }
+          - { arch: arm64, debian: arm64 }
+          - { arch: "386", debian: i386 }
+          - { arch: arm, goarm: "7", debian: armhf }
+          - { arch: arm, goarm: "6", debian: armel }
+          - { arch: mipsle, debian: mipsel }
+          - { arch: mips64le, debian: mips64el }
+          - { arch: riscv64, debian: riscv64 }
+          - { arch: loong64, debian: loongarch64 }
+          - { arch: s390x, debian: s390x }
+          - { arch: ppc64le, debian: ppc64el }
 
     steps:
-      - name: 下载构建产物
+      - name: 下载对应架构构建产物
         uses: actions/download-artifact@v4
         with:
-          pattern: sing-box-${{ needs.check.outputs.version }}-linux-${{ matrix.arch }}${{ matrix.goarm && format('-arm{0}', matrix.goarm) || '' }}
+          name: sing-box-${{ needs.check.outputs.version }}-linux-${{ matrix.arch }}${{ matrix.goarm && format('-arm{0}', matrix.goarm) || '' }}
           path: input
-          merge-multiple: true
 
-      - name: 检出仓库
+      - name: 检出 Release 资源
         uses: actions/checkout@v5
         with:
           sparse-checkout: |
@@ -382,7 +295,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           VERSION="${{ needs.check.outputs.version }}"
           DEB_VERSION="${VERSION//-/~}"
 
@@ -390,23 +302,13 @@ jobs:
           mkdir -p package/usr/bin dist
 
           BINARY="$(find input -maxdepth 1 -type f -name 'sing-box-*' ! -name '*.deb' | head -n 1)"
-          if [[ -z "${BINARY}" ]]; then
-            echo "::error::没有找到 sing-box 二进制"
-            find input -type f -print
-            exit 1
-          fi
-
+          [[ -n "${BINARY}" ]] || { echo "::error::没有找到 sing-box 二进制"; find input -type f -print; exit 1; }
           cp "${BINARY}" package/usr/bin/sing-box
           chmod 0755 package/usr/bin/sing-box
 
-          # amd64/arm64 使用 purego + NaiveProxy，需要 libcronet.so。
           if [[ "${{ matrix.arch }}" == "amd64" || "${{ matrix.arch }}" == "arm64" ]]; then
             CRONET="$(find input -maxdepth 1 -type f -name 'libcronet.so' | head -n 1)"
-            if [[ -z "${CRONET}" ]]; then
-              echo "::error::${{ matrix.arch }} 缺少 libcronet.so"
-              find input -type f -print
-              exit 1
-            fi
+            [[ -n "${CRONET}" ]] || { echo "::error::${{ matrix.arch }} 缺少 libcronet.so"; find input -type f -print; exit 1; }
             mkdir -p package/usr/lib
             cp "${CRONET}" package/usr/lib/libcronet.so
             chmod 0755 package/usr/lib/libcronet.so
@@ -420,32 +322,26 @@ jobs:
             mkdir -p package/usr/lib/sysusers.d
             cp Release/sing-box.sysusers package/usr/lib/sysusers.d/sing-box.conf
           fi
-
           if [[ -f Release/sing-box.rules ]]; then
             mkdir -p package/usr/lib/udev/rules.d
             cp Release/sing-box.rules package/usr/lib/udev/rules.d/99-sing-box.rules
           fi
-
           if [[ -f Release/sing-box.bash ]]; then
             mkdir -p package/usr/share/bash-completion/completions
             cp Release/sing-box.bash package/usr/share/bash-completion/completions/sing-box
           fi
-
           if [[ -f Release/sing-box.fish ]]; then
             mkdir -p package/usr/share/fish/vendor_completions.d
             cp Release/sing-box.fish package/usr/share/fish/vendor_completions.d/sing-box.fish
           fi
-
           if [[ -f Release/sing-box.zsh ]]; then
             mkdir -p package/usr/share/zsh/vendor-completions
             cp Release/sing-box.zsh package/usr/share/zsh/vendor-completions/_sing-box
           fi
-
           if [[ -f Release/LICENSE ]]; then
             mkdir -p package/usr/share/doc/sing-box
             cp Release/LICENSE package/usr/share/doc/sing-box/LICENSE
           fi
-
           if [[ -f Release/sing-box-split-dns.xml ]]; then
             mkdir -p package/usr/share/sing-box
             cp Release/sing-box-split-dns.xml package/usr/share/sing-box/
@@ -486,10 +382,7 @@ jobs:
 
   collect:
     name: 汇总所有产物
-    needs:
-      - check
-      - build
-      - deb
+    needs: [check, build, deb]
     if: needs.check.outputs.should_build == 'true'
     runs-on: ubuntu-24.04
     steps:
@@ -499,21 +392,18 @@ jobs:
           pattern: sing-box-${{ needs.check.outputs.version }}-linux-*
           path: release
           merge-multiple: true
-
       - name: 下载 Windows
         uses: actions/download-artifact@v4
         with:
           pattern: sing-box-${{ needs.check.outputs.version }}-windows-*
           path: release
           merge-multiple: true
-
       - name: 下载 DEB
         uses: actions/download-artifact@v4
         with:
           pattern: sing-box-${{ needs.check.outputs.version }}-deb-*
           path: release
           merge-multiple: true
-
       - name: 检查 Release 文件
         shell: bash
         run: |
@@ -521,15 +411,12 @@ jobs:
           find release -maxdepth 1 -type f -printf '%f\n' | sort
           COUNT="$(find release -maxdepth 1 -type f | wc -l)"
           [[ "${COUNT}" -gt 0 ]] || { echo "::error::没有找到任何 Release 文件"; exit 1; }
-
       - name: 生成 SHA256
         shell: bash
         run: |
           set -euo pipefail
           cd release
           sha256sum * > sha256sums.txt
-          cat sha256sums.txt
-
       - name: 生成构建信息
         shell: bash
         run: |
@@ -542,8 +429,6 @@ jobs:
           Commit: ${GITHUB_SHA}
           Build Time: $(date '+%Y-%m-%d %H:%M:%S %Z')
           EOF
-          cat release/build-info.txt
-
       - name: 上传最终 Release Artifact
         uses: actions/upload-artifact@v4
         with:
@@ -554,9 +439,7 @@ jobs:
 
   release:
     name: 发布 GitHub Release
-    needs:
-      - check
-      - collect
+    needs: [check, collect]
     if: needs.check.outputs.should_build == 'true'
     runs-on: ubuntu-24.04
     steps:
@@ -565,7 +448,6 @@ jobs:
         with:
           name: sing-box-release-${{ needs.check.outputs.version }}
           path: release
-
       - name: 发布 GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -581,9 +463,6 @@ jobs:
             # sing-box ${{ needs.check.outputs.tag }}
 
             基于官方 SagerNet/sing-box 构建。
-
-            官方项目：
-            https://github.com/SagerNet/sing-box
 
             ## Linux
             - amd64（purego + libcronet.so）
