@@ -1,0 +1,207 @@
+name: Build releases
+
+on:
+  schedule:
+    - cron: "0 3,20 * * *"
+
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "指定 sing-box 版本，例如 v1.14.1"
+        required: false
+        default: ""
+      info:
+        description: "Release补充说明"
+        required: false
+        default: ""
+      bj:
+        description: "强制编译"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+  actions: write
+
+env:
+  TZ: Asia/Shanghai
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      ver: ${{ steps.version.outputs.ver }}
+    steps:
+      - name: 获取版本
+        id: version
+        run: |
+          tag=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r '.tag_name')
+          ver=$(curl -s https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/latest | jq -r '.tag_name')
+
+          echo "sing-box最新版本: $tag"
+          echo "仓库版本: $ver"
+
+          echo "tag=$tag" >> $GITHUB_OUTPUT
+          echo "ver=$ver" >> $GITHUB_OUTPUT
+
+      - name: 删除旧workflow记录
+        uses: Mattraks/delete-workflow-runs@v2.1.0
+        with:
+          token: ${{ github.token }}
+          retain_days: 0
+          keep_minimum_runs: 0
+
+  build:
+    needs: check
+    if: |
+      github.event.inputs.bj == 'true' ||
+      needs.check.outputs.tag != needs.check.outputs.ver
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - TARGET: linux-amd64
+            OS: ubuntu-latest
+            GOOS: linux
+            GOARCH: amd64
+            DEB: amd64
+          - TARGET: linux-arm64
+            OS: ubuntu-latest
+            GOOS: linux
+            GOARCH: arm64
+            DEB: arm64
+          - TARGET: windows-amd64
+            OS: ubuntu-latest
+            GOOS: windows
+            GOARCH: amd64
+          - TARGET: windows-arm64
+            OS: ubuntu-latest
+            GOOS: windows
+            GOARCH: arm64
+
+    runs-on: ${{ matrix.OS }}
+
+    env:
+      TARGET: ${{ matrix.TARGET }}
+      GOOS: ${{ matrix.GOOS }}
+      GOARCH: ${{ matrix.GOARCH }}
+      DEB: ${{ matrix.DEB }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: Setup Go
+        uses: actions/setup-go@v7.0.0
+        with:
+          go-version: "1.27.1"
+
+      - name: 安装UPX
+        uses: crazy-max/ghaction-upx@v4.0.0
+        with:
+          version: v5.2.1
+          install-only: true
+
+      - name: 设置版本
+        shell: bash
+        run: |
+          if [[ -n "${{ github.event.inputs.branch }}" ]]; then
+            TAG=${{ github.event.inputs.branch }}
+          else
+            TAG=${{ needs.check.outputs.tag }}
+          fi
+          echo "TAG=$TAG" >> $GITHUB_ENV
+
+      - name: 拉取sing-box源码
+        shell: bash
+        run: |
+          git clone -b ${TAG} --depth=1 https://github.com/SagerNet/sing-box /opt/sing-box
+
+      - name: 编译
+        shell: bash
+        run: |
+          mkdir -p /opt/dist
+          cd /opt/sing-box
+
+          if [[ "${GOOS}" == "windows" ]]; then
+            OUT=sing-box.exe
+          else
+            OUT=sing-box
+          fi
+
+          CGO_ENABLED=0 \
+          GOOS=${GOOS} \
+          GOARCH=${GOARCH} \
+          go build \
+          -trimpath \
+          -ldflags "-s -w" \
+          -o /opt/dist/${OUT} \
+          ./cmd/sing-box
+
+      - name: UPX压缩
+        shell: bash
+        run: |
+          cd /opt/dist
+          if [[ "${GOOS}" == "windows" ]]; then
+            cp sing-box.exe sing-box-${TARGET}-upx.exe
+            upx --lzma --best sing-box-${TARGET}-upx.exe
+          else
+            cp sing-box sing-box-${TARGET}-upx
+            upx --lzma --best sing-box-${TARGET}-upx
+          fi
+
+      - name: 制作tar.gz
+        if: matrix.GOOS == 'linux'
+        shell: bash
+        run: |
+          cd /opt/dist
+          mkdir -p sing-box-${TARGET}
+          cp sing-box sing-box-${TARGET}/
+          tar czvf sing-box-${TARGET}.tar.gz sing-box-${TARGET}
+
+      - name: 制作zip
+        if: matrix.GOOS == 'windows'
+        shell: bash
+        run: |
+          cd /opt/dist
+          zip sing-box-${TARGET}.zip sing-box.exe
+
+      - name: 制作deb
+        if: matrix.GOOS == 'linux'
+        shell: bash
+        run: |
+          sudo gem install fpm
+          cd /opt/dist
+          fpm \
+          -t deb \
+          -v ${TAG#v} \
+          -p sing-box_${TAG}_${DEB}.deb \
+          --architecture ${DEB} \
+          sing-box=/usr/bin/sing-box
+
+      - name: SHA256
+        shell: bash
+        run: |
+          cd /opt/dist
+          sha256sum * > sha256sums.txt
+
+      - name: 上传artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sing-box-${{ matrix.TARGET }}
+          path: /opt/dist
+
+      - name: 发布Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          body: |
+            ## sing-box 编译版本
+
+            架构: ${{ matrix.TARGET }}
+            自动编译时间: ${{ github.event.repository.updated_at }}
+
+            ${{ github.event.inputs.info }}
+          files: /opt/dist/*
