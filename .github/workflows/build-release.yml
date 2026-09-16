@@ -26,7 +26,7 @@ concurrency:
 jobs:
   check:
     name: 检查版本
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       tag: ${{ steps.getversion.outputs.tag }}
       version: ${{ steps.getversion.outputs.version }}
@@ -93,30 +93,30 @@ jobs:
           keep_minimum_runs: 20
 
   build:
-    name: ${{ matrix.display }}
+    name: ${{ format('{0}-{1}{2}', matrix.os, matrix.arch, matrix.goarm && format('-arm{0}', matrix.goarm) || '') }}
     needs: check
     if: needs.check.outputs.should_build == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     strategy:
       fail-fast: false
       max-parallel: 13
       matrix:
         include:
-          - { os: linux, arch: amd64, build_tags: default, display: linux-amd64 }
-          - { os: linux, arch: arm64, build_tags: default, display: linux-arm64 }
-          - { os: linux, arch: "386", build_tags: others, go386: sse2, display: linux-386 }
-          - { os: linux, arch: arm, build_tags: others, goarm: "7", display: linux-arm-arm7 }
-          - { os: linux, arch: arm, build_tags: others, goarm: "6", display: linux-arm-arm6 }
-          - { os: linux, arch: mips, build_tags: others, gomips: hardfloat, display: linux-mips }
-          - { os: linux, arch: mipsle, build_tags: others, gomips: hardfloat, display: linux-mipsle }
-          - { os: linux, arch: mips64, build_tags: others, gomips64: hardfloat, display: linux-mips64 }
-          - { os: linux, arch: mips64le, build_tags: others, gomips64: hardfloat, display: linux-mips64le }
-          - { os: linux, arch: riscv64, build_tags: others, display: linux-riscv64 }
-          - { os: linux, arch: loong64, build_tags: others, display: linux-loong64 }
-          - { os: linux, arch: s390x, build_tags: others, display: linux-s390x }
-          - { os: linux, arch: ppc64le, build_tags: others, display: linux-ppc64le }
-          - { os: windows, arch: amd64, build_tags: windows, display: windows-amd64 }
-          - { os: windows, arch: "386", build_tags: others, display: windows-386 }
+          - { os: linux, arch: amd64, build_tags: default }
+          - { os: linux, arch: arm64, build_tags: default }
+          - { os: linux, arch: "386", build_tags: others, go386: sse2 }
+          - { os: linux, arch: arm, build_tags: others, goarm: "7" }
+          - { os: linux, arch: arm, build_tags: others, goarm: "6" }
+          - { os: linux, arch: mips, build_tags: others, gomips: hardfloat }
+          - { os: linux, arch: mipsle, build_tags: others, gomips: hardfloat }
+          - { os: linux, arch: mips64, build_tags: others, gomips64: hardfloat }
+          - { os: linux, arch: mips64le, build_tags: others, gomips64: hardfloat }
+          - { os: linux, arch: riscv64, build_tags: others }
+          - { os: linux, arch: loong64, build_tags: others }
+          - { os: linux, arch: s390x, build_tags: others }
+          - { os: linux, arch: ppc64le, build_tags: others }
+          - { os: windows, arch: amd64, build_tags: windows }
+          - { os: windows, arch: "386", build_tags: others }
 
     steps:
       - name: 检出仓库
@@ -145,7 +145,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config file jq git curl
 
-      - name: 设置官方 Build Tags 与动态命名
+      - name: 设置官方 Build Tags
         shell: bash
         working-directory: sing-box
         run: |
@@ -157,21 +157,13 @@ jobs:
             *) echo "::error::未知 build_tags：${{ matrix.build_tags }}"; exit 1 ;;
           esac
           echo "BUILD_TAGS=${TAGS}" >> "$GITHUB_ENV"
+          echo "BUILD_TAGS=${TAGS}"
 
-          # 使用安全的 Bash 脚本计算版本与产物名，完全避免 YAML 表达式解析错误
-          VERSION="${{ needs.check.outputs.version }}"
-          OS="${{ matrix.os }}"
-          ARCH="${{ matrix.arch }}"
-          GOARM="${{ matrix.goarm }}"
-
-          if [[ "${OS}" == "windows" ]]; then
-            ARTIFACT_NAME="sing-box-${VERSION}-windows-${ARCH}"
-          else
-            ARTIFACT_NAME="sing-box-${VERSION}-linux-${ARCH}"
-            [[ -z "${GOARM}" ]] || ARTIFACT_NAME="${ARTIFACT_NAME}-arm${GOARM}"
-          fi
-
-          echo "ARTIFACT_NAME=${ARTIFACT_NAME}" >> "$GITHUB_ENV"
+      - name: 设置官方 LDFLAGS
+        shell: bash
+        working-directory: sing-box
+        run: |
+          set -euo pipefail
           echo "LDFLAGS_SHARED=$(cat release/LDFLAGS)" >> "$GITHUB_ENV"
 
       - name: 编译 Linux
@@ -221,7 +213,7 @@ jobs:
           set -euo pipefail
           mkdir -p dist
           VERSION="${{ needs.check.outputs.version }}"
-          OUTPUT="sing-box-${VERSION}-windows-${ARCH}.exe"
+          OUTPUT="sing-box-${VERSION}-windows-${GOARCH}.exe"
           go build -v -trimpath -tags "${BUILD_TAGS}" \
             -ldflags "-X 'github.com/sagernet/sing-box/constant.Version=${VERSION}' ${LDFLAGS_SHARED} -s -w -buildid=" \
             -o "dist/${OUTPUT}" ./cmd/sing-box
@@ -251,7 +243,7 @@ jobs:
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.ARTIFACT_NAME }}
+          name: sing-box-${{ needs.check.outputs.version }}-${{ matrix.os }}-${{ matrix.arch }}{{ matrix.goarm && format('-arm{0}', matrix.goarm) || '' }}
           path: sing-box/dist/*
           if-no-files-found: error
           retention-days: 7
@@ -260,7 +252,7 @@ jobs:
     name: 构建并签名 Debian DEB (${{ matrix.debian }})
     needs: [check, build]
     if: needs.check.outputs.should_build == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     strategy:
       fail-fast: false
       matrix:
@@ -373,7 +365,7 @@ jobs:
     name: 汇总所有产物
     needs: [check, build, deb]
     if: needs.check.outputs.should_build == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - name: 下载 Linux
         uses: actions/download-artifact@v8.0.1
@@ -430,7 +422,7 @@ jobs:
     name: 发布 GitHub Release
     needs: [check, collect]
     if: needs.check.outputs.should_build == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - name: 下载最终产物
         uses: actions/download-artifact@v8.0.1
