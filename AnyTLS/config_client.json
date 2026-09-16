@@ -11,7 +11,7 @@
   "outbounds": [
     {
       "type": "anytls",                 // 出站协议类型为 AnyTLS
-      "tag": "anytls-in",               // 该出站节点的标签名称（用于路由规则引用）
+      "tag": "anytls",                  // 该出站节点的标签名称（用于路由规则引用）
       "server": "example.com",          // 远程 AnyTLS 服务器地址（域名或 IP）
       "server_port": 443,              // 远程服务器端口
       "password": "8JCsPssfgS8tiRwiMlhARg==",            // 身份校验密码（需替换为实际密码）
