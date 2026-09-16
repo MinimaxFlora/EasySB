@@ -249,7 +249,7 @@ jobs:
           retention-days: 7
 
   deb:
-    name: 构建 Debian DEB
+    name: 构建并签名 Debian DEB (${{ matrix.debian }})
     needs: [check, build]
     if: needs.check.outputs.should_build == 'true'
     runs-on: ubuntu-24.04
@@ -283,15 +283,21 @@ jobs:
           name: sing-box-${{ needs.check.outputs.version }}-linux-${{ matrix.arch }}{{ matrix.goarm && format('-arm{0}', matrix.goarm) || '' }}
           path: input
 
-      - name: 安装 FPM
+      - name: 安装依赖 (FPM & debsigs)
         shell: bash
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y ruby ruby-dev build-essential
+          sudo apt-get install -y ruby ruby-dev build-essential debsigs gnupg
           sudo gem install --no-document fpm
 
-      - name: 创建 DEB
+      - name: 导入 GPG 密钥
+        uses: crazy-max/ghaction-import-gpg@v6
+        with:
+          gpg_private_key: ${{ secrets.GPG_KEY }}
+          passphrase: ${{ secrets.GPG_PASSPHRASE }}
+
+      - name: 创建并签名 DEB
         shell: bash
         run: |
           set -euo pipefail
@@ -340,6 +346,9 @@ jobs:
             -C package \
             -p "sing-box_${DEB_VERSION}_${{ matrix.debian }}.deb" \
             .
+
+          # 使用 debsigs 对生成的 DEB 包进行 GPG 签名
+          debsigs --sign=origin --default-key "${{ secrets.GPG_KEY_ID }}" --passphrase "${{ secrets.GPG_PASSPHRASE }}" "sing-box_${DEB_VERSION}_${{ matrix.debian }}.deb"
 
           mv "sing-box_${DEB_VERSION}_${{ matrix.debian }}.deb" dist/
           file dist/*
@@ -435,7 +444,7 @@ jobs:
           body: |
             # sing-box ${{ needs.check.outputs.tag }}
 
-            基于官方 SagerNet/sing-box 构建。
+            基于官方 SagerNet/sing-box 构建（包含已签名的 Debian 软件包）。
 
             ## Linux
             - amd64（purego + libcronet.so）
@@ -456,7 +465,7 @@ jobs:
             - amd64（purego + libcronet.dll）
             - 386
 
-            ## Debian
+            ## Debian (已使用 GPG 签名)
             - amd64
             - arm64
             - i386
@@ -468,13 +477,6 @@ jobs:
             - loongarch64
             - s390x
             - ppc64el
-
-            ## 构建说明
-            Linux amd64 / arm64：`DEFAULT_BUILD_TAGS + with_purego`
-            其他 Linux 架构：`DEFAULT_BUILD_TAGS_OTHERS`
-            Windows amd64：`DEFAULT_BUILD_TAGS_WINDOWS`
-            Windows 386：`DEFAULT_BUILD_TAGS_OTHERS`
-            Linker flags：官方 `release/LDFLAGS`
 
             ## 校验
             SHA256：`sha256sums.txt`
