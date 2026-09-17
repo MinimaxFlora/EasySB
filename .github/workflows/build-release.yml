@@ -54,14 +54,14 @@ jobs:
         include:
           # --- Linux x86 / x64 ---
           - TARGET: amd64
-            OS: ubuntu-latest
+            OS: ubuntu-26.04
             ARCH: amd64
             OOS: linux
             DEBIAN: amd64
             RPM: x86_64
 
           - TARGET: linux-386
-            OS: ubuntu-latest
+            OS: ubuntu-26.04
             ARCH: 386
             OOS: linux
             DEBIAN: i386
@@ -69,14 +69,14 @@ jobs:
 
           # --- Linux ARM ---
           - TARGET: arm64
-            OS: ubuntu-latest
+            OS: ubuntu-26.04
             ARCH: arm64
             OOS: linux
             DEBIAN: arm64
             RPM: aarch64
 
           - TARGET: armv7l
-            OS: ubuntu-latest
+            OS: ubuntu-26.04
             ARM: 7
             ARCH: arm
             OOS: linux
@@ -84,7 +84,7 @@ jobs:
             RPM: armhfp
 
           - TARGET: armv6
-            OS: ubuntu-latest
+            OS: ubuntu-26.04
             ARM: 6
             ARCH: arm
             OOS: linux
@@ -92,14 +92,14 @@ jobs:
             RPM: armv6hl
 
           - TARGET: armv5l
-            OS: ubuntu-latest
+            OS: ubuntu-26.04
             ARM: 5
             ARCH: arm
             OOS: linux
 
           # --- Linux MIPS ---
           - TARGET: mipsel
-            OS: ubuntu-latest
+            OS: ubuntu-26.04
             SOFT: softfloat
             ARCH: mipsle
             OOS: linux
@@ -107,7 +107,7 @@ jobs:
             RPM: mipsel
 
           - TARGET: mips64le
-            OS: ubuntu-latest
+            OS: ubuntu-26.04
             SOFT: softfloat
             ARCH: mips64le
             OOS: linux
@@ -115,41 +115,41 @@ jobs:
             RPM: mips64el
 
           - TARGET: mips
-            OS: ubuntu-latest
+            OS: ubuntu-26.04
             SOFT: softfloat
             ARCH: mips
             OOS: linux
 
           - TARGET: mips64
-            OS: ubuntu-latest
+            OS: ubuntu-26.04
             SOFT: softfloat
             ARCH: mips64
             OOS: linux
 
           # --- Linux RISC-V / LoongArch / PowerPC / S390x ---
           - TARGET: riscv64
-            OS: ubuntu-latest
+            OS: ubuntu-26.04
             ARCH: riscv64
             OOS: linux
             DEBIAN: riscv64
             RPM: riscv64
 
           - TARGET: loong64
-            OS: ubuntu-latest
+            OS: ubuntu-26.04
             ARCH: loong64
             OOS: linux
             DEBIAN: loongarch64
             RPM: loongarch64
 
           - TARGET: ppc64le
-            OS: ubuntu-latest
+            OS: ubuntu-26.04
             ARCH: ppc64le
             OOS: linux
             DEBIAN: ppc64el
             RPM: ppc64le
 
           - TARGET: s390x
-            OS: ubuntu-latest
+            OS: ubuntu-26.04
             ARCH: s390x
             OOS: linux
             DEBIAN: s390x
@@ -157,23 +157,23 @@ jobs:
 
           # --- FreeBSD ---
           - TARGET: freebsd-x86-64
-            OS: ubuntu-latest
+            OS: ubuntu-26.04
             ARCH: amd64
             OOS: freebsd
 
           # --- Windows ---
           - TARGET: windows-amd64
-            OS: ubuntu-latest
+            OS: ubuntu-26.04
             ARCH: amd64
             OOS: windows
 
           - TARGET: windows-arm64
-            OS: ubuntu-latest
+            OS: ubuntu-26.04
             ARCH: arm64
             OOS: windows
 
           - TARGET: windows-386
-            OS: ubuntu-latest
+            OS: ubuntu-26.04
             ARCH: 386
             OOS: windows
             
@@ -298,17 +298,15 @@ jobs:
             
           if [ -n "${{ secrets.GPG_KEY }}" ]; then
             rm -rf $HOME/.gnupg
-            gpg --pinentry-mode loopback --passphrase "${{ secrets.GPG_PASSPHRASE }}" --import <<EOF
-            ${{ secrets.GPG_KEY }}
-          EOF
-            debsigs --sign=origin -k ${{ secrets.GPG_KEY_ID }} --gpgopts '--pinentry-mode loopback --passphrase "${{ secrets.GPG_PASSPHRASE }}"' dist/*.deb
+            echo "${{ secrets.GPG_KEY }}" | gpg --batch --pinentry-mode loopback --passphrase "${{ secrets.GPG_PASSPHRASE }}" --import
+            debsigs --sign=origin -k ${{ secrets.GPG_KEY_ID }} --gpgopts '--batch --pinentry-mode loopback --passphrase "${{ secrets.GPG_PASSPHRASE }}"' dist/*.deb
           else
             echo "Skipping GPG signature (GPG_KEY is not configured in repository secrets)."
           fi
 
       - name: Package RPM
         if: matrix.RPM != '' && matrix.RPM != null
-        run: |-
+        run: |
           set -xeuo pipefail
           sudo gem install fpm
           sudo apt-get install -y rpm
@@ -317,7 +315,6 @@ jobs:
           REL_DIR="release"
           if [ -d "Release" ]; then REL_DIR="Release"; fi
 
-          echo '%_rpmformat 4' > "$HOME/.rpmmacros"
           if [ -f "$REL_DIR/.fpm_systemd" ]; then cp "$REL_DIR/.fpm_systemd" .fpm; fi
           
           fpm -t rpm \
@@ -327,13 +324,10 @@ jobs:
             dist/sing-box=/usr/bin/sing-box
             
           if [ -n "${{ secrets.GPG_KEY }}" ]; then
-            cat > $HOME/.rpmmacros <<EOF
-            %_gpg_name ${{ secrets.GPG_KEY_ID }}
-            %_gpg_sign_cmd_extra_args --pinentry-mode loopback --passphrase ${{ secrets.GPG_PASSPHRASE }}
-          EOF
-            gpg --pinentry-mode loopback --passphrase "${{ secrets.GPG_PASSPHRASE }}" --import <<EOF
-            ${{ secrets.GPG_KEY }}
-          EOF
+            echo "%_rpmformat 4" > $HOME/.rpmmacros
+            echo "%_gpg_name ${{ secrets.GPG_KEY_ID }}" >> $HOME/.rpmmacros
+            echo "%_gpg_sign_cmd_extra_args --batch --pinentry-mode loopback --passphrase ${{ secrets.GPG_PASSPHRASE }}" >> $HOME/.rpmmacros
+            echo "${{ secrets.GPG_KEY }}" | gpg --batch --pinentry-mode loopback --passphrase "${{ secrets.GPG_PASSPHRASE }}" --import
             rpmsign --addsign dist/*.rpm
           else
             echo "Skipping GPG signature (GPG_KEY is not configured in repository secrets)."
@@ -365,7 +359,7 @@ jobs:
         with:
             token: ${{ github.token }}
             body: |
-             > ### ![](https://img.shields.io/badge/%E7%BC%96%E8%AF%91%E6%97%B6%E9%97%B4-${{ env.build_time }}-8267?logo=github&labelColor=%E9%A1%BB)![](https://img.shields.io/github/downloads/${{ github.repository }}/${{ env.TAG }}/total?label=%E4%B8%8B%E8%BD%BD%E6%AC%A1%E6%95%B0&logo=github)
+              > ### ![](https://img.shields.io/badge/%E7%BC%96%E8%AF%91%E6%97%B6%E9%97%B4-${{ env.build_time }}-8267?logo=github&labelColor=%E9%A1%BB)![](https://img.shields.io/github/downloads/${{ github.repository }}/${{ env.TAG }}/total?label=%E4%B8%8B%E8%BD%BD%E6%AC%A1%E6%95%B0&logo=github)
 
               sing-box-CPU架构-upx 为 upx 压缩文件。
               部分架构额外包含官方标准的 `.deb` / `.rpm` 安装包及 Windows 端的 `.exe` 程序。
