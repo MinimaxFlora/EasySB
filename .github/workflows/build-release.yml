@@ -1,7 +1,6 @@
 name: Build releases
 
 on:
-  # 每天北京时间 11:00 和 04:00 自动检测更新 (UTC 03:00, 20:00)
   schedule:
     - cron: "0 3,20 * * *"
   workflow_dispatch:
@@ -29,9 +28,7 @@ jobs:
       - name: 获取版本号
         id: getversion
         run: |
-          # 获取当前仓库最新 Release 版本
           ver="$(curl -s https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/latest | jq -r '.tag_name')"
-          # 获取 sing-box 官方最新 Release 版本
           tag="$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r '.tag_name')"
           echo -e "获取到最新的版本号：${tag}\n当前仓库最新版本号：${ver}"
           echo "tag=${tag}" >> $GITHUB_OUTPUT
@@ -83,8 +80,9 @@ jobs:
             os: linux
             arch: arm
             goarm: "7"
+            naive: true
             debian: armhf
-            rpm: armhfp
+            rpm: armv7hl
 
           - target: armv6
             os: linux
@@ -163,7 +161,7 @@ jobs:
             os: freebsd
             arch: amd64
 
-          # --- Windows ---
+          # --- Windows (遵照官方: naive 使用 DEFAULT_BUILD_TAGS_WINDOWS，386 使用 OTHERS) ---
           - target: windows-amd64
             os: windows
             arch: amd64
@@ -203,14 +201,11 @@ jobs:
       - name: 编译 sing-box
         run: |
           if [[ -n "${{ github.event.inputs.branch }}" ]]; then
-              echo "使用手动指定的版本：${{ github.event.inputs.branch }}"
               TAG=${{ github.event.inputs.branch }}
           else
-              echo "使用自动获取的版本：${{ needs.check.outputs.tag }}"
               TAG=${{ needs.check.outputs.tag }}
           fi
           echo "TAG=$TAG" >> $GITHUB_ENV
-
           PKG_VERSION=${TAG#v}
           echo "PKG_VERSION=$PKG_VERSION" >> $GITHUB_ENV
 
@@ -221,38 +216,42 @@ jobs:
           cd /opt/sing-box
           sudo timedatectl set-timezone "Asia/Shanghai"
 
-          # 1. 确定可执行文件扩展名
           EXT=""
           if [ "${{ matrix.os }}" = "windows" ]; then
             EXT=".exe"
           fi
 
-          # 2. 读取官方 release 目录下的专属 TAGS 配置
           REL_DIR="release"
           if [ -d "Release" ]; then REL_DIR="Release"; fi
 
+          # 完全对齐官方流程的 Build Tags 读取逻辑
           BUILD_TAGS=""
           if [ "${{ matrix.os }}" = "windows" ]; then
             if [ "${{ matrix.naive }}" = "true" ] && [ -f "$REL_DIR/DEFAULT_BUILD_TAGS_WINDOWS" ]; then
-              BUILD_TAGS=$(cat "$REL_DIR/DEFAULT_BUILD_TAGS_WINDOWS")
+              BUILD_TAGS=$(cat "$REL_DIR/DEFAULT_BUILD_TAGS_WINDOWS" | tr -d '\r\n')
             elif [ -f "$REL_DIR/DEFAULT_BUILD_TAGS_OTHERS" ]; then
-              BUILD_TAGS=$(cat "$REL_DIR/DEFAULT_BUILD_TAGS_OTHERS")
+              BUILD_TAGS=$(cat "$REL_DIR/DEFAULT_BUILD_TAGS_OTHERS" | tr -d '\r\n')
             fi
           else
             if [ "${{ matrix.naive }}" = "true" ] && [ -f "$REL_DIR/DEFAULT_BUILD_TAGS" ]; then
-              BUILD_TAGS=$(cat "$REL_DIR/DEFAULT_BUILD_TAGS")
+              BUILD_TAGS=$(cat "$REL_DIR/DEFAULT_BUILD_TAGS" | tr -d '\r\n')
             elif [ -f "$REL_DIR/DEFAULT_BUILD_TAGS_OTHERS" ]; then
-              BUILD_TAGS=$(cat "$REL_DIR/DEFAULT_BUILD_TAGS_OTHERS")
+              BUILD_TAGS=$(cat "$REL_DIR/DEFAULT_BUILD_TAGS_OTHERS" | tr -d '\r\n')
             fi
           fi
 
-          # 兜底 Tags
+          # 读取官方 release/LDFLAGS
+          LDFLAGS_SHARED=""
+          if [ -f "$REL_DIR/LDFLAGS" ]; then
+            LDFLAGS_SHARED=$(cat "$REL_DIR/LDFLAGS" | tr -d '\r\n')
+          fi
+
           if [ -z "$BUILD_TAGS" ]; then
             BUILD_TAGS="with_quic,with_grpc,with_dhcp,with_wireguard,with_ech,with_utls,with_reality_server,with_clash_api,with_gvisor"
           fi
 
-          # 3. 补全/维护 with_purego 标签
-          if [ "${{ matrix.naive }}" = "true" ]; then
+          # 补全 Linux purego 下的 with_purego
+          if [ "${{ matrix.naive }}" = "true" ] && [ "${{ matrix.os }}" = "linux" ]; then
             if [[ ",$BUILD_TAGS," != *",with_purego,"* ]]; then
               BUILD_TAGS="${BUILD_TAGS},with_purego"
             fi
@@ -260,8 +259,8 @@ jobs:
 
           echo "目标架构: ${{ matrix.target }}"
           echo "使用编译 Tags: $BUILD_TAGS"
+          echo "使用编译 LDFLAGS: $LDFLAGS_SHARED"
 
-          # 4. 执行交叉编译
           GOOS=${{ matrix.os }} \
           GOARCH=${{ matrix.arch }} \
           GO386=${{ matrix.go386 }} \
@@ -269,16 +268,34 @@ jobs:
           GOMIPS=${{ matrix.gomips }} \
           CGO_ENABLED=0 \
           go build -v -trimpath -tags "${BUILD_TAGS}" \
-            -ldflags "-X 'github.com/sagernet/sing-box/constant.Version=${PKG_VERSION}' -s -w -buildid=" \
+            -ldflags "-X 'github.com/sagernet/sing-box/constant.Version=${PKG_VERSION}' ${LDFLAGS_SHARED} -s -w -buildid=" \
             -o "dist/sing-box${EXT}" ./cmd/sing-box
 
           file "dist/sing-box${EXT}"
           du -k "dist/sing-box${EXT}"
 
-          # 5. 生成标准命名及 UPX 压缩文件
+          # 提取依赖的动态库 (libcronet.dll / libcronet.so)
+          if [ "${{ matrix.naive }}" = "true" ]; then
+            CRONET_GO_VERSION=$(cat .github/CRONET_GO_VERSION 2>/dev/null || echo "")
+            if [ -n "$CRONET_GO_VERSION" ]; then
+              if [ "${{ matrix.os }}" = "windows" ]; then
+                LIBRARY_PATH="lib/windows_${{ matrix.arch }}/libcronet.dll"
+              else
+                LIBRARY_PATH="lib/linux_${{ matrix.arch }}/libcronet.so"
+              fi
+              git init "$RUNNER_TEMP/cronet-go-lib"
+              git -C "$RUNNER_TEMP/cronet-go-lib" remote add origin https://github.com/sagernet/cronet-go.git
+              git -C "$RUNNER_TEMP/cronet-go-lib" sparse-checkout set --no-cone "/$LIBRARY_PATH"
+              git -C "$RUNNER_TEMP/cronet-go-lib" fetch --depth=1 --filter=blob:none origin "$CRONET_GO_VERSION" || true
+              git -C "$RUNNER_TEMP/cronet-go-lib" checkout FETCH_HEAD || true
+              if [ -f "$RUNNER_TEMP/cronet-go-lib/$LIBRARY_PATH" ]; then
+                cp "$RUNNER_TEMP/cronet-go-lib/$LIBRARY_PATH" dist/
+              fi
+            fi
+          fi
+
           cp "dist/sing-box${EXT}" "dist/sing-box-${{ matrix.target }}${EXT}"
 
-          # 过滤不支持 UPX 的架构
           TARGET_NAME="${{ matrix.target }}"
           if [[ "$TARGET_NAME" != *"mips64"* ]] && [[ "$TARGET_NAME" != *"s390x"* ]] && [[ "$TARGET_NAME" != *"freebsd"* ]] && [[ "$TARGET_NAME" != *"riscv64"* ]] && [[ "$TARGET_NAME" != *"loong64"* ]]; then
             cp "dist/sing-box-${{ matrix.target }}${EXT}" "dist/sing-box-${{ matrix.target }}-upx${EXT}"
