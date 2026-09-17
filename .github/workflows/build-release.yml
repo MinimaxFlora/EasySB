@@ -161,7 +161,7 @@ jobs:
             os: freebsd
             arch: amd64
 
-          # --- Windows (遵照官方: naive 使用 DEFAULT_BUILD_TAGS_WINDOWS，386 使用 OTHERS) ---
+          # --- Windows ---
           - target: windows-amd64
             os: windows
             arch: amd64
@@ -224,7 +224,6 @@ jobs:
           REL_DIR="release"
           if [ -d "Release" ]; then REL_DIR="Release"; fi
 
-          # 完全对齐官方流程的 Build Tags 读取逻辑
           BUILD_TAGS=""
           if [ "${{ matrix.os }}" = "windows" ]; then
             if [ "${{ matrix.naive }}" = "true" ] && [ -f "$REL_DIR/DEFAULT_BUILD_TAGS_WINDOWS" ]; then
@@ -240,7 +239,6 @@ jobs:
             fi
           fi
 
-          # 读取官方 release/LDFLAGS
           LDFLAGS_SHARED=""
           if [ -f "$REL_DIR/LDFLAGS" ]; then
             LDFLAGS_SHARED=$(cat "$REL_DIR/LDFLAGS" | tr -d '\r\n')
@@ -250,7 +248,6 @@ jobs:
             BUILD_TAGS="with_quic,with_grpc,with_dhcp,with_wireguard,with_ech,with_utls,with_reality_server,with_clash_api,with_gvisor"
           fi
 
-          # 补全 Linux purego 下的 with_purego
           if [ "${{ matrix.naive }}" = "true" ] && [ "${{ matrix.os }}" = "linux" ]; then
             if [[ ",$BUILD_TAGS," != *",with_purego,"* ]]; then
               BUILD_TAGS="${BUILD_TAGS},with_purego"
@@ -274,9 +271,9 @@ jobs:
           file "dist/sing-box${EXT}"
           du -k "dist/sing-box${EXT}"
 
-          # 提取依赖的动态库 (libcronet.dll / libcronet.so)
+          # 提取依赖的动态库
           if [ "${{ matrix.naive }}" = "true" ]; then
-            CRONET_GO_VERSION=$(cat .github/CRONET_GO_VERSION 2>/dev/null || echo "")
+            CRONET_GO_VERSION=$(cat .github/CRONET_GO_VERSION 2>/devnull || echo "")
             if [ -n "$CRONET_GO_VERSION" ]; then
               if [ "${{ matrix.os }}" = "windows" ]; then
                 LIBRARY_PATH="lib/windows_${{ matrix.arch }}/libcronet.dll"
@@ -375,6 +372,12 @@ jobs:
           fi
           cat /tmp/help.txt
           grep -qi "sing-box" /tmp/help.txt || { echo "::error::sing-box-mipsel 输出异常"; exit 1; }
+
+      - name: 清理未带架构后缀的中间文件
+        run: |
+          # 删掉不带架构后缀的裸程序与动态库，确保 Release 页面只包含带有具体架构后缀的二进制和安装包
+          rm -f /opt/sing-box/dist/sing-box /opt/sing-box/dist/sing-box.exe
+          rm -f /opt/sing-box/dist/libcronet.dll /opt/sing-box/dist/libcronet.so
 
       - name: 上传 Artifact
         uses: actions/upload-artifact@v4
