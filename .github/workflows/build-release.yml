@@ -21,7 +21,7 @@ env:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       tag: ${{ steps.getversion.outputs.tag }}
       ver: ${{ steps.getversion.outputs.ver }}
