@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       branch:
-        description: '指定编译的版本号 (例如 v1.9.0，留空则自动获取最新)'
+        description: '指定编译的版本号 (例如 v1.14.1，留空则自动获取最新)'
         required: false
         default: ''
 
@@ -63,7 +63,6 @@ jobs:
             os: linux
             arch: "386"
             go386: sse2
-            naive: true
             debian: i386
             rpm: i386
 
@@ -250,13 +249,14 @@ jobs:
             BUILD_TAGS="with_quic,with_grpc,with_dhcp,with_wireguard,with_ech,with_utls,with_reality_server,with_clash_api,with_gvisor"
           fi
 
-          # 3. 根据矩阵中的 naive 标记动态开关 with_naive
+          # 3. 根据矩阵中的 naive 标记动态开启/剔除 with_naive 和 with_naive_outbound
           if [ "${{ matrix.naive }}" = "true" ]; then
             if [[ ",$BUILD_TAGS," != *",with_naive,"* ]]; then
-              BUILD_TAGS="${BUILD_TAGS},with_naive"
+              BUILD_TAGS="${BUILD_TAGS},with_naive,with_naive_outbound"
             fi
           else
-            BUILD_TAGS=$(echo "$BUILD_TAGS" | tr ',' '\n' | grep -v '^with_naive$' | paste -sd, -)
+            # 同时剔除 with_naive 与 with_naive_outbound
+            BUILD_TAGS=$(echo "$BUILD_TAGS" | tr ',' '\n' | grep -v -E '^(with_naive|with_naive_outbound)$' | paste -sd, -)
           fi
 
           echo "目标架构: ${{ matrix.target }}"
