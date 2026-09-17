@@ -1,0 +1,372 @@
+name: Build releases
+
+on:
+  # 每天北京时间11点 4点自动检测更新 (UTC时间 3,20)
+  schedule:
+    - cron: "0 3,20 * * *"
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: '指定编译的版本号 (例如 v1.9.0，留空则自动获取最新)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+  actions: write
+
+env:
+  TZ: Asia/Shanghai
+  BRANCH: ${{ github.event.inputs.branch }}
+
+jobs:
+  check:
+    runs-on: ubuntu-26.04
+    outputs:
+      tag: ${{ steps.getversion.outputs.tag }}
+      ver: ${{ steps.getversion.outputs.ver }}
+    steps:
+      - name: 获取版本号
+        id: getversion
+        run: |
+          # 获取当前仓库最新Release版本
+          ver=`curl -s https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/latest | jq -r '.tag_name'`
+          # 获取sing-box官方最新Release版本
+          tag=`curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r '.tag_name'`
+          echo -e "获取到最新的版本号：${tag}\n当前仓库最新版本号：${ver}"
+          echo "tag=${tag}" >> $GITHUB_OUTPUT
+          echo "ver=${ver}" >> $GITHUB_OUTPUT
+          
+      - name: 删除流程记录
+        uses: Mattraks/delete-workflow-runs@main
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          retain_days: 0
+          keep_minimum_runs: 0
+      
+  build: 
+    needs: check
+    # 手动触发，或者检测到官方有新版本时运行
+    if: ${{ github.event_name == 'workflow_dispatch' || needs.check.outputs.tag != needs.check.outputs.ver }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # --- Linux x86 / x64 ---
+          - TARGET: amd64
+            OS: ubuntu-26.04
+            ARCH: amd64
+            OOS: linux
+            DEBIAN: amd64
+            RPM: x86_64
+
+          - TARGET: linux-386
+            OS: ubuntu-26.04
+            ARCH: 386
+            OOS: linux
+            DEBIAN: i386
+            RPM: i386
+
+          # --- Linux ARM ---
+          - TARGET: arm64
+            OS: ubuntu-26.04
+            ARCH: arm64
+            OOS: linux
+            DEBIAN: arm64
+            RPM: aarch64
+
+          - TARGET: armv7l
+            OS: ubuntu-26.04
+            ARM: 7
+            ARCH: arm
+            OOS: linux
+            DEBIAN: armhf
+            RPM: armhfp
+
+          - TARGET: armv6
+            OS: ubuntu-26.04
+            ARM: 6
+            ARCH: arm
+            OOS: linux
+            DEBIAN: armel
+            RPM: armv6hl
+
+          - TARGET: armv5l
+            OS: ubuntu-26.04
+            ARM: 5
+            ARCH: arm
+            OOS: linux
+
+          # --- Linux MIPS ---
+          - TARGET: mipsel
+            OS: ubuntu-26.04
+            SOFT: softfloat
+            ARCH: mipsle
+            OOS: linux
+            DEBIAN: mipsel
+            RPM: mipsel
+
+          - TARGET: mips64le
+            OS: ubuntu-26.04
+            SOFT: softfloat
+            ARCH: mips64le
+            OOS: linux
+            DEBIAN: mips64el
+            RPM: mips64el
+
+          - TARGET: mips
+            OS: ubuntu-26.04
+            SOFT: softfloat
+            ARCH: mips
+            OOS: linux
+
+          - TARGET: mips64
+            OS: ubuntu-26.04
+            SOFT: softfloat
+            ARCH: mips64
+            OOS: linux
+
+          # --- Linux RISC-V / LoongArch / PowerPC / S390x ---
+          - TARGET: riscv64
+            OS: ubuntu-26.04
+            ARCH: riscv64
+            OOS: linux
+            DEBIAN: riscv64
+            RPM: riscv64
+
+          - TARGET: loong64
+            OS: ubuntu-26.04
+            ARCH: loong64
+            OOS: linux
+            DEBIAN: loongarch64
+            RPM: loongarch64
+
+          - TARGET: ppc64le
+            OS: ubuntu-26.04
+            ARCH: ppc64le
+            OOS: linux
+            DEBIAN: ppc64el
+            RPM: ppc64le
+
+          - TARGET: s390x
+            OS: ubuntu-26.04
+            ARCH: s390x
+            OOS: linux
+            DEBIAN: s390x
+            RPM: s390x
+
+          # --- FreeBSD ---
+          - TARGET: freebsd-x86-64
+            OS: ubuntu-26.04
+            ARCH: amd64
+            OOS: freebsd
+
+          # --- Windows ---
+          - TARGET: windows-amd64
+            OS: ubuntu-26.04
+            ARCH: amd64
+            OOS: windows
+
+          - TARGET: windows-arm64
+            OS: ubuntu-26.04
+            ARCH: arm64
+            OOS: windows
+
+          - TARGET: windows-386
+            OS: ubuntu-26.04
+            ARCH: 386
+            OOS: windows
+            
+    runs-on: ${{ matrix.OS }}
+    env:
+      TARGET: ${{ matrix.TARGET }}
+      OS: ${{ matrix.OS }}
+      OOS: ${{ matrix.OOS }}
+      SOFT: ${{ matrix.SOFT }}
+      ARM: ${{ matrix.ARM }}
+      ARCH: ${{ matrix.ARCH }}
+    steps:
+      - name: 获取最新Go
+        run: |
+          latest_version=$(curl -L -k -s https://golang.org/dl/?mode=json | grep -m 1 -o '"version": "[^"]*' | sed 's/"version": "//' | tr -d 'go" ')
+          echo "go版本=$latest_version"
+          echo "gotag=$latest_version" >> $GITHUB_ENV
+
+      - name: 安装go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.gotag }}
+
+      - name: 检查代码仓库
+        uses: actions/checkout@v4
+
+      - name: 安装 UPX
+        uses: crazy-max/ghaction-upx@v3
+        with:
+          version: v4.2.4
+          install-only: true
+
+      - name: 编译
+        run: |
+          if [[ -n "${{ github.event.inputs.branch }}" ]]; then
+              echo "使用手动指定的版本：${{ github.event.inputs.branch }}"
+              TAG=${{ github.event.inputs.branch }}
+          else
+              echo "使用自动获取的版本：${{ needs.check.outputs.tag }}"
+              TAG=${{ needs.check.outputs.tag }}
+          fi
+          echo "TAG=$TAG" >> $GITHUB_ENV
+          
+          # 截取掉TAG开头的'v'给DEB/RPM打包准备正确的版本格式
+          PKG_VERSION=${TAG#v}
+          echo "PKG_VERSION=$PKG_VERSION" >> $GITHUB_ENV
+
+          echo "开始拉取 ${TAG} 源码..."
+          git clone -b ${TAG} https://github.com/SagerNet/sing-box /opt/sing-box
+          
+          echo "开始构建"
+          mkdir -p /opt/sing-box/dist
+          cd /opt/sing-box
+          sudo timedatectl set-timezone "Asia/Shanghai"
+          
+          # 判断是否需要生成 .exe 后缀
+          EXT=""
+          if [ "$OOS" = "windows" ]; then
+            EXT=".exe"
+          fi
+          
+          # 读取官方 release 目录下的 TAGS
+          BUILD_TAGS=""
+          REL_DIR="release"
+          if [ -d "Release" ]; then REL_DIR="Release"; fi
+
+          if [ "$OOS" = "windows" ]; then
+            if [ -f "$REL_DIR/DEFAULT_BUILD_TAGS_OTHERS" ]; then
+              BUILD_TAGS=$(cat "$REL_DIR/DEFAULT_BUILD_TAGS_OTHERS")
+            elif [ -f "$REL_DIR/DEFAULT_BUILD_TAGS" ]; then
+              BUILD_TAGS=$(cat "$REL_DIR/DEFAULT_BUILD_TAGS")
+            fi
+          else
+            if [ -f "$REL_DIR/DEFAULT_BUILD_TAGS" ]; then
+              BUILD_TAGS=$(cat "$REL_DIR/DEFAULT_BUILD_TAGS")
+            fi
+          fi
+          
+          if [ -z "$BUILD_TAGS" ]; then
+            BUILD_TAGS="with_quic,with_grpc,with_dhcp,with_wireguard,with_ech,with_utls,with_reality_server,with_clash_api,with_gvisor"
+          fi
+          
+          echo "使用的编译 Tags 为: $BUILD_TAGS"
+          
+          # 执行 sing-box 构建
+          GOOS=${OOS} GOARCH=${ARCH} GOMIPS=${SOFT} GOARM=${ARM} CGO_ENABLED=0 \
+          go build -v -trimpath -tags "${BUILD_TAGS}" \
+          -ldflags "-X 'github.com/sagernet/sing-box/constant.Version=${PKG_VERSION}' -s -w -buildid=" \
+          -o dist/sing-box${EXT} ./cmd/sing-box
+          
+          file dist/sing-box${EXT}
+          du -k dist/sing-box${EXT}
+          
+          # 复制和 UPX 压缩逻辑 (过滤不支持 UPX 的架构)
+          cp dist/sing-box${EXT} dist/sing-box-${TARGET}${EXT}
+          if [[ $TARGET != mips64 ]] && [[ $TARGET != mips64le ]] && [[ $TARGET != s390x ]] && [[ $TARGET != freebsd-x86-64 ]] && [[ $TARGET != riscv64 ]] && [[ $TARGET != loong64 ]] ;then
+            cp dist/sing-box-${TARGET}${EXT} dist/sing-box-${TARGET}-upx${EXT}
+            upx --lzma --best dist/sing-box-${TARGET}-upx${EXT} || true
+            du -k dist/sing-box-${TARGET}-upx${EXT}
+          fi
+          
+          echo "build_time=$(date '+%Y年%m月%d日%H:%M:%S' | jq -sRr @uri)" >> $GITHUB_ENV
+
+      - name: Package DEB
+        if: matrix.DEBIAN != '' && matrix.DEBIAN != null
+        run: |
+          set -xeuo pipefail
+          sudo gem install fpm
+          sudo apt-get install -y debsigs
+          cd /opt/sing-box
+          
+          REL_DIR="release"
+          if [ -d "Release" ]; then REL_DIR="Release"; fi
+          
+          if [ -f "$REL_DIR/.fpm_systemd" ]; then cp "$REL_DIR/.fpm_systemd" .fpm; fi
+          
+          fpm -t deb \
+            -v "${{ env.PKG_VERSION }}" \
+            -p "dist/sing-box_${{ env.PKG_VERSION }}_${{ matrix.OOS }}_${{ matrix.DEBIAN }}.deb" \
+            --architecture ${{ matrix.DEBIAN }} \
+            dist/sing-box=/usr/bin/sing-box
+            
+          if [ -n "${{ secrets.GPG_KEY }}" ]; then
+            rm -rf $HOME/.gnupg
+            echo "${{ secrets.GPG_KEY }}" | gpg --batch --pinentry-mode loopback --passphrase "${{ secrets.GPG_PASSPHRASE }}" --import
+            debsigs --sign=origin -k ${{ secrets.GPG_KEY_ID }} --gpgopts '--batch --pinentry-mode loopback --passphrase "${{ secrets.GPG_PASSPHRASE }}"' dist/*.deb
+          else
+            echo "Skipping GPG signature (GPG_KEY is not configured in repository secrets)."
+          fi
+
+      - name: Package RPM
+        if: matrix.RPM != '' && matrix.RPM != null
+        run: |
+          set -xeuo pipefail
+          sudo gem install fpm
+          sudo apt-get install -y rpm
+          cd /opt/sing-box
+          
+          REL_DIR="release"
+          if [ -d "Release" ]; then REL_DIR="Release"; fi
+
+          if [ -f "$REL_DIR/.fpm_systemd" ]; then cp "$REL_DIR/.fpm_systemd" .fpm; fi
+          
+          fpm -t rpm \
+            -v "${{ env.PKG_VERSION }}" \
+            -p "dist/sing-box_${{ env.PKG_VERSION }}_${{ matrix.OOS }}_${{ matrix.RPM }}.rpm" \
+            --architecture ${{ matrix.RPM }} \
+            dist/sing-box=/usr/bin/sing-box
+            
+          if [ -n "${{ secrets.GPG_KEY }}" ]; then
+            echo "%_rpmformat 4" > $HOME/.rpmmacros
+            echo "%_gpg_name ${{ secrets.GPG_KEY_ID }}" >> $HOME/.rpmmacros
+            echo "%_gpg_sign_cmd_extra_args --batch --pinentry-mode loopback --passphrase ${{ secrets.GPG_PASSPHRASE }}" >> $HOME/.rpmmacros
+            echo "${{ secrets.GPG_KEY }}" | gpg --batch --pinentry-mode loopback --passphrase "${{ secrets.GPG_PASSPHRASE }}" --import
+            rpmsign --addsign dist/*.rpm
+          else
+            echo "Skipping GPG signature (GPG_KEY is not configured in repository secrets)."
+          fi
+
+      - name: qemu-mipsel 运行测试
+        if: matrix.TARGET == 'mipsel'
+        run: |
+          curl -sL -o /tmp/qemu-mipsel-static "https://github.com/multiarch/qemu-user-static/releases/download/v7.2.0-1/qemu-mipsel-static"
+          chmod +x /tmp/qemu-mipsel-static
+          cd /opt/sing-box
+          echo "===== sing-box-mipsel version (qemu-mipsel) ====="
+          if ! /tmp/qemu-mipsel-static dist/sing-box-mipsel version > /tmp/help.txt 2>&1; then
+            echo "::error::qemu-mipsel 运行 sing-box-mipsel version 失败"
+            cat /tmp/help.txt
+            exit 1
+          fi
+          cat /tmp/help.txt
+          grep -qi "sing-box" /tmp/help.txt || { echo "::error::sing-box-mipsel 输出异常"; exit 1; }
+
+      - name: 上传
+        uses: actions/upload-artifact@v4
+        with:
+          name: sing-box-${{ env.TAG }}-${{ matrix.TARGET }}
+          path: /opt/sing-box/dist/
+
+      - name: 发布
+        uses: softprops/action-gh-release@v2
+        with:
+            token: ${{ github.token }}
+            body: |
+              > ### ![](https://img.shields.io/badge/%E7%BC%96%E8%AF%91%E6%97%B6%E9%97%B4-${{ env.build_time }}-8267?logo=github&labelColor=%E9%A1%BB)![](https://img.shields.io/github/downloads/${{ github.repository }}/${{ env.TAG }}/total?label=%E4%B8%8B%E8%BD%BD%E6%AC%A1%E6%95%B0&logo=github)
+
+              sing-box-CPU架构-upx 为 upx 压缩文件。
+              部分架构额外包含官方标准的 `.deb` / `.rpm` 安装包及 Windows 端的 `.exe` 程序。
+              
+              本次编译自动拉取了官方 `release` 目录下的动态 Tags，保证特性的完整性。
+              
+              **[官方更新说明](https://github.com/SagerNet/sing-box/releases)**
+              
+            tag_name: ${{ env.TAG }}
+            files: /opt/sing-box/dist/*
