@@ -83,7 +83,6 @@ jobs:
             os: linux
             arch: arm
             goarm: "7"
-            naive: true
             debian: armhf
             rpm: armhfp
 
@@ -104,7 +103,6 @@ jobs:
             os: linux
             arch: mipsle
             gomips: hardfloat
-            naive: true
 
           - target: mipsel-softfloat
             os: linux
@@ -117,7 +115,6 @@ jobs:
             os: linux
             arch: mips64le
             gomips: hardfloat
-            naive: true
             debian: mips64el
             rpm: mips64el
 
@@ -140,14 +137,12 @@ jobs:
           - target: riscv64
             os: linux
             arch: riscv64
-            naive: true
             debian: riscv64
             rpm: riscv64
 
           - target: loong64
             os: linux
             arch: loong64
-            naive: true
             debian: loongarch64
             rpm: loongarch64
 
@@ -172,10 +167,12 @@ jobs:
           - target: windows-amd64
             os: windows
             arch: amd64
+            naive: true
 
           - target: windows-arm64
             os: windows
             arch: arm64
+            naive: true
 
           - target: windows-386
             os: windows
@@ -230,33 +227,35 @@ jobs:
             EXT=".exe"
           fi
 
-          # 2. 读取基础 BUILD_TAGS
+          # 2. 读取官方 release 目录下的专属 TAGS 配置
           REL_DIR="release"
           if [ -d "Release" ]; then REL_DIR="Release"; fi
 
           BUILD_TAGS=""
           if [ "${{ matrix.os }}" = "windows" ]; then
-            if [ -f "$REL_DIR/DEFAULT_BUILD_TAGS_OTHERS" ]; then
+            if [ "${{ matrix.naive }}" = "true" ] && [ -f "$REL_DIR/DEFAULT_BUILD_TAGS_WINDOWS" ]; then
+              BUILD_TAGS=$(cat "$REL_DIR/DEFAULT_BUILD_TAGS_WINDOWS")
+            elif [ -f "$REL_DIR/DEFAULT_BUILD_TAGS_OTHERS" ]; then
+              BUILD_TAGS=$(cat "$REL_DIR/DEFAULT_BUILD_TAGS_OTHERS")
+            fi
+          else
+            if [ "${{ matrix.naive }}" = "true" ] && [ -f "$REL_DIR/DEFAULT_BUILD_TAGS" ]; then
+              BUILD_TAGS=$(cat "$REL_DIR/DEFAULT_BUILD_TAGS")
+            elif [ -f "$REL_DIR/DEFAULT_BUILD_TAGS_OTHERS" ]; then
               BUILD_TAGS=$(cat "$REL_DIR/DEFAULT_BUILD_TAGS_OTHERS")
             fi
           fi
 
-          if [ -z "$BUILD_TAGS" ] && [ -f "$REL_DIR/DEFAULT_BUILD_TAGS" ]; then
-            BUILD_TAGS=$(cat "$REL_DIR/DEFAULT_BUILD_TAGS")
-          fi
-
+          # 兜底 Tags
           if [ -z "$BUILD_TAGS" ]; then
             BUILD_TAGS="with_quic,with_grpc,with_dhcp,with_wireguard,with_ech,with_utls,with_reality_server,with_clash_api,with_gvisor"
           fi
 
-          # 3. 根据矩阵中的 naive 标记动态开启/剔除 with_naive 和 with_naive_outbound
+          # 3. 补全/维护 with_purego 标签
           if [ "${{ matrix.naive }}" = "true" ]; then
-            if [[ ",$BUILD_TAGS," != *",with_naive,"* ]]; then
-              BUILD_TAGS="${BUILD_TAGS},with_naive,with_naive_outbound"
+            if [[ ",$BUILD_TAGS," != *",with_purego,"* ]]; then
+              BUILD_TAGS="${BUILD_TAGS},with_purego"
             fi
-          else
-            # 同时剔除 with_naive 与 with_naive_outbound
-            BUILD_TAGS=$(echo "$BUILD_TAGS" | tr ',' '\n' | grep -v -E '^(with_naive|with_naive_outbound)$' | paste -sd, -)
           fi
 
           echo "目标架构: ${{ matrix.target }}"
@@ -301,7 +300,8 @@ jobs:
           if [ -d "Release" ]; then REL_DIR="Release"; fi
           if [ -f "$REL_DIR/.fpm_systemd" ]; then cp "$REL_DIR/.fpm_systemd" .fpm; fi
 
-          fpm -t deb \
+          fpm -s dir -t deb \
+            -n sing-box \
             -v "${{ env.PKG_VERSION }}" \
             -p "dist/sing-box_${{ env.PKG_VERSION }}_${{ matrix.os }}_${{ matrix.debian }}.deb" \
             --architecture ${{ matrix.debian }} \
@@ -327,7 +327,8 @@ jobs:
           if [ -d "Release" ]; then REL_DIR="Release"; fi
           if [ -f "$REL_DIR/.fpm_systemd" ]; then cp "$REL_DIR/.fpm_systemd" .fpm; fi
 
-          fpm -t rpm \
+          fpm -s dir -t rpm \
+            -n sing-box \
             -v "${{ env.PKG_VERSION }}" \
             -p "dist/sing-box_${{ env.PKG_VERSION }}_${{ matrix.os }}_${{ matrix.rpm }}.rpm" \
             --architecture ${{ matrix.rpm }} \
