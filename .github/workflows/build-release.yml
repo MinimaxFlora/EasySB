@@ -271,7 +271,7 @@ jobs:
           file "dist/sing-box${EXT}"
           du -k "dist/sing-box${EXT}"
 
-          # 提取依赖的动态库
+          # 提取依赖动态库 (libcronet.dll / libcronet.so)
           if [ "${{ matrix.naive }}" = "true" ]; then
             CRONET_GO_VERSION=$(cat .github/CRONET_GO_VERSION 2>/devnull || echo "")
             if [ -n "$CRONET_GO_VERSION" ]; then
@@ -291,13 +291,12 @@ jobs:
             fi
           fi
 
-          cp "dist/sing-box${EXT}" "dist/sing-box-${{ matrix.target }}${EXT}"
-
+          # 生成 UPX 压缩后的文件 (仅限支持 UPX 的架构)
           TARGET_NAME="${{ matrix.target }}"
           if [[ "$TARGET_NAME" != *"mips64"* ]] && [[ "$TARGET_NAME" != *"s390x"* ]] && [[ "$TARGET_NAME" != *"freebsd"* ]] && [[ "$TARGET_NAME" != *"riscv64"* ]] && [[ "$TARGET_NAME" != *"loong64"* ]]; then
-            cp "dist/sing-box-${{ matrix.target }}${EXT}" "dist/sing-box-${{ matrix.target }}-upx${EXT}"
-            upx --lzma --best "dist/sing-box-${{ matrix.target }}-upx${EXT}" || true
-            du -k "dist/sing-box-${{ matrix.target }}-upx${EXT}"
+            cp "dist/sing-box${EXT}" "dist/sing-box-upx${EXT}"
+            upx --lzma --best "dist/sing-box-upx${EXT}" || true
+            du -k "dist/sing-box-upx${EXT}"
           fi
 
           echo "build_time=$(date '+%Y年%m月%d日%H:%M:%S' | jq -sRr @uri)" >> $GITHUB_ENV
@@ -365,7 +364,7 @@ jobs:
           chmod +x /tmp/qemu-mipsel-static
           cd /opt/sing-box
           echo "===== sing-box-mipsel version (qemu-mipsel) ====="
-          if ! /tmp/qemu-mipsel-static dist/sing-box-mipsel-softfloat version > /tmp/help.txt 2>&1; then
+          if ! /tmp/qemu-mipsel-static dist/sing-box version > /tmp/help.txt 2>&1; then
             echo "::error::qemu-mipsel 运行 sing-box 失败"
             cat /tmp/help.txt
             exit 1
@@ -373,11 +372,49 @@ jobs:
           cat /tmp/help.txt
           grep -qi "sing-box" /tmp/help.txt || { echo "::error::sing-box-mipsel 输出异常"; exit 1; }
 
-      - name: 清理未带架构后缀的中间文件
+      - name: 打包压缩包 (tar.gz/zip) 并清理裸文件
         run: |
-          # 删掉不带架构后缀的裸程序与动态库，确保 Release 页面只包含带有具体架构后缀的二进制和安装包
-          rm -f /opt/sing-box/dist/sing-box /opt/sing-box/dist/sing-box.exe
-          rm -f /opt/sing-box/dist/libcronet.dll /opt/sing-box/dist/libcronet.so
+          cd /opt/sing-box
+
+          # 计算标准完整架构名称
+          if [[ "${{ matrix.target }}" == "${{ matrix.os }}"* ]]; then
+            FULL_TARGET="${{ matrix.target }}"
+          else
+            FULL_TARGET="${{ matrix.os }}-${{ matrix.target }}"
+          fi
+
+          ARCHIVE_NAME="sing-box-${{ env.PKG_VERSION }}-${FULL_TARGET}"
+          ARCH_DIR="dist/${ARCHIVE_NAME}"
+
+          mkdir -p "${ARCH_DIR}"
+
+          EXT=""
+          if [ "${{ matrix.os }}" = "windows" ]; then EXT=".exe"; fi
+
+          # 拷贝主程序
+          cp "dist/sing-box${EXT}" "${ARCH_DIR}/sing-box${EXT}"
+
+          # 拷贝 UPX 压缩镜像 (如果存在)
+          if [ -f "dist/sing-box-upx${EXT}" ]; then
+            cp "dist/sing-box-upx${EXT}" "${ARCH_DIR}/sing-box-upx${EXT}"
+          fi
+
+          # 拷贝依赖的动态库与 LICENSE
+          if [ -f "dist/libcronet.dll" ]; then cp "dist/libcronet.dll" "${ARCH_DIR}/"; fi
+          if [ -f "dist/libcronet.so" ]; then cp "dist/libcronet.so" "${ARCH_DIR}/"; fi
+          if [ -f "LICENSE" ]; then cp "LICENSE" "${ARCH_DIR}/"; fi
+
+          # 打包为压缩包
+          cd dist
+          if [ "${{ matrix.os }}" = "windows" ]; then
+            zip -r "${ARCHIVE_NAME}.zip" "${ARCHIVE_NAME}"
+          else
+            tar -czvf "${ARCHIVE_NAME}.tar.gz" "${ARCHIVE_NAME}"
+          fi
+
+          # 清理解压文件夹及临时裸二进制文件，只留 .tar.gz / .zip 以及 .deb / .rpm
+          rm -rf "${ARCHIVE_NAME}"
+          rm -f sing-box sing-box.exe sing-box-upx sing-box-upx.exe libcronet.dll libcronet.so
 
       - name: 上传 Artifact
         uses: actions/upload-artifact@v4
@@ -392,8 +429,8 @@ jobs:
           body: |
             > ### ![](https://img.shields.io/badge/%E7%BC%96%E8%AF%91%E6%97%B6%E9%97%B4-${{ env.build_time }}-8267?logo=github&labelColor=%E9%A1%BB)![](https://img.shields.io/github/downloads/${{ github.repository }}/${{ env.TAG }}/total?label=%E4%B8%8B%E8%BD%BD%E6%AC%A1%E6%95%B0&logo=github)
 
-            `sing-box-CPU架构-upx` 为 UPX 压缩文件。
-            支持的主流架构附带 `.deb` / `.rpm` 标准安装包及 Windows `.exe` 程序。
+            压缩包内已包含二进制主程序及 UPX 压缩版本（如适用）。
+            支持的主流 Linux 架构附带 `.deb` / `.rpm` 标准安装包。
 
             **[官方更新说明](https://github.com/SagerNet/sing-box/releases)**
 
