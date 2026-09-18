@@ -276,6 +276,14 @@ esb_restore_by_name() {
 apply_change() {
   local _apply_change_desc="${1:-变更}"
   local _apply_change_backup=""
+  # 冲突检测：unit 或配置不是 EasySB 写的（例如机器上还装着别的一键脚本）就先停手，
+  # 不要覆盖别人的部署、更不要去重启别人的服务
+  if command -v foreign_singbox_detected >/dev/null 2>&1 && foreign_singbox_detected; then
+    if ! command -v unit_takeover_allowed >/dev/null 2>&1 || ! unit_takeover_allowed; then
+      error "检测到非 EasySB 管理的 sing-box 部署，已中止变更（未改动任何文件）"
+      return 1
+    fi
+  fi
   _apply_change_backup="$(esb_backup "$_apply_change_desc")" || { error "备份失败，已中止变更"; return 1; }
 
   if ! render_config; then

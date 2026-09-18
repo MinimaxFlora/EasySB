@@ -155,6 +155,9 @@ render_config() {
   fi
   chmod 600 "$_rc_out" 2>/dev/null || true
   mv -f "$_rc_out" "$ESB_CONFIG" || { rm -f "$_rc_out"; error "写入 $ESB_CONFIG 失败"; return 1; }
+  # 侧车标记：证明这份配置是 EasySB 写的（JSON 里不能加注释字段，sing-box 会拒绝未知字段）
+  { printf '%s %s\n' "EasySB-MANAGED" "$(esb_now)"; } >"${ESB_CONF_DIR}/.easysb-managed" 2>/dev/null || true
+  chmod 600 "${ESB_CONF_DIR}/.easysb-managed" 2>/dev/null || true
   # 服务以 sing-box 用户运行，而配置是 root 写的：这里立刻修正属主/权限
   if command -v sb_fix_perms >/dev/null 2>&1; then sb_fix_perms >/dev/null 2>&1 || true; fi
   log_debug "服务端配置已生成：$ESB_CONFIG（协议：$_rc_list）"

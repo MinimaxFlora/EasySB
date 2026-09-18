@@ -229,6 +229,23 @@ state 里的 `.sub = {enabled, token, serve_via_site, port, root, name}`。
 **输出即数据**：`40-render.sh` 与 `80-subscribe.sh` 的 stdout 只允许是数据，
 模块内 `log_info` / `log_ok` 必须写 stderr（`>&2`），否则会把 JSON/YAML/链接写坏（真机踩过一次）。
 
+## 9b. 部署归属与冲突检测（`50-singbox.sh` / `20-state.sh`）
+
+```
+ESB_UNIT_MARKER                 # unit 里的归属标记字符串（EasySB-MANAGED）
+unit_is_easysb <文件>           # 0=该 unit 由 EasySB 写入（含标记）
+foreign_singbox_report          # 打印检测到的外部 sing-box 部署细节；发现则返回 0
+foreign_singbox_detected        # 同上但不打印（供内部判断）
+foreign_singbox_detected_quiet  # 只看 unit/配置归属（不做进程探测，适合频繁调用）
+unit_takeover_allowed           # 0=允许接管（需 ESB_TAKEOVER=1；交互时再确认一次）
+```
+
+- 规则：`unit_install` 遇到非自己写的 unit 必须拒绝覆盖（`ESB_TAKEOVER=1` 才允许，且先备份）；
+  `apply_change` 在外部部署存在时直接中止；`unit_remove` 只删自己的 unit。
+- 归属依据：unit 内的 `# EasySB-MANAGED` 注释；配置目录里的 `${ESB_CONF_DIR}/.easysb-managed`
+  侧车标记（JSON 不能带注释字段，sing-box 会拒绝未知字段）。
+- 运行中的 sing-box 若命令行指向别的配置目录（例如 `/etc/s-box/sb.json`），同样算外部部署。
+
 ## 10b. 证书模式（按协议）
 
 ```

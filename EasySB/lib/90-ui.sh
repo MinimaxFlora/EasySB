@@ -49,6 +49,11 @@ ui_main() {
 # ---------------------------------------------------------------------------
 ui_status_menu() {
   ui_title "运行状态"
+  if foreign_singbox_detected_quiet; then
+    log_warn "检测到非 EasySB 管理的 sing-box 部署（unit / 配置不是本工具写的）"
+    printf '  本工具不会覆盖或重启它；如需接管请先备份，再用 ESB_TAKEOVER=1 重新运行本脚本\n' >&2
+    ui_blank
+  fi
   sb_status_line
   ui_blank
   if [ -f "$ESB_STATE" ]; then
@@ -442,6 +447,18 @@ ui_deploy_wizard() {
   fi
 
   ui_step "第四步：安装 sing-box 内核（来自本仓库 releases）"
+  # 冲突前置提醒：机器上可能装着别的一键脚本（如 sb.sh），它们共用同一个 unit 名与 443 端口
+  if foreign_singbox_detected_quiet; then
+    log_warn "这台机器上已有非 EasySB 管理的 sing-box 部署："
+    foreign_singbox_report || true
+    ui_blank
+    if ! unit_takeover_allowed; then
+      error "为避免覆盖别人的部署，部署已中止（未改动任何文件）"
+      log_info "确认要由 EasySB 接管时：先备份对方的 unit 与配置，再用 ESB_TAKEOVER=1 重新运行本脚本"
+      pause
+      return 1
+    fi
+  fi
   ui_install_kernel latest || { log_err "内核安装失败，已中止部署"; pause; return 1; }
   probe_capabilities >/dev/null 2>&1 || log_warn "能力探测未完成（不影响使用）"
 

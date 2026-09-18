@@ -390,11 +390,81 @@ probe_capabilities() {
 # ---------------------------------------------------------------------------
 # systemd unit / 服务
 # ---------------------------------------------------------------------------
+# 判断某个 unit / 配置文件是不是 EasySB 自己写的。
+# 依据是 EasySB 写入的标记（unit 里是注释行，配置目录里是侧车标记文件），
+# 这样即使用户把 unit 换成别的脚本的版本也能识别出来（真机踩过：sb.sh 覆盖了同一个 unit）。
+ESB_UNIT_MARKER="EasySB-MANAGED"
+
+unit_is_easysb() {
+  local _uie_file="$1"
+  [ -f "$_uie_file" ] || return 1
+  grep -q "$ESB_UNIT_MARKER" "$_uie_file" 2>/dev/null
+}
+
+# 打印检测到的"外部 sing-box 部署"细节；没有则返回 1
+foreign_singbox_report() {
+  local _fsr_found=0 _fsr_unit _fsr_cfg _fsr_pid _fsr_cmd
+  _fsr_unit="${ESB_UNIT_DIR}/sing-box.service"
+  if [ -f "$_fsr_unit" ] && ! unit_is_easysb "$_fsr_unit"; then
+    _fsr_found=1
+    log_warn "检测到非 EasySB 管理的 systemd unit：$_fsr_unit"
+    printf '        ExecStart: %s\n' "$(grep -m1 '^ExecStart=' "$_fsr_unit" 2>/dev/null | cut -d= -f2-)" >&2
+    printf '        处理建议：先备份该 unit 与它的配置，再用 ESB_TAKEOVER=1 重新运行本脚本接管\n' >&2
+  fi
+  _fsr_cfg="${ESB_CONFIG}"
+  if [ -f "$_fsr_cfg" ] && [ ! -f "${ESB_CONF_DIR}/.easysb-managed" ]; then
+    _fsr_found=1
+    log_warn "检测到非 EasySB 生成的配置：$_fsr_cfg（缺少 EasySB 标记文件）"
+  fi
+  _fsr_pid="$(pgrep -x sing-box 2>/dev/null | head -1)"
+  if [ -n "$_fsr_pid" ]; then
+    _fsr_cmd="$(cat "/proc/${_fsr_pid}/cmdline" 2>/dev/null | tr '\0' ' ')"
+    case "$_fsr_cmd" in
+      *"$ESB_CONF_DIR"*) ;;
+      *)
+        _fsr_found=1
+        log_warn "正在运行的 sing-box 用的不是 EasySB 的配置目录：${_fsr_cmd:-未知}"
+        ;;
+    esac
+  fi
+  [ "$_fsr_found" = "1" ]
+}
+
+foreign_singbox_detected() { foreign_singbox_report >/dev/null 2>&1; }
+foreign_singbox_detected_quiet() {
+  local _fsrq_found=0 _fsrq_unit="${ESB_UNIT_DIR}/sing-box.service"
+  if [ -f "$_fsrq_unit" ] && ! unit_is_easysb "$_fsrq_unit"; then _fsrq_found=1; fi
+  if [ -f "$ESB_CONFIG" ] && [ ! -f "${ESB_CONF_DIR}/.easysb-managed" ]; then _fsrq_found=1; fi
+  [ "$_fsrq_found" = "1" ]
+}
+
+# 是否允许接管外部部署：ESB_TAKEOVER=1（并在交互式运行时再确认一次）
+unit_takeover_allowed() {
+  [ "${ESB_TAKEOVER:-0}" = "1" ] || return 1
+  if [ -t 0 ] && [ "${ESB_ASSUME_YES:-0}" != "1" ]; then
+    log_warn "ESB_TAKEOVER=1：将覆盖上面列出的外部 sing-box 部署"
+    ask_yesno "确认接管吗？（原文件会被备份到 $ESB_BACKUP_DIR）" n || return 1
+  fi
+  return 0
+}
+
 unit_install() {
   if [ "${ESB_INIT:-systemd}" = "systemd" ]; then
     mkdir -p "$ESB_UNIT_DIR" || return 1
     local _unit_file="${ESB_UNIT_DIR}/sing-box.service"
+    if [ -f "$_unit_file" ] && ! unit_is_easysb "$_unit_file"; then
+      if ! unit_takeover_allowed; then
+        error "拒绝覆盖非 EasySB 管理的 unit：$_unit_file"
+        printf '  %s\n' "该 unit 由别的脚本安装（例如 sb.sh 等一键脚本），直接覆盖会中断它正在运行的服务。" >&2
+        printf '  %s\n' "可选做法：① 在别的脚本里卸载它；② 备份后用 ESB_TAKEOVER=1 重新运行本脚本接管。" >&2
+        return 1
+      fi
+      mkdir -p "$ESB_BACKUP_DIR" 2>/dev/null || true
+      cp -a "$_unit_file" "${ESB_BACKUP_DIR}/sing-box.service.foreign.$(date +%Y%m%d-%H%M%S)" 2>/dev/null || true
+      log_warn "已备份外部 unit 到 $ESB_BACKUP_DIR（继续接管）"
+    fi
     cat <<EOF | file_write "$_unit_file" 644
+# ${ESB_UNIT_MARKER} (由 EasySB 一键部署脚本生成与管理，请勿手工编辑；改动会在下次部署时被覆盖)
 [Unit]
 Description=sing-box service (EasySB)
 Documentation=https://sing-box.sagernet.org
@@ -448,6 +518,11 @@ EOF
 
 unit_remove() {
   if [ "${ESB_INIT:-systemd}" = "systemd" ]; then
+    # 只删自己写的 unit：别的脚本装的 unit 不碰（避免卸载本工具把别人的服务删掉）
+    if [ -f "${ESB_UNIT_DIR}/sing-box.service" ] && ! unit_is_easysb "${ESB_UNIT_DIR}/sing-box.service"; then
+      log_warn "跳过删除非 EasySB 管理的 unit：${ESB_UNIT_DIR}/sing-box.service"
+      return 0
+    fi
     rm -f "${ESB_UNIT_DIR}/sing-box.service" 2>/dev/null || true
     run_gate "systemctl daemon-reload" systemctl daemon-reload >/dev/null 2>&1 || true
   else

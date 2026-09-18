@@ -53,3 +53,9 @@
 3. **服务端加了 `log` 段**（默认 `warn`）：远程排障必需；可用 `state.log_level` 调整。
 4. **客户端多出 `all.json`**：所有已启用协议合成一份客户端配置（mixed 入站 10000 + 每个协议一条 outbound），单协议配置仍与模板一一对应。
 5. **客户端 TUIC 保留模板里的 `network: "tcp"`**：用 1.12.0 / 1.13.0 / 1.14.1 三个真实二进制实测该字段合法（早前怀疑它被拒绝，实测不成立），因此按模板原样输出。
+
+## 部署归属与冲突检测
+
+| 需求 | 模块 | 入口 | 测试 |
+| --- | --- | --- | --- |
+| 机器上已装别的一键脚本时不得覆盖对方 unit/配置，接管需显式 `ESB_TAKEOVER=1` 且先备份 | `lib/50-singbox.sh`（`unit_is_easysb` / `foreign_singbox_report` / `unit_install` 守卫）、`lib/20-state.sh`（`apply_change` 守卫）、`lib/90-ui.sh`（状态页与向导提醒） | 部署向导第四步、菜单【运行状态】 | `tests/cases/coexist.sh`（7 条，含变异验证） |

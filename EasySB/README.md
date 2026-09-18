@@ -92,6 +92,22 @@ bash tests/acceptance.sh          # 真机验收：在**已部署好的 VPS 上*
 文档：`docs/INTERFACES.md`（模块契约）、`docs/STATE.md`（状态模型）、
 `docs/FEATURE-MAP.md`（需求→实现映射）、`docs/TESTING.md`（测试沙箱契约）。
 
+## 与其它一键脚本共存
+
+EasySB 使用标准的 `sing-box.service`（systemd）与 `/etc/sing-box/`，而很多一键脚本
+（例如 `sb.sh`、各类面板）也用同一套路径与 443 端口。**谁后运行谁就覆盖对方**，
+互相覆盖后你看到的现象通常是：服务在跑但端口不是你以为的那些、网站 502/404、nginx 被杀。
+
+为此 EasySB 会做归属检测：
+
+- 写入 unit 与配置时留下标记（unit 里是 `# EasySB-MANAGED` 注释，配置旁边是
+  `/etc/sing-box/.easysb-managed` 标记文件）。
+- 部署/变更前如果发现 unit 或配置**不是 EasySB 写的**（或正在跑的 sing-box 用的不是我们的配置目录），
+  会打印对方的 `ExecStart` 并**直接停手**，不改任何文件、也不重启别人的服务。
+- 确实要接管时：先备份对方的 unit 与配置，再用 `ESB_TAKEOVER=1 bash easysb.sh` 运行；
+  接管前 EasySB 会把对方的 unit 复制到备份目录（`/var/backups/easysb/sing-box.service.foreign.*`）。
+- 卸载时只删自己写的 unit，别人的 unit 不动。
+
 ## 常见问题
 
 **Q：为什么强制域名？**
@@ -120,6 +136,11 @@ REALITY 也需要域名做 SNI。用域名还能让流量看起来像正常 HTTP
 **Q：REALITY 能换成自己的域名吗？**
 不能。REALITY 借用第三方站点的 TLS 握手（默认 `www.microsoft.com`），需要在同一菜单里
 换成别的"符合 REALITY 要求的域名"（TLS1.3 + HTTP/2 + 不重定向），换手域名不需要重新生成密钥。
+
+**Q：提示"检测到非 EasySB 管理的 sing-box 部署"怎么办？**
+说明这台机器上已经装过别的脚本（`sb.sh` / 面板之类），它们和 EasySB 共用
+`sing-box.service` 与 `/etc/sing-box/`。两种做法：① 在对方脚本里卸载它，然后重新部署；
+② 确认要由 EasySB 接管时先备份对方文件，再用 `ESB_TAKEOVER=1` 重新运行本脚本。
 
 **Q：更新失败会影响正在运行的服务吗？**
 不会。内核与脚本更新都是"下载 → 校验 → 备份 → 原子替换"，失败时保留原文件；配置变更同样会回滚。
