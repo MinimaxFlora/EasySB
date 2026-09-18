@@ -109,3 +109,13 @@ REALITY 也需要域名做 SNI。用域名还能让流量看起来像正常 HTTP
 
 **Q：更新失败会影响正在运行的服务吗？**
 不会。内核与脚本更新都是"下载 → 校验 → 备份 → 原子替换"，失败时保留原文件；配置变更同样会回滚。
+
+**Q：REALITY 节点连不上，日志写 `reality verification failed`？**
+先换一个网络环境再试（例如手机热点），或者用非 REALITY 的节点（VMess-WS-TLS / AnyTLS / Hysteria2 / TUIC）。
+常见原因是你本机开着代理（Clash / Mihomo 等），它按 SNI 把 `www.microsoft.com` 这条连接劫持走了 ——
+REALITY 依赖握手目标站点的真实证书，被中间设备改写就会校验失败。服务端本身是好的，
+可以用同一份客户端配置在服务器上"自己连自己"验证。
+
+**Q：机器上原来就有 sing-box / acme.sh 怎么办？**
+脚本会复用已有的 `/root/.acme.sh`（同一个 acme 账号），覆盖 `/etc/sing-box/config.json`
+（覆盖前的配置会进 `/var/backups/easysb/`）；建议先自行备份，或用 `uninstall` 后回滚。
