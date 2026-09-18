@@ -451,7 +451,21 @@ _cert_chown_singbox() {
   return 0
 }
 
-# acme.sh 产出的证书文件（优先 ECC 目录）→ 安装到目标路径
+# 0 = acme.sh 里已经有该域名的证书（重复签发会因"未到续期时间"而 exit 2）
+_cert_acme_has_cert() {
+  local _cert_acme_has_cert_domain="${1-}" _cert_acme_has_cert_home="" _cert_acme_has_cert_dir=""
+  [ -n "$_cert_acme_has_cert_domain" ] || return 1
+  _cert_acme_has_cert_home="$(cert_acme_home)"
+  for _cert_acme_has_cert_dir in \
+      "${_cert_acme_has_cert_home}/${_cert_acme_has_cert_domain}_ecc" \
+      "${_cert_acme_has_cert_home}/${_cert_acme_has_cert_domain}"; do
+    if [ -f "${_cert_acme_has_cert_dir}/fullchain.cer" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 _cert_fetch_acme_files() {
   local _cert_fetch_acme_files_domain="${1-}" _cert_fetch_acme_files_crt="${2-}" _cert_fetch_acme_files_key="${3-}"
   local _cert_fetch_acme_files_home _cert_fetch_acme_files_dir
@@ -555,6 +569,11 @@ cert_apply() {
 
   local -a _cert_apply_args=()
   _cert_apply_args=(--home "$_cert_apply_home" --issue -d "$_cert_apply_domain" --keylength ec-256)
+  if [ "${ESB_CERT_FORCE:-0}" = "1" ]; then
+    # 强制重签：会消耗 CA 的申请频率额度，仅在明确要求时使用
+    _cert_apply_args+=(--force)
+    log_info "ESB_CERT_FORCE=1：强制重新签发证书"
+  fi
   local _cert_apply_dnsenv=""
   local _cert_apply_webroot=""
   case "$_cert_apply_kind" in
@@ -586,9 +605,16 @@ cert_apply() {
   log_info "申请证书：$_cert_apply_domain（$_cert_apply_mode）"
   if ! _cert_acme_exec "$_cert_apply_dnsenv" "${_cert_apply_prov:--}" \
         "申请证书 $_cert_apply_domain" "$_cert_apply_acme" "${_cert_apply_args[@]}"; then
-    error "申请证书失败：$_cert_apply_domain（方式：$_cert_apply_mode）"
-    log_info "常见原因：域名未解析到本机 / 80 端口被占用 / DNS 凭据错误或未生效 / 申请频率超限"
-    return 1
+    # acme.sh 在"域名未变且未到续期时间"时会 exit 2（Domains not changed. Skipping.）——
+    # 这不是失败：机器上本来就有一张可用的证书，直接复用它，不要中断部署。
+    if _cert_acme_has_cert "$_cert_apply_domain"; then
+      log_warn "acme.sh 已有 $_cert_apply_domain 的有效证书（未到续期时间），本次直接复用"
+      log_info "如需强制重新签发：用 ESB_CERT_FORCE=1 重跑，或在【证书管理】里执行续期"
+    else
+      error "申请证书失败：$_cert_apply_domain（方式：$_cert_apply_mode）"
+      log_info "常见原因：域名未解析到本机 / 80 端口被占用 / DNS 凭据错误或未生效 / 申请频率超限"
+      return 1
+    fi
   fi
 
   local _cert_apply_crt="${ESB_CERT_DIR}/${_cert_apply_domain}.crt"
