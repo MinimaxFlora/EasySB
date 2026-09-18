@@ -360,6 +360,9 @@ port_in_use() {
 # ---------------------------------------------------------------------------
 service_mgr() {
   local _sm_name="$1" _sm_action="$2"
+  # 兜底：调用方可能没有先跑 detect_all（例如库被单独 source），
+  # 此时 ESB_INIT 为空，会被误判成"本机没有服务管理器"
+  [ -n "${ESB_INIT:-}" ] || detect_init
   case "$ESB_INIT" in
     systemd)
       case "$_sm_action" in
