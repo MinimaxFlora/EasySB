@@ -163,11 +163,14 @@
       "enabled": true,                   // 开启缓存文件功能
       "store_dns": true                  // 将 DNS 缓存持久化写入磁盘，重启后无需重新解析
     },
-    // Clash API 兼容控制接口（便于搭配 Yacd / Metacubexd 等 WebUI 管理界面）
+  // Clash API 兼容控制接口（便于搭配 Yacd / Metacubexd / Zashboard 等 Web UI 管理界面）
     "clash_api": {
-      "external_controller": "127.0.0.1:9090", // 控制 API 的监听地址和端口
-      "external_ui": "ui",                      // 存放 Web 控制面板前端静态文件的本地目录
-      "default_mode": "Rule"                    // 启动时的默认分流模式（Rule: 规则模式, Global: 全局, Direct: 直连）
+      "external_controller": "0.0.0.0:9090", // REST UI 控制器的监听地址与端口（0.0.0.0 表示允许局域网及外部 IP 访问，9090 为默认端口）
+      "external_ui": "ui",                     // Web UI 静态资源文件在本地的相对/绝对路径（解压后文件存储在该目录下）
+      "external_ui_download_url": "https://gh-proxy.com/https://github.com/Zephyruso/zashboard/archive/refs/heads/gh-pages.zip", // Web UI 面板压缩包下载地址（本地缺少 UI 文件时自动下载）
+      "external_ui_download_detour": "direct", // 下载 Web UI 界面时使用的出站标签（已由原来的"直连"修正为 outbounds 中对应的 "direct"）
+      "secret": "1234567890",                // Clash API 连接验证密钥/密码（用于前端面板安全登录，建议修改为强密码）
+      "default_mode": "Rule"                 // 服务启动时的默认分流模式（可选: Rule-规则模式, Global-全局代理, Direct-全局直连）
     }
   },
 
