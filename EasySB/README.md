@@ -85,6 +85,8 @@ bash tests/audit.sh               # 契约审计：公共函数是否齐全 + �
 bash tests/real-parser.sh         # 用真实 sing-box 二进制校验生成的配置
                                   #   默认取本仓库 releases 的最新 tag（本仓库编译的内核从 1.14 起）
                                   #   ESB_REALPARSER_EXTRA=1 时额外用官方旧版本做跨世代兼容性验证
+bash tests/acceptance.sh          # 真机验收：在**已部署好的 VPS 上**跑，检查 systemd 服务、
+                                  #   端口监听、伪装站点与订阅地址可访问、防火墙规则、证书、产物
 ```
 
 文档：`docs/INTERFACES.md`（模块契约）、`docs/STATE.md`（状态模型）、

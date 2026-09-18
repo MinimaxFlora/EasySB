@@ -11,7 +11,13 @@ bash tests/run_tests.sh --unit              # 全部用例
 bash tests/run_tests.sh --case <用例函数名>  # 单个用例
 bash tests/audit.sh                         # 契约审计（公共函数是否齐全 / 违规模式扫描）
 bash tests/real-parser.sh [版本…]            # 真实 sing-box 二进制校验（默认取本仓库 releases 最新 tag）
+bash tests/acceptance.sh                    # 真机验收（在已部署的 VPS 上跑；沙箱证明不了的项都在这）
 ```
+
+> `tests/acceptance.sh` 是给**目标 Linux 主机**用的：检查 systemd 服务与自启、配置能被已安装内核校验、
+> 服务用户能否读到配置、协议端口监听、防火墙规则（含端口跳跃 DNAT）、伪装站点 HTTP/HTTPS 可访问、
+> 订阅地址可访问且内容可解码、证书有效期与域名一致、客户端产物完整。
+> 用法：`bash <(curl -fsSL <raw>/EasySB/tests/acceptance.sh)`，只读检查，不改任何配置。
 
 > 真实二进制校验默认只用**本仓库 releases** 编译的内核（本仓库从 1.14 起）；
 > 设 `ESB_REALPARSER_EXTRA=1` 才会额外拉官方旧版本，用于跨内核世代的兼容性证据。
