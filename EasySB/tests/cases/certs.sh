@@ -27,7 +27,7 @@ TESTS="test_1_self_signed_registers_cert \
        test_12_tool_install_idempotent \
        test_13_dns_env_not_on_cmdline \
        test_14_acme_no_output_clean_error \
-       test_15_renew_args_and_all"
+       test_15_renew_args_and_all test_16_selfsigned_paths_do_not_clash"
 
 # ---------------------------------------------------------------------------
 # 用例内部工具（前缀 _cert_case_，属于测试代码，不参与契约审计）
@@ -88,17 +88,18 @@ test_1_self_signed_registers_cert() {
   local _cert_case_rc=0
   cert_self_signed "t1.example.com" || return 1
 
-  assert_file "$ESB_CERT_DIR/t1.example.com.crt" "自签证书 crt 应存在" || return 1
-  assert_file "$ESB_CERT_DIR/t1.example.com.key" "自签证书 key 应存在" || return 1
+  # 自签证书独立存放：self-signed-<域名>.crt|key（与 acme 证书分开，允许同一域名两种模式并存）
+  assert_file "$ESB_CERT_DIR/self-signed-t1.example.com.crt" "自签证书 crt 应存在" || return 1
+  assert_file "$ESB_CERT_DIR/self-signed-t1.example.com.key" "自签证书 key 应存在" || return 1
 
   # crt 必须能被 openssl 解析（形状 + 值：CN）
   local _cert_case_subj=""
-  _cert_case_subj="$(openssl x509 -in "$ESB_CERT_DIR/t1.example.com.crt" -noout -subject 2>/dev/null)"
+  _cert_case_subj="$(openssl x509 -in "$ESB_CERT_DIR/self-signed-t1.example.com.crt" -noout -subject 2>/dev/null)"
   _cert_case_rc=$?
   assert_eq "$_cert_case_rc" "0" "自签 crt 应能被 openssl 解析" || return 1
   assert_contains "$_cert_case_subj" "t1.example.com" "自签证书主体应为域名" || return 1
   # key 必须是 EC 私钥
-  openssl ec -in "$ESB_CERT_DIR/t1.example.com.key" -noout >/dev/null 2>&1
+  openssl ec -in "$ESB_CERT_DIR/self-signed-t1.example.com.key" -noout >/dev/null 2>&1
   _cert_case_rc=$?
   assert_eq "$_cert_case_rc" "0" "自签私钥应为 EC 私钥（prime256v1）" || return 1
 
@@ -107,9 +108,9 @@ test_1_self_signed_registers_cert() {
   assert_json "$ESB_DIR/certs.json" '.[0].domain' 't1.example.com' || return 1
   assert_json "$ESB_DIR/certs.json" '.[0].source' 'self-signed' || return 1
   assert_json "$ESB_DIR/certs.json" '.[0].auto_renew' 'true' || return 1
-  assert_eq "$(registry_get t1.example.com crt)" "$ESB_CERT_DIR/t1.example.com.crt" \
+  assert_eq "$(registry_get t1.example.com crt)" "$ESB_CERT_DIR/self-signed-t1.example.com.crt" \
     "注册表 crt 应为证书目录内的绝对路径" || return 1
-  assert_eq "$(registry_get t1.example.com key)" "$ESB_CERT_DIR/t1.example.com.key" \
+  assert_eq "$(registry_get t1.example.com key)" "$ESB_CERT_DIR/self-signed-t1.example.com.key" \
     "注册表 key 应为证书目录内的绝对路径" || return 1
   registry_has "t1.example.com"
   _cert_case_rc=$?
@@ -659,5 +660,43 @@ EOF
   _cert_case_rc=$?
   assert_eq "$_cert_case_rc" "0" "只有自签证书时 renew_all 应成功结束（跳过）" || return 1
   assert_eq "$(cat "$_cert_case_dump" 2>/dev/null)" "" "renew_all 不应为自签证书调用 acme.sh" || return 1
+  return 0
+}
+
+# 16. 同一域名下"自签证书"与"域名证书"的文件必须分开（否则按协议切换证书模式会互相覆盖）
+test_16_selfsigned_paths_do_not_clash() {
+  state_init >/dev/null 2>&1 || return 1
+  cert_self_signed "clash.example.com" >/dev/null 2>&1 || { _harness_fail "生成自签证书失败"; return 1; }
+
+  local _t16_selfsigned _t16_selfsigned_key _t16_acme_style
+  _t16_selfsigned="$(cert_selfsigned_paths clash.example.com | cut -f1)"
+  _t16_selfsigned_key="$(cert_selfsigned_paths clash.example.com | cut -f2)"
+  _t16_acme_style="${ESB_CERT_DIR}/clash.example.com.crt"
+
+  assert_file "$_t16_selfsigned" "自签证书应存在" || return 1
+  assert_file "$_t16_selfsigned_key" "自签密钥应存在" || return 1
+  assert_ne "$_t16_selfsigned" "$_t16_acme_style" "自签证书路径不能与域名证书路径相同" || return 1
+  assert_contains "$_t16_selfsigned" "self-signed-" "自签证书路径应带 self-signed- 前缀" || return 1
+  assert_fail "此时 <域名>.crt 不应存在（还没申请域名证书）" test -f "$_t16_acme_style" || return 1
+
+  # 模拟已有域名证书：两份文件必须同时存在且内容不同
+  printf 'ACME-CERT-PLACEHOLDER\n' >"$_t16_acme_style" || return 1
+  assert_file "$_t16_selfsigned" "放入域名证书后自签证书仍应在" || return 1
+  assert_ne "$(cat "$_t16_selfsigned")" "$(cat "$_t16_acme_style")" "两份证书内容应各自独立" || return 1
+
+  # 协议解析：同一个域名下不同协议取到不同文件
+  sandbox_seed_state >/dev/null 2>&1 || true
+  state_set_str ".domain" "clash.example.com" || return 1
+  state_set_str ".cert.source" "acme:webroot" || return 1
+  state_set_str ".cert.crt" "$_t16_acme_style" || return 1
+  mkdir -p "$ESB_CERT_DIR" || return 1
+  printf 'FAKE-KEY\n' >"${ESB_CERT_DIR}/clash.example.com.key" || return 1
+  state_set_str ".cert.key" "${ESB_CERT_DIR}/clash.example.com.key" || return 1
+  proto_cert_mode_set anytls self-signed || return 1
+  proto_cert_mode_set hysteria2 auto || return 1
+  assert_eq "$(cert_files_for_proto anytls | cut -f1)" "$_t16_selfsigned" \
+    "自签协议的证书应指向 self-signed-<域名>.crt" || return 1
+  assert_eq "$(cert_files_for_proto hysteria2 | cut -f1)" "$_t16_acme_style" \
+    "域名证书协议的证书应指向 <域名>.crt" || return 1
   return 0
 }
