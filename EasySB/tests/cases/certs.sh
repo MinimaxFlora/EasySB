@@ -625,13 +625,25 @@ EOF
     return 1
   fi
 
-  # 未登记域名：交给 acme.sh --renew -d <域名> --force
+  # 未登记域名：交给 acme.sh --renew -d <域名>（默认**不加** --force）
+  # 依据是实测：对刚签发 3 天的证书强续会被 CA 拒绝并白耗 Let's Encrypt 频率额度，
+  # acme.sh 自己的行为是"未到时间就 Skipping"，因此默认不强制，仅在 ESB_CERT_FORCE=1 时才加 --force。
   ESB_GATE=0 cert_renew "loose.example.com" >/dev/null 2>&1
   _cert_case_rc=$?
   assert_eq "$_cert_case_rc" "0" "假 acme.sh 成功时续期应返回 0" || return 1
   _cert_case_dump_text="$(cat "$_cert_case_dump" 2>/dev/null)"
-  assert_contains "$_cert_case_dump_text" "--renew -d loose.example.com --force" \
-    "续期应调用 acme.sh --renew -d <域名> --force" || return 1
+  assert_contains "$_cert_case_dump_text" "--renew -d loose.example.com" \
+    "续期应调用 acme.sh --renew -d <域名>" || return 1
+  assert_not_contains "$_cert_case_dump_text" "--force" \
+    "默认不得使用 --force（会消耗 CA 频率额度；实测强续会被拒绝）" || return 1
+
+  # ESB_CERT_FORCE=1 时才允许强制续期
+  : >"$_cert_case_dump"
+  ESB_GATE=0 ESB_CERT_FORCE=1 cert_renew "loose.example.com" >/dev/null 2>&1
+  _cert_case_rc=$?
+  assert_eq "$_cert_case_rc" "0" "ESB_CERT_FORCE=1 时续期仍应返回 0" || return 1
+  assert_contains "$(cat "$_cert_case_dump" 2>/dev/null)" "--force" \
+    "ESB_CERT_FORCE=1 时应带上 --force" || return 1
 
   # 已登记的 acme 证书：续期后要重新安装证书文件（沙箱无 acme 产物 → 干净失败）
   registry_add "acme-rev.example.com" "$ESB_CERT_DIR/acme-rev.example.com.crt" \
