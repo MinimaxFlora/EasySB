@@ -4,7 +4,7 @@
 
 TESTS="test_1_links_schemes test_2_base64_roundtrip test_3_sub_files test_4_token_stable \
 test_5_mihomo_yaml test_6_singbox_subscription test_7_sub_url_mode test_8_hysteria2_port_range_format \
-test_9_sub_enable_standalone"
+test_9_sub_enable_standalone test_10_boolean_state_reads"
 
 # ---------------------------------------------------------------------------
 # fixture：五协议全开、域名/密钥/证书齐备的状态
@@ -168,5 +168,29 @@ test_9_sub_enable_standalone() {
     "应放行订阅站点端口" || return 1
   sub_disable >/dev/null 2>&1 || return 1
   assert_eq "$(state_get .sub.enabled)" "false" "关闭后应记录为未启用" || return 1
+  return 0
+}
+
+# 直接锁定"布尔状态读回来必须是 false 而不是空"这一类缺陷
+# （jq 的 `//` 与 `-e` 都会把 false 当空：前者让读取结果变空，后者让写入被误判成非法 JSON）
+test_10_boolean_state_reads() {
+  state_init || return 1
+  state_set_str ".domain" "node.example.com" || return 1
+  # 未启用的协议：读取必须得到字面量 false
+  assert_eq "$(state_get '.protocols.tuic.enabled')" "false" \
+    "未启用协议的 enabled 必须读回 false（不能被 // empty 吞成空）" || return 1
+  assert_eq "$(state_get '.sub.enabled')" "false" "默认关闭的 sub.enabled 必须读回 false" || return 1
+  assert_eq "$(state_get '.protocols.hysteria2.hop.enabled')" "false" \
+    "默认关闭的 hop.enabled 必须读回 false" || return 1
+  # 写入 false 必须成功（jq -e 会把 false 判成"非法 JSON"）
+  assert_ok "写入 .sub.enabled=false 必须成功" state_set ".sub.enabled" "false" || return 1
+  assert_ok "写入协议 enabled=false 必须成功" state_proto_set_field tuic ".enabled" "false" || return 1
+  assert_eq "$(state_get '.protocols.tuic.enabled')" "false" "写入后读回仍应是 false" || return 1
+  # 启用一个协议后，列表与端口必须跟着变
+  state_proto_set_field vless-vision-reality ".enabled" "true" || return 1
+  proto_enabled tuic && { _harness_fail "tuic 未启用却被 proto_enabled 判为启用"; return 1; }
+  assert_ok "vless 启用后 proto_enabled 必须为真" proto_enabled vless-vision-reality || return 1
+  assert_eq "$(proto_enabled_list)" "vless-vision-reality" "已启用协议列表必须只含启用项" || return 1
+  assert_eq "$(proto_port vless-vision-reality)" "443" "端口必须读自 state" || return 1
   return 0
 }
