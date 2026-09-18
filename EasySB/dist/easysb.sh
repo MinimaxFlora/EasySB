@@ -600,6 +600,30 @@ http_head_ok() {
   return 1
 }
 
+# ---------------------------------------------------------------------------
+# 路径模型（兜底）：模块被单独 source（没有经过入口脚本）时也能拿到完整路径。
+# 入口 easysb.sh 已经定义过这些变量，本函数是幂等的兜底，全部使用 ${VAR:-默认}。
+# ---------------------------------------------------------------------------
+esb_paths_init() {
+  ESB_ROOT="${ESB_ROOT:-}"
+  ESB_SCRIPT_VERSION="${ESB_SCRIPT_VERSION:-1.0.0}"
+  ESB_DIR="${ESB_DIR:-${ESB_ROOT}/etc/easysb}"
+  ESB_STATE="${ESB_STATE:-${ESB_DIR}/state.json}"
+  ESB_LOG="${ESB_LOG:-${ESB_DIR}/easysb.log}"
+  ESB_SECRET_DIR="${ESB_SECRET_DIR:-${ESB_DIR}/secrets}"
+  ESB_CLIENT_DIR="${ESB_CLIENT_DIR:-${ESB_DIR}/client}"
+  ESB_CONF_DIR="${ESB_CONF_DIR:-${ESB_ROOT}/etc/sing-box}"
+  ESB_CONFIG="${ESB_CONFIG:-${ESB_CONF_DIR}/config.json}"
+  ESB_CERT_DIR="${ESB_CERT_DIR:-${ESB_CONF_DIR}/certs}"
+  ESB_BIN="${ESB_BIN:-${ESB_ROOT}/usr/bin/sing-box}"
+  ESB_UNIT_DIR="${ESB_UNIT_DIR:-${ESB_ROOT}/usr/lib/systemd/system}"
+  ESB_STATE_DIR="${ESB_STATE_DIR:-${ESB_ROOT}/var/lib/sing-box}"
+  ESB_BACKUP_DIR="${ESB_BACKUP_DIR:-${ESB_ROOT}/var/backups/easysb}"
+  ESB_WEB_ROOT="${ESB_WEB_ROOT:-${ESB_ROOT}/var/www/easysb}"
+  ESB_NGINX_CONF="${ESB_NGINX_CONF:-${ESB_ROOT}/etc/nginx/conf.d/easysb.conf}"
+  return 0
+}
+
 esb_log_raw "==== EasySB 启动 ===="
 
 
@@ -5907,7 +5931,13 @@ ui_prepare_cert() {
   local _ui_prepare_cert_arg="$_ui_prepare_cert_mode"
   if [ "$_ui_prepare_cert_mode" = "dns" ]; then
     local _ui_prepare_cert_prov
-    ask_single _ui_prepare_cert_prov "请选择 DNS 服务商" $(dns_provider_list)
+    local -a _ui_prepare_cert_prov_items=()
+    while IFS="|" read -r _k _v; do
+      [ -n "$_k" ] && _ui_prepare_cert_prov_items+=("${_k}|${_v}")
+    done <<EOF
+$(dns_provider_list)
+EOF
+    ask_single _ui_prepare_cert_prov "请选择 DNS 服务商" "${_ui_prepare_cert_prov_items[@]}"
     _ui_prepare_cert_arg="dns:$_ui_prepare_cert_prov"
     ui_dns_env_tip "$_ui_prepare_cert_prov"
   fi
@@ -6125,7 +6155,13 @@ ui_cert_apply_flow() {
   _ui_cert_apply_flow_arg="$_ui_cert_apply_flow_mode"
   if [ "$_ui_cert_apply_flow_mode" = "dns" ]; then
     local _ui_cert_apply_flow_prov
-    ask_single _ui_cert_apply_flow_prov "选择 DNS 服务商" $(dns_provider_list)
+    local -a _ui_cert_apply_flow_prov_items=()
+    while IFS="|" read -r _k _v; do
+      [ -n "$_k" ] && _ui_cert_apply_flow_prov_items+=("${_k}|${_v}")
+    done <<EOF
+$(dns_provider_list)
+EOF
+    ask_single _ui_cert_apply_flow_prov "选择 DNS 服务商" "${_ui_cert_apply_flow_prov_items[@]}"
     _ui_cert_apply_flow_arg="dns:$_ui_cert_apply_flow_prov"
     ui_dns_env_tip "$_ui_cert_apply_flow_prov"
   fi
@@ -6471,6 +6507,9 @@ ui_uninstall() {
   return 0
 }
 
+
+# 路径模型兜底（模块被单独 source 时也能工作；幂等，不覆盖入口已定义的值）
+esb_paths_init
 
 # ---------------------------------------------------------------------------
 # 初始化

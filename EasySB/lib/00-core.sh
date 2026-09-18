@@ -529,4 +529,28 @@ http_head_ok() {
   return 1
 }
 
+# ---------------------------------------------------------------------------
+# 路径模型（兜底）：模块被单独 source（没有经过入口脚本）时也能拿到完整路径。
+# 入口 easysb.sh 已经定义过这些变量，本函数是幂等的兜底，全部使用 ${VAR:-默认}。
+# ---------------------------------------------------------------------------
+esb_paths_init() {
+  ESB_ROOT="${ESB_ROOT:-}"
+  ESB_SCRIPT_VERSION="${ESB_SCRIPT_VERSION:-1.0.0}"
+  ESB_DIR="${ESB_DIR:-${ESB_ROOT}/etc/easysb}"
+  ESB_STATE="${ESB_STATE:-${ESB_DIR}/state.json}"
+  ESB_LOG="${ESB_LOG:-${ESB_DIR}/easysb.log}"
+  ESB_SECRET_DIR="${ESB_SECRET_DIR:-${ESB_DIR}/secrets}"
+  ESB_CLIENT_DIR="${ESB_CLIENT_DIR:-${ESB_DIR}/client}"
+  ESB_CONF_DIR="${ESB_CONF_DIR:-${ESB_ROOT}/etc/sing-box}"
+  ESB_CONFIG="${ESB_CONFIG:-${ESB_CONF_DIR}/config.json}"
+  ESB_CERT_DIR="${ESB_CERT_DIR:-${ESB_CONF_DIR}/certs}"
+  ESB_BIN="${ESB_BIN:-${ESB_ROOT}/usr/bin/sing-box}"
+  ESB_UNIT_DIR="${ESB_UNIT_DIR:-${ESB_ROOT}/usr/lib/systemd/system}"
+  ESB_STATE_DIR="${ESB_STATE_DIR:-${ESB_ROOT}/var/lib/sing-box}"
+  ESB_BACKUP_DIR="${ESB_BACKUP_DIR:-${ESB_ROOT}/var/backups/easysb}"
+  ESB_WEB_ROOT="${ESB_WEB_ROOT:-${ESB_ROOT}/var/www/easysb}"
+  ESB_NGINX_CONF="${ESB_NGINX_CONF:-${ESB_ROOT}/etc/nginx/conf.d/easysb.conf}"
+  return 0
+}
+
 esb_log_raw "==== EasySB 启动 ===="

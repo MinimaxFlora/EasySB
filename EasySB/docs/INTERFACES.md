@@ -18,7 +18,7 @@
 9. 生成配置必须 `omitempty` 语义：不用的可选键**整个不输出**（空数组也是字段）。
 10. 每个交互函数都必须能在 stdin 被管道喂入答案的情况下工作（非交互式自动化）。
 
-## 1. 路径变量（由 `00-core.sh` / `10-detect.sh` 在 init 时导出）
+## 1. 路径变量（由 `easysb.sh` 定义；模块被单独 source 时用 `esb_paths_init` 兜底）
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
@@ -47,6 +47,7 @@
 
 ```
 esb_color_init                       # 设置 C_* 颜色变量与 ESB_TTY
+esb_paths_init                       # 幂等：按 ESB_ROOT 补齐全部 ESB_* 路径变量（单独 source 模块时用）
 log_info/log_ok/log_warn/log_err/log_debug <msg...>
 die <msg...>                         # 打印错误并 exit 1
 error <msg...>                       # 打印错误并 return 1

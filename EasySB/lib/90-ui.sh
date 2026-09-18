@@ -314,7 +314,13 @@ ui_prepare_cert() {
   local _ui_prepare_cert_arg="$_ui_prepare_cert_mode"
   if [ "$_ui_prepare_cert_mode" = "dns" ]; then
     local _ui_prepare_cert_prov
-    ask_single _ui_prepare_cert_prov "请选择 DNS 服务商" $(dns_provider_list)
+    local -a _ui_prepare_cert_prov_items=()
+    while IFS="|" read -r _k _v; do
+      [ -n "$_k" ] && _ui_prepare_cert_prov_items+=("${_k}|${_v}")
+    done <<EOF
+$(dns_provider_list)
+EOF
+    ask_single _ui_prepare_cert_prov "请选择 DNS 服务商" "${_ui_prepare_cert_prov_items[@]}"
     _ui_prepare_cert_arg="dns:$_ui_prepare_cert_prov"
     ui_dns_env_tip "$_ui_prepare_cert_prov"
   fi
@@ -532,7 +538,13 @@ ui_cert_apply_flow() {
   _ui_cert_apply_flow_arg="$_ui_cert_apply_flow_mode"
   if [ "$_ui_cert_apply_flow_mode" = "dns" ]; then
     local _ui_cert_apply_flow_prov
-    ask_single _ui_cert_apply_flow_prov "选择 DNS 服务商" $(dns_provider_list)
+    local -a _ui_cert_apply_flow_prov_items=()
+    while IFS="|" read -r _k _v; do
+      [ -n "$_k" ] && _ui_cert_apply_flow_prov_items+=("${_k}|${_v}")
+    done <<EOF
+$(dns_provider_list)
+EOF
+    ask_single _ui_cert_apply_flow_prov "选择 DNS 服务商" "${_ui_cert_apply_flow_prov_items[@]}"
     _ui_cert_apply_flow_arg="dns:$_ui_cert_apply_flow_prov"
     ui_dns_env_tip "$_ui_cert_apply_flow_prov"
   fi
