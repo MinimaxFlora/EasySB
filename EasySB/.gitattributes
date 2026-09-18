@@ -1,0 +1,9 @@
+# 脚本一律使用 LF：CRLF 会让 Linux 上的 `bash script.sh` 报
+# "bad interpreter" / `\r: command not found`
+* text=auto eol=lf
+*.sh text eol=lf
+*.bash text eol=lf
+dist/easysb.sh text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+VERSION text eol=lf

@@ -23,6 +23,7 @@
 - [协议矩阵](#-协议矩阵)
 - [目录结构](#-目录结构)
 - [快速开始](#-快速开始)
+- [一键部署脚本 EasySB](#-一键部署脚本-easysb)
 - [配置详解](#-配置详解)
   - [VLESS + Vision + REALITY](#1-vless--vision--reality)
   - [VMess + WebSocket + TLS](#2-vmess--websocket--tls)
@@ -57,7 +58,7 @@
 | **现代规范** | VMess 采用 AEAD（`alterId: 0`），VLESS 启用 Vision 流控，并默认配置 uTLS 指纹伪装 |
 | **性能优先** | QUIC 协议默认 `bbr` 拥塞控制、`native` UDP 转发、Hysteria2 端口跳跃 |
 | **全局方案** | `Templates/` 提供 TUN + FakeIP + 规则分流的完整落地模板，含策略组自动测速 |
-| **零外部依赖** | 纯配置仓库，不绑定任何面板或脚本，克隆即可使用 |
+| **零外部依赖** | 纯配置仓库，不绑定任何面板；`EasySB/` 里的一键脚本是**可选**的独立工具，只用模板的用户完全不受影响 |
 
 ---
 
@@ -138,6 +139,33 @@ sing-box run -c config_server.json
 # 以 systemd 方式常驻
 sing-box run -c /etc/sing-box/config.json
 ```
+
+---
+
+## 一键部署脚本 EasySB
+
+懒得手动改配置？仓库里的 `EasySB/` 目录是一套**一键部署脚本**：把上面这些模板里的
+**VLESS-Vision-REALITY / VMess-WebSocket-TLS / Hysteria2 / TUIC / AnyTLS** 五套协议
+（可多选，默认全选）一次性部署到 Linux VPS —— 强制域名部署、自动申请 ACME 证书、
+自动编排端口、可选部署伪装站点，并支持内核与脚本在线更新。
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/MinimaxFlora/EasySB/master/EasySB/dist/easysb.sh)
+```
+
+| 能力 | 说明 |
+| :--- | :--- |
+| 协议多选 | 五个协议任选，默认全部；端口自动编排（TCP/UDP 分开，互不冲突） |
+| 强制域名 | 客户端地址、SNI、证书全部基于你的域名，比裸 IP 更安全也不易被探测 |
+| 证书管理 | 基于 acme.sh：申请（standalone / webroot / DNS API）、列表、**选择应用**、删除、续期 |
+| 内核安装与更新 | 直接安装本仓库 [Releases](https://github.com/MinimaxFlora/EasySB/releases) 里编译好的 sing-box，显示当前版本与仓库最新版本并可一键更新 |
+| 脚本自更新 | 从仓库拉取最新脚本，语法校验通过后原子替换，保留回滚 |
+| 伪装站点 | 可选部署（博客 / 企业官网 / 空白页 / 自定义 HTML / 反代真实站点），顺带充当 ACME webroot |
+| 客户端产物 | 生成每个协议的 `config_client.json`、合集 `all.json` 与分享链接（含二维码） |
+| 订阅链接 | 一个 URL 导入全部节点：Base64 通用订阅（v2rayN / Shadowrocket / NekoBox）、纯文本链接、sing-box JSON、Mihomo(Clash) YAML；随配置变更自动刷新，订阅站点复用伪装站点的 HTTPS（或独立 nginx 站点），token 路径鉴权、可重置 |
+
+细节见 [`EasySB/README.md`](EasySB/README.md)，需求→实现对照表见
+[`EasySB/docs/FEATURE-MAP.md`](EasySB/docs/FEATURE-MAP.md)。
 
 ---
 

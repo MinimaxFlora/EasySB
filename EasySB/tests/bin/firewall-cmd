@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# firewall-cmd stub —— 记录调用；--state 打印 $ESB_STUB_FIREWALLD_STATE（默认 not running），其余按需输出空
+printf '%s\t%s\n' "${0##*/}" "$*" >>"${ESB_TEST_WORK:-/dev/null}/stubs.log" 2>/dev/null || true
+case "$*" in
+  *--state*) printf '%s\n' "${ESB_STUB_FIREWALLD_STATE:-not running}"; exit 0 ;;
+  *--get-default-zone*) printf 'public\n'; exit 0 ;;
+  *) exit 0 ;;
+esac
