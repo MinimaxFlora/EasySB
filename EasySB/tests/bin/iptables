@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# iptables stub —— 记录调用；列表查询一律输出空（能"报空"），拒绝整表 flush（只在指名本工具自己的 EASYSB* 链时放行）
+printf '%s\t%s\n' "${0##*/}" "$*" >>"${ESB_TEST_WORK:-/dev/null}/stubs.log" 2>/dev/null || true
+for _ip_a in "$@"; do
+  case "$_ip_a" in
+    -F|--flush)
+      case "$*" in
+        *EASYSB*) : ;;
+        *)
+          printf 'iptables stub: 拒绝整表 flush（违反 INTERFACES §0.3：不得清空防火墙表）\n' >&2
+          exit 1
+          ;;
+      esac
+      ;;
+  esac
+done
+case "${1:-}" in
+  -L|-S|-nL|-nvL) exit 0 ;;
+  -A|-D|-N|-X|-C|-P|-t|-I) exit 0 ;;
+  '') printf 'iptables stub: 缺少参数\n' >&2; exit 1 ;;
+  *) exit 0 ;;
+esac

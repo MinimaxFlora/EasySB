@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# ss stub —— 记录调用；默认没有任何监听端口（能"报空"），ESB_STUB_SS_LISTEN="443 8443" 才模拟被占用
+printf '%s\t%s\n' "${0##*/}" "$*" >>"${ESB_TEST_WORK:-/dev/null}/stubs.log" 2>/dev/null || true
+_ss_k="LISTEN"
+case "$*" in *u*) _ss_k="UNCONN" ;; esac
+for _ss_p in ${ESB_STUB_SS_LISTEN:-}; do
+  printf '%s 0 4096 [::]:%s\n' "$_ss_k" "$_ss_p"
+done
+exit 0
