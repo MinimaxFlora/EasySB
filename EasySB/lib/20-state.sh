@@ -29,13 +29,15 @@ esb_state_default() {
   },
   "protocols": {
     "vless-vision-reality": {"enabled": false, "port": 443,  "tag": "vless-vision-reality"},
-    "vmess-ws-tls":         {"enabled": false, "port": 8443, "tag": "vmess-ws-tls", "path": "/vmess", "early_data": true},
-    "anytls":               {"enabled": false, "port": 2096, "tag": "anytls", "padding": true},
+    "vmess-ws-tls":         {"enabled": false, "port": 8443, "tag": "vmess-ws-tls", "path": "/vmess", "early_data": true,
+                             "tls": true, "cert_mode": "auto"},
+    "anytls":               {"enabled": false, "port": 2096, "tag": "anytls", "padding": true,
+                             "cert_mode": "auto"},
     "hysteria2":            {"enabled": false, "port": 443,  "tag": "hysteria2",
-                             "up_mbps": 100, "down_mbps": 100,
+                             "up_mbps": 100, "down_mbps": 100, "cert_mode": "auto",
                              "hop": {"enabled": false, "range": "20000-30000", "interval": "30s"}},
     "tuic":                 {"enabled": false, "port": 8443, "tag": "tuic",
-                             "congestion_control": "bbr", "zero_rtt": false}
+                             "congestion_control": "bbr", "zero_rtt": false, "cert_mode": "auto"}
   },
   "cert": {"domain": "", "crt": "", "key": "", "source": "", "applied_at": ""},
   "web": {
@@ -185,6 +187,41 @@ proto_enabled_list() {
 }
 
 proto_port() { state_get ".protocols[\"$1\"].port"; }
+
+# 该协议是否启用 TLS（只有 VMess-WS-TLS 可以关 TLS，其余 TLS 协议恒为开）
+proto_tls_enabled() {
+  local _pte_p="$1" _pte_v
+  case "$_pte_p" in
+    vmess-ws-tls) _pte_v="$(state_get '.protocols["vmess-ws-tls"].tls')" ;;
+    vless-vision-reality) printf 'false'; return 0 ;;
+    *) printf 'true'; return 0 ;;
+  esac
+  if [ "$_pte_v" = "false" ]; then printf 'false'; else printf 'true'; fi
+  return 0
+}
+
+# 该协议请求的证书模式：auto=跟随当前已应用证书的来源
+proto_cert_mode_req() { state_get ".protocols[\"$1\"].cert_mode"; }
+
+# 写入某协议的证书模式（字符串字段，走 --arg 避免手动加引号）
+proto_cert_mode_set() {
+  local _pcms_p="$1" _pcms_v="$2"
+  case "$_pcms_v" in
+    acme|self-signed|auto) ;;
+    *) error "证书模式只能是 acme / self-signed / auto，收到：$_pcms_v"; return 1 ;;
+  esac
+  _state_mutate '.protocols[$k].cert_mode = $v' --arg k "$_pcms_p" --arg v "$_pcms_v"
+}
+
+# 写入某协议是否启用 TLS（布尔字段）
+proto_tls_set() {
+  local _pts_p="$1" _pts_v="$2"
+  case "$_pts_v" in
+    true|false) ;;
+    *) error "TLS 开关只能是 true / false，收到：$_pts_v"; return 1 ;;
+  esac
+  _state_mutate '.protocols[$k].tls = $v' --arg k "$_pts_p" --argjson v "$_pts_v"
+}
 
 # ---------------------------------------------------------------------------
 # 备份 / 回滚

@@ -9,7 +9,7 @@
 # =============================================================================
 set -u
 
-ESB_SCRIPT_VERSION="1.0.0"
+ESB_SCRIPT_VERSION="1.1.0"
 ESB_SELF="${BASH_SOURCE[0]:-}"
 ESB_SCRIPT_DIR=""
 if [ -n "$ESB_SELF" ] && [ -f "$ESB_SELF" ]; then

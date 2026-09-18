@@ -29,25 +29,35 @@ _render_inbound_vless() {
 }
 
 _render_inbound_vmess() {
+  # TLS 可开关：关掉就是纯 VMess-WS（不需要证书）
+  local _riv_files _riv_crt="" _riv_key="" _riv_tls
+  _riv_tls="$(proto_tls_enabled vmess-ws-tls)"
+  if [ "$_riv_tls" = "true" ]; then
+    _riv_files="$(cert_files_for_proto vmess-ws-tls)" || return 1
+    _riv_crt="$(printf '%s' "$_riv_files" | cut -f1)"
+    _riv_key="$(printf '%s' "$_riv_files" | cut -f2)"
+  fi
   jq -n --argjson port "$(proto_port vmess-ws-tls)" \
         --arg uuid "$(secret_get vmess_uuid)" \
         --arg path "$(state_get '.protocols["vmess-ws-tls"].path')" \
         --argjson early "$(state_get '.protocols["vmess-ws-tls"].early_data')" \
-        --arg crt "$(state_get .cert.crt)" --arg key "$(state_get .cert.key)" '
+        --arg crt "$_riv_crt" --arg key "$_riv_key" --argjson tls "$_riv_tls" '
     ({type:"vmess", tag:"vmess-ws-tls", listen:"::", listen_port:$port,
       users:[{uuid:$uuid, alterId:0}],
       multiplex:{enabled:true, padding:false},
       transport:({type:"ws", path:$path} + (if $early then
                    {max_early_data:2048, early_data_header_name:"Sec-WebSocket-Protocol"} else {} end))}
-     + {tls:{enabled:true, certificate_path:$crt, key_path:$key}})'
+     + (if $tls then {tls:{enabled:true, certificate_path:$crt, key_path:$key}} else {} end))'
 }
 
 _render_inbound_anytls() {
+  local _ria_f
+  _ria_f="$(cert_files_for_proto anytls)" || return 1
   jq -n --argjson port "$(proto_port anytls)" \
         --arg pw "$(secret_get anytls_password)" \
         --argjson pad "$(state_get '.protocols.anytls.padding')" \
         --argjson padding "$ESB_ANYTLS_PADDING" \
-        --arg crt "$(state_get .cert.crt)" --arg key "$(state_get .cert.key)" '
+        --arg crt "$(printf '%s' "$_ria_f" | cut -f1)" --arg key "$(printf '%s' "$_ria_f" | cut -f2)" '
     ({type:"anytls", tag:"anytls", listen:"::", listen_port:$port,
       users:[{name:"easysb", password:$pw}],
       tls:{enabled:true, certificate_path:$crt, key_path:$key,
@@ -56,11 +66,13 @@ _render_inbound_anytls() {
 }
 
 _render_inbound_hysteria2() {
+  local _rih_f
+  _rih_f="$(cert_files_for_proto hysteria2)" || return 1
   jq -n --argjson port "$(proto_port hysteria2)" \
         --arg pw "$(secret_get hysteria2_password)" \
         --argjson up "$(state_get '.protocols.hysteria2.up_mbps')" \
         --argjson down "$(state_get '.protocols.hysteria2.down_mbps')" \
-        --arg crt "$(state_get .cert.crt)" --arg key "$(state_get .cert.key)" '
+        --arg crt "$(printf '%s' "$_rih_f" | cut -f1)" --arg key "$(printf '%s' "$_rih_f" | cut -f2)" '
     {type:"hysteria2", tag:"hysteria2", listen:"::", listen_port:$port,
      up_mbps:$up, down_mbps:$down,
      users:[{name:"easysb", password:$pw}],
@@ -68,12 +80,14 @@ _render_inbound_hysteria2() {
 }
 
 _render_inbound_tuic() {
+  local _rit_f
+  _rit_f="$(cert_files_for_proto tuic)" || return 1
   jq -n --argjson port "$(proto_port tuic)" \
         --arg uuid "$(secret_get tuic_uuid)" \
         --arg pw "$(secret_get tuic_password)" \
         --arg cc "$(state_get '.protocols.tuic.congestion_control')" \
         --argjson zrtt "$(state_get '.protocols.tuic.zero_rtt')" \
-        --arg crt "$(state_get .cert.crt)" --arg key "$(state_get .cert.key)" '
+        --arg crt "$(printf '%s' "$_rit_f" | cut -f1)" --arg key "$(printf '%s' "$_rit_f" | cut -f2)" '
     {type:"tuic", tag:"tuic", listen:"::", listen_port:$port,
      users:[{uuid:$uuid, password:$pw}],
      congestion_control:$cc, auth_timeout:"3s", zero_rtt_handshake:$zrtt, heartbeat:"10s",
@@ -166,26 +180,34 @@ _render_outbound_vless() {
 }
 
 _render_outbound_vmess() {
+  local _rov_tls
+  _rov_tls="$(proto_tls_enabled vmess-ws-tls)"
   jq -n --arg server "$(_client_server)" --argjson port "$(proto_port vmess-ws-tls)" \
         --arg uuid "$(secret_get vmess_uuid)" \
-        --arg path "$(state_get '.protocols["vmess-ws-tls"].path')" '
-    {type:"vmess", tag:"vmess-ws-tls", server:$server, server_port:$port, uuid:$uuid,
-     security:"auto", alter_id:0, global_padding:false, authenticated_length:true,
-     packet_encoding:"packetaddr",
-     tls:{enabled:true, server_name:$server,
-          utls:{enabled:true, fingerprint:"chrome"}},
-     multiplex:{enabled:true, protocol:"smux", max_connections:4, min_streams:4,
-                max_streams:0, padding:false},
-     transport:{type:"ws", path:$path, max_early_data:2048,
-                early_data_header_name:"Sec-WebSocket-Protocol"}}'
+        --arg path "$(state_get '.protocols["vmess-ws-tls"].path')" \
+        --argjson insec "$(proto_insecure_json vmess-ws-tls)" \
+        --argjson tls "$_rov_tls" '
+    ({type:"vmess", tag:"vmess-ws-tls", server:$server, server_port:$port, uuid:$uuid,
+      security:"auto", alter_id:0, global_padding:false, authenticated_length:true,
+      packet_encoding:"packetaddr",
+      multiplex:{enabled:true, protocol:"smux", max_connections:4, min_streams:4,
+                 max_streams:0, padding:false},
+      transport:({type:"ws", path:$path}
+                 + (if $tls then {max_early_data:2048,
+                                  early_data_header_name:"Sec-WebSocket-Protocol"} else {} end))}
+     + (if $tls then
+          {tls:{enabled:true, server_name:$server, insecure:$insec,
+                utls:{enabled:true, fingerprint:"chrome"}}}
+        else {} end))'
 }
 
 _render_outbound_anytls() {
   jq -n --arg server "$(_client_server)" --argjson port "$(proto_port anytls)" \
-        --arg pw "$(secret_get anytls_password)" '
+        --arg pw "$(secret_get anytls_password)" \
+        --argjson insec "$(proto_insecure_json anytls)" '
     {type:"anytls", tag:"anytls", server:$server, server_port:$port, password:$pw,
      idle_session_check_interval:"30s", idle_session_timeout:"30s", min_idle_session:5,
-     tls:{enabled:true, server_name:$server, alpn:["h3","h2","http/1.1"],
+     tls:{enabled:true, server_name:$server, insecure:$insec, alpn:["h3","h2","http/1.1"],
           utls:{enabled:true, fingerprint:"chrome"}}}'
 }
 
@@ -204,21 +226,23 @@ _render_outbound_hysteria2() {
   _roh_range_colon="$(printf '%s' "$_roh_range" | tr '-' ':')"
   jq -n --arg server "$(_client_server)" --argjson port "$(proto_port hysteria2)" \
         --arg pw "$(secret_get hysteria2_password)" \
-        --arg hop "$_roh_range_colon" --arg hopint "$_roh_interval" '
+        --arg hop "$_roh_range_colon" --arg hopint "$_roh_interval" \
+        --argjson insec "$(proto_insecure_json hysteria2)" '
     ({type:"hysteria2", tag:"hysteria2", server:$server, server_port:$port,
       up_mbps:20, down_mbps:100, password:$pw,
-      tls:{enabled:true, server_name:$server, alpn:["h3"]}}
+      tls:{enabled:true, server_name:$server, insecure:$insec, alpn:["h3"]}}
      + (if $hop != "" then {server_ports:[$hop], hop_interval:$hopint} else {} end))'
 }
 
 _render_outbound_tuic() {
   jq -n --arg server "$(_client_server)" --argjson port "$(proto_port tuic)" \
         --arg uuid "$(secret_get tuic_uuid)" --arg pw "$(secret_get tuic_password)" \
-        --arg cc "$(state_get '.protocols.tuic.congestion_control')" '
+        --arg cc "$(state_get '.protocols.tuic.congestion_control')" \
+        --argjson insec "$(proto_insecure_json tuic)" '
     {type:"tuic", tag:"tuic", server:$server, server_port:$port, uuid:$uuid, password:$pw,
      congestion_control:$cc, udp_relay_mode:"native", udp_over_stream:false,
      zero_rtt_handshake:false, heartbeat:"10s", network:"tcp",
-     tls:{enabled:true, server_name:$server, alpn:["h3"]}}'
+     tls:{enabled:true, server_name:$server, insecure:$insec, alpn:["h3"]}}'
 }
 
 render_outbound() {
@@ -278,7 +302,7 @@ render_clients() {
   done
   render_client_all || _rcl_fail=1
   [ "$_rcl_fail" = "0" ] || { error "部分客户端配置生成失败"; return 1; }
-  log_ok "客户端配置已生成于：$ESB_CLIENT_DIR"
+  log_ok "客户端配置已生成于：$ESB_CLIENT_DIR" >&2
   return 0
 }
 
@@ -298,17 +322,30 @@ link_vless() {
   return 0
 }
 
+# VMess 的对外名称：只有"域名证书 + TLS 开启"才叫 VMess-WS-TLS，
+# 自签证书（客户端需跳过校验）与关闭 TLS 都叫 VMess-WS
+vmess_display_name() {
+  if [ "$(proto_tls_enabled vmess-ws-tls)" != "true" ]; then printf 'VMess-WS'; return 0; fi
+  if [ "$(proto_cert_mode vmess-ws-tls)" = "acme" ]; then printf 'VMess-WS-TLS'; else printf 'VMess-WS'; fi
+  return 0
+}
+
 link_vmess() {
-  local _lm_server _lm_port _lm_uuid _lm_path _lm_ps _lm_json
+  local _lm_server _lm_port _lm_uuid _lm_path _lm_ps _lm_json _lm_tls
   _lm_server="$(_client_server)"; _lm_port="$(proto_port vmess-ws-tls)"
   _lm_uuid="$(secret_get vmess_uuid)"; _lm_path="$(state_get '.protocols["vmess-ws-tls"].path')"
-  _lm_ps="EasySB-VMess-WS-TLS-${_lm_server}"
+  _lm_tls="$(proto_tls_enabled vmess-ws-tls)"
+  _lm_ps="EasySB-$(vmess_display_name)-${_lm_server}"
   _lm_json="$(jq -nc --arg v "2" --arg ps "$_lm_ps" --arg add "$_lm_server" \
       --argjson port "$_lm_port" --arg id "$_lm_uuid" --arg host "$_lm_server" \
-      --arg path "$_lm_path" '
+      --arg path "$_lm_path" --arg insec "$(proto_insecure_json vmess-ws-tls)" \
+      --argjson tls "$_lm_tls" '
       {v:$v, ps:$ps, add:$add, port:$port, id:$id, aid:"0", scy:"auto",
-       net:"ws", type:"none", host:$host, path:$path, tls:"tls",
-       sni:$add, alpn:"h2,http/1.1", fp:"chrome"}')"
+       net:"ws", type:"none", host:$host, path:$path,
+       tls:(if $tls then "tls" else "" end),
+       sni:(if $tls then $add else "" end),
+       alpn:(if $tls then "h2,http/1.1" else "" end), fp:"chrome",
+       allowInsecure:($insec == "true")}')"
   printf 'vmess://%s\n' "$(printf '%s' "$_lm_json" | base64 | tr -d '\n')"
   return 0
 }
@@ -323,7 +360,7 @@ link_hysteria2() {
     _lh_hopint="$(state_get '.protocols.hysteria2.hop.interval')"
   fi
   _lh_name="$(url_encode "EasySB-Hysteria2-${_lh_server}")"
-  _lh_q="sni=${_lh_server}&insecure=0&alpn=h3"
+  _lh_q="sni=${_lh_server}&insecure=$(proto_insecure_flag hysteria2)&alpn=h3"
   [ -n "$_lh_hop" ] && _lh_q="${_lh_q}&mport=$(url_encode "$_lh_hop")&hop_interval=${_lh_hopint}"
   printf 'hysteria2://%s@%s:%s?%s#%s\n' "$(url_encode "$_lh_pw")" "$_lh_server" "$_lh_port" "$_lh_q" "$_lh_name"
   return 0
@@ -334,8 +371,8 @@ link_tuic() {
   _lt_server="$(_client_server)"; _lt_port="$(proto_port tuic)"
   _lt_uuid="$(secret_get tuic_uuid)"; _lt_pw="$(secret_get tuic_password)"
   _lt_name="$(url_encode "EasySB-TUIC-${_lt_server}")"
-  printf 'tuic://%s:%s@%s:%s?congestion_control=bbr&udp_relay_mode=native&alpn=h3&sni=%s&allow_insecure=0#%s\n' \
-    "$_lt_uuid" "$(url_encode "$_lt_pw")" "$_lt_server" "$_lt_port" "$_lt_server" "$_lt_name"
+  printf 'tuic://%s:%s@%s:%s?congestion_control=bbr&udp_relay_mode=native&alpn=h3&sni=%s&allow_insecure=%s#%s\n' \
+    "$_lt_uuid" "$(url_encode "$_lt_pw")" "$_lt_server" "$_lt_port" "$_lt_server" "$(proto_insecure_flag tuic)" "$_lt_name"
   return 0
 }
 
@@ -344,8 +381,8 @@ link_anytls() {
   _la_server="$(_client_server)"; _la_port="$(proto_port anytls)"
   _la_pw="$(secret_get anytls_password)"
   _la_name="$(url_encode "EasySB-AnyTLS-${_la_server}")"
-  printf 'anytls://%s@%s:%s?sni=%s&insecure=0&fp=chrome#%s\n' \
-    "$(url_encode "$_la_pw")" "$_la_server" "$_la_port" "$_la_server" "$_la_name"
+  printf 'anytls://%s@%s:%s?sni=%s&insecure=%s&fp=chrome#%s\n' \
+    "$(url_encode "$_la_pw")" "$_la_server" "$_la_port" "$_la_server" "$(proto_insecure_flag anytls)" "$_la_name"
   return 0
 }
 

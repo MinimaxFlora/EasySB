@@ -32,6 +32,93 @@ _CERT_SELF_SIGNED_DAYS=3650
 # ---------------------------------------------------------------------------
 # 路径与工具
 # ---------------------------------------------------------------------------
+# 当前应用的是不是自签证书（决定客户端是否需要跳过证书校验）
+# 返回：0=自签 / 1=不是自签（acme 或未设置）
+cert_is_self_signed() {
+  local _cert_iss_source
+  _cert_iss_source="$(state_get .cert.source)"
+  [ "$_cert_iss_source" = "self-signed" ] || return 1
+  return 0
+}
+
+# 客户端用的"跳过证书校验"标志：自签证书必须让客户端跳过校验，否则连不上
+cert_insecure_flag() {  # 链接里用：1/0
+  if cert_is_self_signed; then printf '1'; else printf '0'; fi
+  return 0
+}
+
+cert_insecure_json() {  # JSON 配置里用：true/false
+  if cert_is_self_signed; then printf 'true'; else printf 'false'; fi
+  return 0
+}
+
+# 自签证书路径（必要时现场生成）
+cert_selfsigned_paths() {
+  local _csp_domain="$1"
+  local _csp_crt="${ESB_CERT_DIR}/self-signed-${_csp_domain}.crt"
+  local _csp_key="${ESB_CERT_DIR}/self-signed-${_csp_domain}.key"
+  if [ ! -f "$_csp_crt" ] || [ ! -f "$_csp_key" ]; then
+    cert_self_signed "$_csp_domain" >&2 || return 1
+  fi
+  [ -f "$_csp_crt" ] && [ -f "$_csp_key" ] || return 1
+  printf '%s\t%s\n' "$_csp_crt" "$_csp_key"
+  return 0
+}
+
+# 该协议实际生效的证书模式：auto → 跟随当前已应用证书来源
+proto_cert_mode() {
+  local _pcm_p="$1" _pcm_v
+  _pcm_v="$(proto_cert_mode_req "$_pcm_p")"
+  case "$_pcm_v" in
+    acme|self-signed) printf '%s' "$_pcm_v"; return 0 ;;
+    *) if cert_is_self_signed; then printf 'self-signed'; else printf 'acme'; fi; return 0 ;;
+  esac
+}
+
+# 该协议要用的证书文件：输出 "crt<TAB>key"
+cert_files_for_proto() {
+  local _cfp_p="$1" _cfp_mode _cfp_domain
+  _cfp_mode="$(proto_cert_mode "$_cfp_p")"
+  _cfp_domain="$(state_get .domain)"
+  if [ "$_cfp_mode" = "self-signed" ]; then
+    cert_selfsigned_paths "$_cfp_domain" || { error "无法准备自签证书：$_cfp_domain"; return 1; }
+    return 0
+  fi
+  # acme：优先用注册表里该域名的 acme 证书
+  local _cfp_crt="" _cfp_key="" _cfp_src=""
+  if registry_has "$_cfp_domain" 2>/dev/null; then
+    _cfp_src="$(registry_get "$_cfp_domain" source 2>/dev/null || true)"
+    case "$_cfp_src" in
+      acme*)
+        _cfp_crt="$(registry_get "$_cfp_domain" crt 2>/dev/null || true)"
+        _cfp_key="$(registry_get "$_cfp_domain" key 2>/dev/null || true)"
+        ;;
+    esac
+  fi
+  if [ -z "$_cfp_crt" ] || [ -z "$_cfp_key" ] || [ ! -f "$_cfp_crt" ] || [ ! -f "$_cfp_key" ]; then
+    # 退回当前"已应用证书"（仅当它确实是域名证书时）
+    if render_cert_ready && ! cert_is_self_signed; then
+      printf '%s	%s
+' "$(state_get .cert.crt)" "$(state_get .cert.key)"
+      return 0
+    fi
+    error "协议 $_cfp_p 需要域名证书，但 $_cfp_domain 没有可用的 Let's Encrypt 证书（可在【证书管理】里申请，或把该协议切换为自签证书）"
+    return 1
+  fi
+  printf '%s\t%s\n' "$_cfp_crt" "$_cfp_key"
+  return 0
+}
+
+# 协议级"跳过证书校验"标志
+proto_insecure_flag() {  # 链接里用：1/0
+  if [ "$(proto_cert_mode "$1")" = "self-signed" ]; then printf '1'; else printf '0'; fi
+  return 0
+}
+proto_insecure_json() {  # JSON 里用：true/false
+  if [ "$(proto_cert_mode "$1")" = "self-signed" ]; then printf 'true'; else printf 'false'; fi
+  return 0
+}
+
 cert_acme_home() {
   ACME_HOME="${ESB_ROOT:-}/root/.acme.sh"
   printf '%s\n' "$ACME_HOME"
@@ -903,8 +990,10 @@ cert_self_signed() {
   validate_domain "$_cert_self_signed_domain" || return 1
   cmd_exists openssl || { error "缺少 openssl，无法生成自签证书"; return 1; }
   mkdir -p "$ESB_CERT_DIR" 2>/dev/null || { error "无法创建证书目录：$ESB_CERT_DIR"; return 1; }
-  local _cert_self_signed_crt="${ESB_CERT_DIR}/${_cert_self_signed_domain}.crt"
-  local _cert_self_signed_key="${ESB_CERT_DIR}/${_cert_self_signed_domain}.key"
+  # 自签证书放在 self-signed-<域名>.crt|key：与 acme 证书（<域名>.crt|key）分开存放，
+  # 这样"某个协议用自签、另一个协议用域名证书"可以同时成立
+  local _cert_self_signed_crt="${ESB_CERT_DIR}/self-signed-${_cert_self_signed_domain}.crt"
+  local _cert_self_signed_key="${ESB_CERT_DIR}/self-signed-${_cert_self_signed_domain}.key"
   local _cert_self_signed_dir="${ESB_TMP:-${TMPDIR:-/tmp}/easysb.$$}"
   mkdir -p "$_cert_self_signed_dir" 2>/dev/null || { error "无法创建临时目录：$_cert_self_signed_dir"; return 1; }
   local _cert_self_signed_tmp_crt="${_cert_self_signed_dir}/self-${_cert_self_signed_domain}.crt"

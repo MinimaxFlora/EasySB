@@ -65,3 +65,12 @@
 
 客户端 `server_ports` + 服务端 DNAT 重定向（`fw_hop_apply <range> <to_port>`），
 规则打在**本工具自己的** nft table（`easysb`）/ iptables 链（`EASYSB_HOP`）里，卸载时随 `fw_hop_clear` 回收。
+
+### 协议级证书字段（v1.1 起）
+
+| 路径 | 类型 | 说明 |
+| --- | --- | --- |
+| `.protocols.<协议>.cert_mode` | string | `auto`（跟随当前已应用证书来源）/ `acme` / `self-signed` |
+| `.protocols["vmess-ws-tls"].tls` | bool | VMess 是否启用 TLS；关闭后服务端/客户端/链接/订阅都不带 TLS |
+
+自签证书文件固定为 `${ESB_CERT_DIR}/self-signed-<域名>.crt|key`，与 acme 证书分开存放。

@@ -25,7 +25,7 @@ ui_main() {
     printf '  8) 卸载 EasySB\n'
     printf '  0) 退出\n'
     ui_blank
-    printf '请选择 [0-8]: '
+    printf '请选择 [0-9]: '
     IFS= read -r _ui_main_choice || _ui_main_choice="0"
     _ui_main_choice="${_ui_main_choice%$'\r'}"
     case "$_ui_main_choice" in
@@ -276,6 +276,7 @@ ui_install_kernel() {
 }
 
 # 证书准备（部署过程中调用）
+# 让用户选择证书来源：申请 Let's Encrypt 域名证书（推荐）或生成自签证书（无需域名解析）
 ui_prepare_cert() {
   local _ui_prepare_cert_need=0 _ui_prepare_cert_p
   for _ui_prepare_cert_p in $(proto_enabled_list); do
@@ -285,13 +286,32 @@ ui_prepare_cert() {
 
   local _ui_prepare_cert_domain; _ui_prepare_cert_domain="$(state_get .domain)"
   if [ "$(state_get .cert.domain)" = "$_ui_prepare_cert_domain" ] && render_cert_ready; then
-    log_ok "已有可用证书：$(state_get .cert.crt)"
+    log_ok "已有可用证书：$(state_get .cert.crt)（来源：$(state_get .cert.source)）"
+    log_info "如需换一种证书来源，可在菜单【证书管理】里重新申请或生成自签证书"
     return 0
   fi
   if render_cert_ready; then
     log_info "当前已应用证书域名：$(state_get .cert.domain)（与部署域名 $_ui_prepare_cert_domain 不一致）"
   fi
 
+  # --- 选择证书来源 -------------------------------------------------------
+  local _ui_prepare_cert_source=""
+  ui_blank
+  log_info "需要为 $_ui_prepare_cert_domain 准备证书（用于 VMess-WS-TLS / Hysteria2 / TUIC / AnyTLS）"
+  ask_single _ui_prepare_cert_source "请选择证书来源" \
+    "acme|申请域名证书（Let's Encrypt，浏览器与客户端都认可，需域名已解析到本机）" \
+    "self-signed|生成自签证书（不需要域名解析，客户端必须跳过证书校验）"
+
+  if [ "$_ui_prepare_cert_source" = "self-signed" ]; then
+    log_info "生成自签证书（有效期 3650 天，仅用于加密通道，客户端将自动配置为跳过校验）"
+    cert_self_signed "$_ui_prepare_cert_domain" || { error "生成自签证书失败"; return 1; }
+    cert_use "$_ui_prepare_cert_domain" >/dev/null 2>&1 || { error "应用自签证书失败"; return 1; }
+    log_ok "已应用自签证书：$(state_get .cert.crt)"
+    log_info "提示：分享链接与订阅里已写入 insecure=1 / skip-cert-verify，客户端无需手工设置"
+    return 0
+  fi
+
+  # --- ACME ---------------------------------------------------------------
   if ! cert_tool_installed; then
     log_warn "尚未安装证书申请工具 acme.sh"
     ask_yesno "现在安装 acme.sh 吗？" y || { error "没有证书无法部署需要证书的协议"; return 1; }
@@ -324,7 +344,16 @@ EOF
     _ui_prepare_cert_arg="dns:$_ui_prepare_cert_prov"
     ui_dns_env_tip "$_ui_prepare_cert_prov"
   fi
-  cert_apply "$_ui_prepare_cert_domain" "$_ui_prepare_cert_arg" || return 1
+  if ! cert_apply "$_ui_prepare_cert_domain" "$_ui_prepare_cert_arg"; then
+    log_warn "域名证书申请失败（常见原因：域名未解析到本机 / 80 端口不可达 / 触发 CA 频率限制）"
+    if ask_yesno "改用自签证书继续部署吗？" y; then
+      cert_self_signed "$_ui_prepare_cert_domain" || { error "生成自签证书失败"; return 1; }
+      cert_use "$_ui_prepare_cert_domain" >/dev/null 2>&1 || { error "应用自签证书失败"; return 1; }
+      log_ok "已应用自签证书（客户端将自动跳过证书校验）"
+      return 0
+    fi
+    return 1
+  fi
   cert_use "$_ui_prepare_cert_domain" >/dev/null 2>&1 || true
   return 0
 }
@@ -487,33 +516,222 @@ ui_cert_menu() {
     local _ui_cert_menu_applied_domain; _ui_cert_menu_applied_domain="$(state_get .cert.domain)"
     printf '  当前已应用证书：%s\n' "${_ui_cert_menu_applied_domain:-无}"
     if [ -n "$_ui_cert_menu_applied_domain" ]; then
+      printf '  证书来源　　　：%s\n' "$(state_get .cert.source)"
       printf '  剩余有效期　　：%s 天\n' "$(cert_expiring_days "$_ui_cert_menu_applied_domain")"
     fi
     ui_blank
-    printf '  1) 申请新证书\n'
-    printf '  2) 证书列表\n'
-    printf '  3) 应用证书到 sing-box\n'
-    printf '  4) 删除证书\n'
-    printf '  5) 续期（全部）\n'
-    printf '  6) 查看证书详情\n'
-    printf '  7) 续期后自动重载服务\n'
+    printf '  1) 申请域名证书（Let'"'"'s Encrypt）\n'
+    printf '  2) 生成自签证书\n'
+    printf '  9) 配置证书模式（按协议切换）\n'
+    printf '  3) 证书列表\n'
+    printf '  4) 应用证书到 sing-box\n'
+    printf '  5) 删除证书\n'
+    printf '  6) 续期（全部）\n'
+    printf '  7) 查看证书详情\n'
+    printf '  8) 续期后自动重载服务\n'
     printf '  0) 返回\n'
-    printf '请选择 [0-7]: '
+    printf '请选择 [0-8]: '
     IFS= read -r _ui_cert_menu_choice || _ui_cert_menu_choice="0"
     _ui_cert_menu_choice="${_ui_cert_menu_choice%$'\r'}"
     case "$_ui_cert_menu_choice" in
       1) ui_cert_apply_flow ;;
-      2) ui_cert_list_flow ;;
-      3) ui_cert_use_flow ;;
-      4) ui_cert_delete_flow ;;
-      5) ui_cert_renew_flow ;;
-      6) ui_cert_detail_flow ;;
-      7) cert_reloadcmd_setup && log_ok "已设置续期后自动重载" ;;
+      2) ui_cert_self_signed_flow ;;
+      9) ui_cert_mode_menu ;;
+      3) ui_cert_list_flow ;;
+      4) ui_cert_use_flow ;;
+      5) ui_cert_delete_flow ;;
+      6) ui_cert_renew_flow ;;
+      7) ui_cert_detail_flow ;;
+      8) cert_reloadcmd_setup && log_ok "已设置续期后自动重载" ;;
       0|'') return 0 ;;
       *) log_warn "无效选项" ;;
     esac
     pause
   done
+}
+
+# 菜单入口：生成自签证书（可选立即应用）
+# ---------------------------------------------------------------------------
+# 证书模式配置：按协议逐个查看/切换（REALITY 换握手域名；VMess 可开关 TLS；
+# Hysteria2 / TUIC / AnyTLS 可在自签证书与域名证书之间切换）
+# ---------------------------------------------------------------------------
+ui_cert_mode_label() {
+  local _ucml_p="$1" _ucml_mode
+  _ucml_mode="$(proto_cert_mode "$_ucml_p")"
+  case "$_ucml_p" in
+    vless-vision-reality)
+      printf 'VLESS-Vision-REALITY 协议：REALITY 握手域名 %s（免证书，不支持证书域名）' \
+        "$(state_get .reality.server_name)"
+      ;;
+    vmess-ws-tls)
+      if [ "$(proto_tls_enabled vmess-ws-tls)" != "true" ]; then
+        printf 'VMess-WS 协议：当前已关闭 TLS（开启 TLS 需选择证书模式）'
+      else
+        printf '%s 协议：证书模式 %s' "$(vmess_display_name)" "$(_ui_cert_mode_cn "$_ucml_mode")"
+      fi
+      ;;
+    hysteria2) printf 'Hysteria2 协议：证书模式 %s' "$(_ui_cert_mode_cn "$_ucml_mode")" ;;
+    tuic)      printf 'TUIC 协议：证书模式 %s' "$(_ui_cert_mode_cn "$_ucml_mode")" ;;
+    anytls)    printf 'AnyTLS 协议：证书模式 %s' "$(_ui_cert_mode_cn "$_ucml_mode")" ;;
+    *)         printf '%s 协议：证书模式 %s' "$_ucml_p" "$(_ui_cert_mode_cn "$_ucml_mode")" ;;
+  esac
+  return 0
+}
+
+_ui_cert_mode_cn() {
+  case "${1-}" in
+    self-signed) printf '自签证书（客户端跳过校验）' ;;
+    acme)        printf '域名证书（Let'"'"'s Encrypt：%s）' "$(state_get .domain)" ;;
+    *)           printf '%s' "${1-未知}" ;;
+  esac
+  return 0
+}
+
+ui_cert_mode_menu() {
+  local _ucmm_choice="" _ucmm_p _ucmm_i=0
+  local -a _ucmm_items=() _ucmm_protos=()
+  for _ucmm_p in $(proto_enabled_list); do
+    _ucmm_i=$((_ucmm_i + 1))
+    _ucmm_items+=("${_ucmm_i}|$(ui_cert_mode_label "$_ucmm_p")")
+    _ucmm_protos+=("$_ucmm_p")
+  done
+  [ "$_ucmm_i" -gt 0 ] || { log_warn "当前没有已启用的协议"; return 1; }
+
+  ui_title "配置证书模式（按协议）"
+  printf '  当前已应用证书：%s（%s）\n' "$(state_get .cert.domain)" "$(state_get .cert.source)"
+  ui_blank
+  ask_single _ucmm_choice "请选择要切换证书模式的协议" "${_ucmm_items[@]}" "0|返回"
+  [ "$_ucmm_choice" = "0" ] && return 0
+  case "$_ucmm_choice" in
+    vless-vision-reality) ui_cert_mode_reality_flow ;;
+    vmess-ws-tls)         ui_cert_mode_vmess_flow ;;
+    hysteria2|tuic|anytls) ui_cert_mode_tls_flow "$_ucmm_choice" ;;
+    *) : ;;
+  esac
+  return 0
+}
+
+# REALITY：只换握手域名（第三方站点，需要 TLS1.3 + H2），不能用自己的证书域名
+ui_cert_mode_reality_flow() {
+  local _ucmr_new=""
+  ui_blank
+  log_info "REALITY 不申请证书：它借用第三方站点的 TLS 握手（如 www.microsoft.com / apple.com）"
+  log_info "当前握手域名：$(state_get .reality.server_name):$(state_get .reality.handshake_port)"
+  ask_input _ucmr_new "请输入新的 REALITY 握手域名（留空保持不变）" ""
+  [ -n "$_ucmr_new" ] || return 0
+  validate_domain "$_ucmr_new" || { error "域名格式不正确"; return 1; }
+  if [ "$_ucmr_new" = "$(state_get .domain)" ]; then
+    error "REALITY 握手域名不能使用自己的证书域名（$(_ucmr_new)）"
+    return 1
+  fi
+  if ! ui_reality_probe "$_ucmr_new"; then
+    log_warn "$_ucmr_new 不符合 REALITY 要求（需要 TLS1.3 + HTTP/2，且不重定向）"
+    ask_yesno "仍要使用该域名吗？" n || return 0
+  fi
+  state_set_str ".reality.handshake_server" "$_ucmr_new" || return 1
+  state_set_str ".reality.server_name" "$_ucmr_new" || return 1
+  apply_change "切换 REALITY 握手域名 -> $_ucmr_new" || return 1
+  log_ok "已切换 REALITY 握手域名：$_ucmr_new"
+  log_info "记得让客户端重新导入订阅（节点链接已更新）"
+  return 0
+}
+
+# 探测第三方域名是否适合做 REALITY 握手目标
+ui_reality_probe() {
+  local _ucrp_d="$1"
+  cmd_exists openssl || { log_warn "缺少 openssl，跳过探测"; return 0; }
+  local _ucrp_out
+  _ucrp_out="$(printf '' | timeout 10 openssl s_client -connect "${_ucrp_d}:443" -servername "$_ucrp_d" \
+      -tls1_3 -alpn h2 2>/dev/null | head -30)" || true
+  printf '%s' "$_ucrp_out" | grep -q 'TLSv1.3' || return 1
+  printf '%s' "$_ucrp_out" | grep -qi 'ALPN protocol: h2' || return 1
+  return 0
+}
+
+# VMess：开启/关闭 TLS（开启时选证书模式）
+ui_cert_mode_vmess_flow() {
+  local _ucmv_choice=""
+  ui_blank
+  if [ "$(proto_tls_enabled vmess-ws-tls)" = "true" ]; then
+    log_info "当前：VMess-WS-TLS（TLS 已开启，证书模式 $(_ui_cert_mode_cn "$(proto_cert_mode vmess-ws-tls)")）"
+    ask_single _ucmv_choice "请选择要切换到的模式" \
+      "tls-acme|开启 TLS，使用域名证书（$(state_get .domain)）" \
+      "tls-self|开启 TLS，使用自签证书（客户端跳过校验）" \
+      "no-tls|关闭 TLS（纯 VMess-WS，无需证书）" \
+      "0|返回"
+  else
+    log_info "当前：VMess-WS（TLS 已关闭）"
+    ask_single _ucmv_choice "请选择要切换到的模式" \
+      "tls-acme|开启 TLS，使用域名证书（$(state_get .domain)）" \
+      "tls-self|开启 TLS，使用自签证书（客户端跳过校验）" \
+      "0|返回"
+  fi
+  case "$_ucmv_choice" in
+    0|"") return 0 ;;
+    tls-acme)
+      proto_tls_set vmess-ws-tls true || return 1
+      proto_cert_mode_set vmess-ws-tls acme || return 1
+      cert_files_for_proto vmess-ws-tls >/dev/null || { error "没有可用的域名证书，请先在【证书管理】申请"; return 1; }
+      ;;
+    tls-self)
+      proto_tls_set vmess-ws-tls true || return 1
+      proto_cert_mode_set vmess-ws-tls self-signed || return 1
+      ;;
+    no-tls)
+      proto_tls_set vmess-ws-tls false || return 1
+      ;;
+  esac
+  apply_change "切换 VMess-WS 的 TLS 模式 -> $_ucmv_choice" || return 1
+  log_ok "已切换：$(ui_cert_mode_label vmess-ws-tls)"
+  log_info "记得让客户端重新导入订阅（节点链接与端口参数已更新）"
+  return 0
+}
+
+# Hysteria2 / TUIC / AnyTLS：自签 <-> 域名证书
+ui_cert_mode_tls_flow() {
+  local _ucmt_p="$1" _ucmt_choice=""
+  ui_blank
+  log_info "当前：$(ui_cert_mode_label "$_ucmt_p")"
+  ask_single _ucmt_choice "请选择该协议的证书模式" \
+    "acme|切换到域名证书（$(state_get .domain)，Let's Encrypt）" \
+    "self-signed|切换到自签证书（无需域名解析，客户端跳过校验）" \
+    "0|返回"
+  case "$_ucmt_choice" in
+    0|"") return 0 ;;
+    acme)
+      proto_cert_mode_set "$_ucmt_p" acme || return 1
+      if ! cert_files_for_proto "$_ucmt_p" >/dev/null; then
+        proto_cert_mode_set "$_ucmt_p" auto >/dev/null 2>&1 || true
+        error "没有可用的域名证书（$_ucmt_p），请先在【证书管理】申请域名证书"
+        return 1
+      fi
+      ;;
+    self-signed)
+      proto_cert_mode_set "$_ucmt_p" self-signed || return 1
+      cert_selfsigned_paths "$(state_get .domain)" >/dev/null || { error "生成自签证书失败"; return 1; }
+      ;;
+  esac
+  apply_change "切换 $_ucmt_p 的证书模式 -> $_ucmt_choice" || return 1
+  log_ok "已切换：$(ui_cert_mode_label "$_ucmt_p")"
+  log_info "记得让客户端重新导入订阅（链接里的 insecure / skip-cert-verify 已更新）"
+  return 0
+}
+
+ui_cert_self_signed_flow() {
+  local _ui_ss_domain=""
+  ask_input _ui_ss_domain "请输入证书域名（自签证书，需与部署域名一致）" "$(state_get .domain)"
+  validate_domain "$_ui_ss_domain" || { error "域名格式不正确"; return 1; }
+  if [ "$(state_get .cert.domain)" = "$_ui_ss_domain" ] && render_cert_ready; then
+    ask_yesno "当前已应用的就是这个域名的证书，仍要重新生成自签证书吗？" n || return 0
+  fi
+  cert_self_signed "$_ui_ss_domain" || return 1
+  if ask_yesno "现在把该自签证书应用到 sing-box（并重启服务）吗？" y; then
+    cert_use "$_ui_ss_domain" || return 1
+    log_ok "已应用自签证书：$_ui_ss_domain"
+    log_info "订阅与分享链接会自动带上 insecure=1 / skip-cert-verify（客户端无需手工设置）"
+    apply_change "应用自签证书 $_ui_ss_domain" || return 1
+  fi
+  return 0
 }
 
 ui_cert_apply_flow() {

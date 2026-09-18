@@ -146,6 +146,10 @@ _au_scan() {
         print f ":" NR ": lib 内 set -e（会中断调用方的错误处理） :: " line
       if (lib == 1 && code ~ /(^|[^a-zA-Z_.])exit([ \t;]|$)/ && code !~ /^die\(\)/)
         print f ":" NR ": lib 内直接 exit（违反规则 5：只 return，die 除外） :: " line
+      # 数据型模块（40-render / 80-subscribe）的 stdout 是数据通道：
+      # 日志一旦走 stdout 就会写坏生成的 JSON/YAML/链接（真机踩过：部分协议时 singbox.json 前多一行中文）
+      if (f ~ /(40-render|80-subscribe)\.sh$/ && code ~ /(^|[;|&[:space:]])log_(info|ok)([[:space:]]|$)/ && code !~ /log_(info|ok)[^|;]*>&2/)
+        print f ":" NR ": 数据型模块里 log_info/log_ok 未重定向到 stderr（会污染 stdout 输出） :: " line
     }
   ' "$1"
 }

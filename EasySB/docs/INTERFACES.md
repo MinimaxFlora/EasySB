@@ -201,12 +201,15 @@ web_port_free <port>           # 0=端口可用（未被本工具自己的服务
 sub_token                      # stdout 当前订阅 token（不存在则生成并写入 state）
 sub_token_regen                # 重新生成 token（旧地址立即失效）
 sub_url                        # stdout 主订阅地址（通用 Base64 订阅）
-sub_url_list                   # stdout TSV：格式<TAB>地址（base64/links/singbox/mihomo）
+sub_url_list                   # stdout TSV：格式<TAB>地址（base64/links/singbox/singbox-mixed/mihomo）
 sub_formats                    # stdout TSV：key<TAB>说明
 sub_links_text                 # stdout 纯文本节点链接（每行一条）
 sub_links_base64               # stdout Base64 节点列表（通用订阅格式）
-sub_mihomo_yaml                # stdout Mihomo/Clash 配置（YAML）
-sub_singbox_json               # stdout sing-box 客户端配置（JSON）
+sub_mihomo_yaml                # stdout Mihomo/Clash 配置（YAML，按仓库 Mihomo 模板同构）
+sub_singbox_json               # stdout sing-box 精简配置（mixed 入站 + 各节点 outbound）
+sub_singbox_tun_json           # stdout sing-box TUN 配置（按仓库 Templates/tun-fakeip.json 生成）
+sub_singbox_template           # 获取/缓存仓库模板（7 天 TTL，离线时用缓存），stdout 模板路径
+_sub_singbox_tpl_raw / _sub_singbox_tpl_file / _sub_jsonc_strip   # 模板地址 / 缓存路径 / JSONC 去注释
 sub_dir                        # stdout 订阅文件目录（token 目录）
 sub_write_files                # 生成全部订阅文件到 sub_dir（644）
 sub_enable                     # 生成订阅 + 必要时部署独立订阅站点 + 放行端口
@@ -217,8 +220,35 @@ sub_site_deploy / sub_site_remove   # 独立订阅站点（nginx，独立 conf�
 sub_use_site                   # 0=复用伪装站点（TLS），1=使用独立订阅站点
 ```
 
-订阅文件（`sub_dir` 下）：`sub`（Base64 通用订阅）、`links.txt`、`singbox.json`、`mihomo.yaml`、
-`info.txt`。state 里的 `.sub = {enabled, token, serve_via_site, port, root, name}`。
+订阅文件（`sub_dir` 下）：`sub`（Base64 通用订阅）、`links.txt`、
+`singbox.json`（按仓库 `Templates/tun-fakeip.json` 生成的 TUN 配置：只替换节点 outbound，
+DNS/路由/rule_set/clash_api/策略组原样沿用模板；未启用的节点会从 outbounds 与策略组里摘除）、
+`singbox-mixed.json`（精简 mixed 入站配置）、`mihomo.yaml`（按仓库 Mihomo 模板同构）、`info.txt`。
+state 里的 `.sub = {enabled, token, serve_via_site, port, root, name}`。
+
+**输出即数据**：`40-render.sh` 与 `80-subscribe.sh` 的 stdout 只允许是数据，
+模块内 `log_info` / `log_ok` 必须写 stderr（`>&2`），否则会把 JSON/YAML/链接写坏（真机踩过一次）。
+
+## 10b. 证书模式（按协议）
+
+```
+cert_is_self_signed            # 0=当前应用的证书是自签
+cert_insecure_flag / _json     # 全局：1/0 与 true/false（链接 / JSON 用）
+cert_selfsigned_paths <域名>   # stdout "crt<TAB>key"，不存在则现场生成
+proto_cert_mode <协议>         # 解析该协议生效的证书模式：acme | self-signed
+cert_files_for_proto <协议>    # stdout "crt<TAB>key"（自签→self-signed-<域名>.*；acme→注册表/已应用证书）
+proto_insecure_flag <协议>     # 协议级：1/0（链接）
+proto_insecure_json <协议>     # 协议级：true/false（JSON）
+proto_tls_enabled <协议>       # 该协议是否启用 TLS（VMess 可关，其余 TLS 协议恒 true）
+proto_cert_mode_req / _set     # 读写 state 里的 .protocols.<p>.cert_mode（auto/acme/self-signed）
+proto_tls_set <协议> <bool>    # 写 .protocols.<p>.tls
+vmess_display_name             # VMess 对外名称：域名证书=VMess-WS-TLS，自签/关闭 TLS=VMess-WS
+```
+
+- state：`.protocols.<协议>.cert_mode`（`auto` 跟随当前已应用证书来源）、`.protocols["vmess-ws-tls"].tls`（bool）。
+- 证书文件：自签证书固定存放 `${ESB_CERT_DIR}/self-signed-<域名>.crt|key`，与 acme 的
+  `<域名>.crt|key` 分开，因此"同一域名下一个协议用自签、另一个用域名证书"可以同时成立。
+- 命名规则：VMess 只有在"TLS 开启 + 域名证书"时才叫 `VMess-WS-TLS`（链接名、mihomo 节点名、菜单标签一致）。
 
 ## 11. UI 层（`90-ui.sh`）
 

@@ -9,7 +9,7 @@
 # =============================================================================
 set -u
 
-ESB_SCRIPT_VERSION="1.0.0"
+ESB_SCRIPT_VERSION="1.1.0"
 ESB_SELF="${BASH_SOURCE[0]:-}"
 ESB_SCRIPT_DIR=""
 if [ -n "$ESB_SELF" ] && [ -f "$ESB_SELF" ]; then
@@ -124,7 +124,9 @@ log_warn()  { printf '%s[警告]%s %s\n'   "$C_YELLOW" "$C_RESET" "$*" >&2; esb_
 log_err()   { printf '%s[错误]%s %s\n'   "$C_RED"    "$C_RESET" "$*" >&2; esb_log_raw "[FAIL] $*"; return 0; }
 log_debug() {
   [ "${ESB_DEBUG:-0}" = "1" ] || return 0
-  printf '%s[调试]%s %s\n' "$C_DIM" "$C_RESET" "$*"
+  # 调试信息一律走 stderr：stdout 在渲染/订阅模块里是"数据通道"，
+  # 任何一行日志混进去都会写坏生成的 JSON/YAML/链接。
+  printf '%s[调试]%s %s\n' "$C_DIM" "$C_RESET" "$*" >&2
   esb_log_raw "[DBG ] $*"
   return 0
 }
@@ -1068,13 +1070,15 @@ esb_state_default() {
   },
   "protocols": {
     "vless-vision-reality": {"enabled": false, "port": 443,  "tag": "vless-vision-reality"},
-    "vmess-ws-tls":         {"enabled": false, "port": 8443, "tag": "vmess-ws-tls", "path": "/vmess", "early_data": true},
-    "anytls":               {"enabled": false, "port": 2096, "tag": "anytls", "padding": true},
+    "vmess-ws-tls":         {"enabled": false, "port": 8443, "tag": "vmess-ws-tls", "path": "/vmess", "early_data": true,
+                             "tls": true, "cert_mode": "auto"},
+    "anytls":               {"enabled": false, "port": 2096, "tag": "anytls", "padding": true,
+                             "cert_mode": "auto"},
     "hysteria2":            {"enabled": false, "port": 443,  "tag": "hysteria2",
-                             "up_mbps": 100, "down_mbps": 100,
+                             "up_mbps": 100, "down_mbps": 100, "cert_mode": "auto",
                              "hop": {"enabled": false, "range": "20000-30000", "interval": "30s"}},
     "tuic":                 {"enabled": false, "port": 8443, "tag": "tuic",
-                             "congestion_control": "bbr", "zero_rtt": false}
+                             "congestion_control": "bbr", "zero_rtt": false, "cert_mode": "auto"}
   },
   "cert": {"domain": "", "crt": "", "key": "", "source": "", "applied_at": ""},
   "web": {
@@ -1225,6 +1229,41 @@ proto_enabled_list() {
 
 proto_port() { state_get ".protocols[\"$1\"].port"; }
 
+# 该协议是否启用 TLS（只有 VMess-WS-TLS 可以关 TLS，其余 TLS 协议恒为开）
+proto_tls_enabled() {
+  local _pte_p="$1" _pte_v
+  case "$_pte_p" in
+    vmess-ws-tls) _pte_v="$(state_get '.protocols["vmess-ws-tls"].tls')" ;;
+    vless-vision-reality) printf 'false'; return 0 ;;
+    *) printf 'true'; return 0 ;;
+  esac
+  if [ "$_pte_v" = "false" ]; then printf 'false'; else printf 'true'; fi
+  return 0
+}
+
+# 该协议请求的证书模式：auto=跟随当前已应用证书的来源
+proto_cert_mode_req() { state_get ".protocols[\"$1\"].cert_mode"; }
+
+# 写入某协议的证书模式（字符串字段，走 --arg 避免手动加引号）
+proto_cert_mode_set() {
+  local _pcms_p="$1" _pcms_v="$2"
+  case "$_pcms_v" in
+    acme|self-signed|auto) ;;
+    *) error "证书模式只能是 acme / self-signed / auto，收到：$_pcms_v"; return 1 ;;
+  esac
+  _state_mutate '.protocols[$k].cert_mode = $v' --arg k "$_pcms_p" --arg v "$_pcms_v"
+}
+
+# 写入某协议是否启用 TLS（布尔字段）
+proto_tls_set() {
+  local _pts_p="$1" _pts_v="$2"
+  case "$_pts_v" in
+    true|false) ;;
+    *) error "TLS 开关只能是 true / false，收到：$_pts_v"; return 1 ;;
+  esac
+  _state_mutate '.protocols[$k].tls = $v' --arg k "$_pts_p" --argjson v "$_pts_v"
+}
+
 # ---------------------------------------------------------------------------
 # 备份 / 回滚
 # ---------------------------------------------------------------------------
@@ -1347,6 +1386,93 @@ _CERT_SELF_SIGNED_DAYS=3650
 # ---------------------------------------------------------------------------
 # 路径与工具
 # ---------------------------------------------------------------------------
+# 当前应用的是不是自签证书（决定客户端是否需要跳过证书校验）
+# 返回：0=自签 / 1=不是自签（acme 或未设置）
+cert_is_self_signed() {
+  local _cert_iss_source
+  _cert_iss_source="$(state_get .cert.source)"
+  [ "$_cert_iss_source" = "self-signed" ] || return 1
+  return 0
+}
+
+# 客户端用的"跳过证书校验"标志：自签证书必须让客户端跳过校验，否则连不上
+cert_insecure_flag() {  # 链接里用：1/0
+  if cert_is_self_signed; then printf '1'; else printf '0'; fi
+  return 0
+}
+
+cert_insecure_json() {  # JSON 配置里用：true/false
+  if cert_is_self_signed; then printf 'true'; else printf 'false'; fi
+  return 0
+}
+
+# 自签证书路径（必要时现场生成）
+cert_selfsigned_paths() {
+  local _csp_domain="$1"
+  local _csp_crt="${ESB_CERT_DIR}/self-signed-${_csp_domain}.crt"
+  local _csp_key="${ESB_CERT_DIR}/self-signed-${_csp_domain}.key"
+  if [ ! -f "$_csp_crt" ] || [ ! -f "$_csp_key" ]; then
+    cert_self_signed "$_csp_domain" >&2 || return 1
+  fi
+  [ -f "$_csp_crt" ] && [ -f "$_csp_key" ] || return 1
+  printf '%s\t%s\n' "$_csp_crt" "$_csp_key"
+  return 0
+}
+
+# 该协议实际生效的证书模式：auto → 跟随当前已应用证书来源
+proto_cert_mode() {
+  local _pcm_p="$1" _pcm_v
+  _pcm_v="$(proto_cert_mode_req "$_pcm_p")"
+  case "$_pcm_v" in
+    acme|self-signed) printf '%s' "$_pcm_v"; return 0 ;;
+    *) if cert_is_self_signed; then printf 'self-signed'; else printf 'acme'; fi; return 0 ;;
+  esac
+}
+
+# 该协议要用的证书文件：输出 "crt<TAB>key"
+cert_files_for_proto() {
+  local _cfp_p="$1" _cfp_mode _cfp_domain
+  _cfp_mode="$(proto_cert_mode "$_cfp_p")"
+  _cfp_domain="$(state_get .domain)"
+  if [ "$_cfp_mode" = "self-signed" ]; then
+    cert_selfsigned_paths "$_cfp_domain" || { error "无法准备自签证书：$_cfp_domain"; return 1; }
+    return 0
+  fi
+  # acme：优先用注册表里该域名的 acme 证书
+  local _cfp_crt="" _cfp_key="" _cfp_src=""
+  if registry_has "$_cfp_domain" 2>/dev/null; then
+    _cfp_src="$(registry_get "$_cfp_domain" source 2>/dev/null || true)"
+    case "$_cfp_src" in
+      acme*)
+        _cfp_crt="$(registry_get "$_cfp_domain" crt 2>/dev/null || true)"
+        _cfp_key="$(registry_get "$_cfp_domain" key 2>/dev/null || true)"
+        ;;
+    esac
+  fi
+  if [ -z "$_cfp_crt" ] || [ -z "$_cfp_key" ] || [ ! -f "$_cfp_crt" ] || [ ! -f "$_cfp_key" ]; then
+    # 退回当前"已应用证书"（仅当它确实是域名证书时）
+    if render_cert_ready && ! cert_is_self_signed; then
+      printf '%s	%s
+' "$(state_get .cert.crt)" "$(state_get .cert.key)"
+      return 0
+    fi
+    error "协议 $_cfp_p 需要域名证书，但 $_cfp_domain 没有可用的 Let's Encrypt 证书（可在【证书管理】里申请，或把该协议切换为自签证书）"
+    return 1
+  fi
+  printf '%s\t%s\n' "$_cfp_crt" "$_cfp_key"
+  return 0
+}
+
+# 协议级"跳过证书校验"标志
+proto_insecure_flag() {  # 链接里用：1/0
+  if [ "$(proto_cert_mode "$1")" = "self-signed" ]; then printf '1'; else printf '0'; fi
+  return 0
+}
+proto_insecure_json() {  # JSON 里用：true/false
+  if [ "$(proto_cert_mode "$1")" = "self-signed" ]; then printf 'true'; else printf 'false'; fi
+  return 0
+}
+
 cert_acme_home() {
   ACME_HOME="${ESB_ROOT:-}/root/.acme.sh"
   printf '%s\n' "$ACME_HOME"
@@ -2218,8 +2344,10 @@ cert_self_signed() {
   validate_domain "$_cert_self_signed_domain" || return 1
   cmd_exists openssl || { error "缺少 openssl，无法生成自签证书"; return 1; }
   mkdir -p "$ESB_CERT_DIR" 2>/dev/null || { error "无法创建证书目录：$ESB_CERT_DIR"; return 1; }
-  local _cert_self_signed_crt="${ESB_CERT_DIR}/${_cert_self_signed_domain}.crt"
-  local _cert_self_signed_key="${ESB_CERT_DIR}/${_cert_self_signed_domain}.key"
+  # 自签证书放在 self-signed-<域名>.crt|key：与 acme 证书（<域名>.crt|key）分开存放，
+  # 这样"某个协议用自签、另一个协议用域名证书"可以同时成立
+  local _cert_self_signed_crt="${ESB_CERT_DIR}/self-signed-${_cert_self_signed_domain}.crt"
+  local _cert_self_signed_key="${ESB_CERT_DIR}/self-signed-${_cert_self_signed_domain}.key"
   local _cert_self_signed_dir="${ESB_TMP:-${TMPDIR:-/tmp}/easysb.$$}"
   mkdir -p "$_cert_self_signed_dir" 2>/dev/null || { error "无法创建临时目录：$_cert_self_signed_dir"; return 1; }
   local _cert_self_signed_tmp_crt="${_cert_self_signed_dir}/self-${_cert_self_signed_domain}.crt"
@@ -2378,25 +2506,35 @@ _render_inbound_vless() {
 }
 
 _render_inbound_vmess() {
+  # TLS 可开关：关掉就是纯 VMess-WS（不需要证书）
+  local _riv_files _riv_crt="" _riv_key="" _riv_tls
+  _riv_tls="$(proto_tls_enabled vmess-ws-tls)"
+  if [ "$_riv_tls" = "true" ]; then
+    _riv_files="$(cert_files_for_proto vmess-ws-tls)" || return 1
+    _riv_crt="$(printf '%s' "$_riv_files" | cut -f1)"
+    _riv_key="$(printf '%s' "$_riv_files" | cut -f2)"
+  fi
   jq -n --argjson port "$(proto_port vmess-ws-tls)" \
         --arg uuid "$(secret_get vmess_uuid)" \
         --arg path "$(state_get '.protocols["vmess-ws-tls"].path')" \
         --argjson early "$(state_get '.protocols["vmess-ws-tls"].early_data')" \
-        --arg crt "$(state_get .cert.crt)" --arg key "$(state_get .cert.key)" '
+        --arg crt "$_riv_crt" --arg key "$_riv_key" --argjson tls "$_riv_tls" '
     ({type:"vmess", tag:"vmess-ws-tls", listen:"::", listen_port:$port,
       users:[{uuid:$uuid, alterId:0}],
       multiplex:{enabled:true, padding:false},
       transport:({type:"ws", path:$path} + (if $early then
                    {max_early_data:2048, early_data_header_name:"Sec-WebSocket-Protocol"} else {} end))}
-     + {tls:{enabled:true, certificate_path:$crt, key_path:$key}})'
+     + (if $tls then {tls:{enabled:true, certificate_path:$crt, key_path:$key}} else {} end))'
 }
 
 _render_inbound_anytls() {
+  local _ria_f
+  _ria_f="$(cert_files_for_proto anytls)" || return 1
   jq -n --argjson port "$(proto_port anytls)" \
         --arg pw "$(secret_get anytls_password)" \
         --argjson pad "$(state_get '.protocols.anytls.padding')" \
         --argjson padding "$ESB_ANYTLS_PADDING" \
-        --arg crt "$(state_get .cert.crt)" --arg key "$(state_get .cert.key)" '
+        --arg crt "$(printf '%s' "$_ria_f" | cut -f1)" --arg key "$(printf '%s' "$_ria_f" | cut -f2)" '
     ({type:"anytls", tag:"anytls", listen:"::", listen_port:$port,
       users:[{name:"easysb", password:$pw}],
       tls:{enabled:true, certificate_path:$crt, key_path:$key,
@@ -2405,11 +2543,13 @@ _render_inbound_anytls() {
 }
 
 _render_inbound_hysteria2() {
+  local _rih_f
+  _rih_f="$(cert_files_for_proto hysteria2)" || return 1
   jq -n --argjson port "$(proto_port hysteria2)" \
         --arg pw "$(secret_get hysteria2_password)" \
         --argjson up "$(state_get '.protocols.hysteria2.up_mbps')" \
         --argjson down "$(state_get '.protocols.hysteria2.down_mbps')" \
-        --arg crt "$(state_get .cert.crt)" --arg key "$(state_get .cert.key)" '
+        --arg crt "$(printf '%s' "$_rih_f" | cut -f1)" --arg key "$(printf '%s' "$_rih_f" | cut -f2)" '
     {type:"hysteria2", tag:"hysteria2", listen:"::", listen_port:$port,
      up_mbps:$up, down_mbps:$down,
      users:[{name:"easysb", password:$pw}],
@@ -2417,12 +2557,14 @@ _render_inbound_hysteria2() {
 }
 
 _render_inbound_tuic() {
+  local _rit_f
+  _rit_f="$(cert_files_for_proto tuic)" || return 1
   jq -n --argjson port "$(proto_port tuic)" \
         --arg uuid "$(secret_get tuic_uuid)" \
         --arg pw "$(secret_get tuic_password)" \
         --arg cc "$(state_get '.protocols.tuic.congestion_control')" \
         --argjson zrtt "$(state_get '.protocols.tuic.zero_rtt')" \
-        --arg crt "$(state_get .cert.crt)" --arg key "$(state_get .cert.key)" '
+        --arg crt "$(printf '%s' "$_rit_f" | cut -f1)" --arg key "$(printf '%s' "$_rit_f" | cut -f2)" '
     {type:"tuic", tag:"tuic", listen:"::", listen_port:$port,
      users:[{uuid:$uuid, password:$pw}],
      congestion_control:$cc, auth_timeout:"3s", zero_rtt_handshake:$zrtt, heartbeat:"10s",
@@ -2515,26 +2657,34 @@ _render_outbound_vless() {
 }
 
 _render_outbound_vmess() {
+  local _rov_tls
+  _rov_tls="$(proto_tls_enabled vmess-ws-tls)"
   jq -n --arg server "$(_client_server)" --argjson port "$(proto_port vmess-ws-tls)" \
         --arg uuid "$(secret_get vmess_uuid)" \
-        --arg path "$(state_get '.protocols["vmess-ws-tls"].path')" '
-    {type:"vmess", tag:"vmess-ws-tls", server:$server, server_port:$port, uuid:$uuid,
-     security:"auto", alter_id:0, global_padding:false, authenticated_length:true,
-     packet_encoding:"packetaddr",
-     tls:{enabled:true, server_name:$server,
-          utls:{enabled:true, fingerprint:"chrome"}},
-     multiplex:{enabled:true, protocol:"smux", max_connections:4, min_streams:4,
-                max_streams:0, padding:false},
-     transport:{type:"ws", path:$path, max_early_data:2048,
-                early_data_header_name:"Sec-WebSocket-Protocol"}}'
+        --arg path "$(state_get '.protocols["vmess-ws-tls"].path')" \
+        --argjson insec "$(proto_insecure_json vmess-ws-tls)" \
+        --argjson tls "$_rov_tls" '
+    ({type:"vmess", tag:"vmess-ws-tls", server:$server, server_port:$port, uuid:$uuid,
+      security:"auto", alter_id:0, global_padding:false, authenticated_length:true,
+      packet_encoding:"packetaddr",
+      multiplex:{enabled:true, protocol:"smux", max_connections:4, min_streams:4,
+                 max_streams:0, padding:false},
+      transport:({type:"ws", path:$path}
+                 + (if $tls then {max_early_data:2048,
+                                  early_data_header_name:"Sec-WebSocket-Protocol"} else {} end))}
+     + (if $tls then
+          {tls:{enabled:true, server_name:$server, insecure:$insec,
+                utls:{enabled:true, fingerprint:"chrome"}}}
+        else {} end))'
 }
 
 _render_outbound_anytls() {
   jq -n --arg server "$(_client_server)" --argjson port "$(proto_port anytls)" \
-        --arg pw "$(secret_get anytls_password)" '
+        --arg pw "$(secret_get anytls_password)" \
+        --argjson insec "$(proto_insecure_json anytls)" '
     {type:"anytls", tag:"anytls", server:$server, server_port:$port, password:$pw,
      idle_session_check_interval:"30s", idle_session_timeout:"30s", min_idle_session:5,
-     tls:{enabled:true, server_name:$server, alpn:["h3","h2","http/1.1"],
+     tls:{enabled:true, server_name:$server, insecure:$insec, alpn:["h3","h2","http/1.1"],
           utls:{enabled:true, fingerprint:"chrome"}}}'
 }
 
@@ -2553,21 +2703,23 @@ _render_outbound_hysteria2() {
   _roh_range_colon="$(printf '%s' "$_roh_range" | tr '-' ':')"
   jq -n --arg server "$(_client_server)" --argjson port "$(proto_port hysteria2)" \
         --arg pw "$(secret_get hysteria2_password)" \
-        --arg hop "$_roh_range_colon" --arg hopint "$_roh_interval" '
+        --arg hop "$_roh_range_colon" --arg hopint "$_roh_interval" \
+        --argjson insec "$(proto_insecure_json hysteria2)" '
     ({type:"hysteria2", tag:"hysteria2", server:$server, server_port:$port,
       up_mbps:20, down_mbps:100, password:$pw,
-      tls:{enabled:true, server_name:$server, alpn:["h3"]}}
+      tls:{enabled:true, server_name:$server, insecure:$insec, alpn:["h3"]}}
      + (if $hop != "" then {server_ports:[$hop], hop_interval:$hopint} else {} end))'
 }
 
 _render_outbound_tuic() {
   jq -n --arg server "$(_client_server)" --argjson port "$(proto_port tuic)" \
         --arg uuid "$(secret_get tuic_uuid)" --arg pw "$(secret_get tuic_password)" \
-        --arg cc "$(state_get '.protocols.tuic.congestion_control')" '
+        --arg cc "$(state_get '.protocols.tuic.congestion_control')" \
+        --argjson insec "$(proto_insecure_json tuic)" '
     {type:"tuic", tag:"tuic", server:$server, server_port:$port, uuid:$uuid, password:$pw,
      congestion_control:$cc, udp_relay_mode:"native", udp_over_stream:false,
      zero_rtt_handshake:false, heartbeat:"10s", network:"tcp",
-     tls:{enabled:true, server_name:$server, alpn:["h3"]}}'
+     tls:{enabled:true, server_name:$server, insecure:$insec, alpn:["h3"]}}'
 }
 
 render_outbound() {
@@ -2627,7 +2779,7 @@ render_clients() {
   done
   render_client_all || _rcl_fail=1
   [ "$_rcl_fail" = "0" ] || { error "部分客户端配置生成失败"; return 1; }
-  log_ok "客户端配置已生成于：$ESB_CLIENT_DIR"
+  log_ok "客户端配置已生成于：$ESB_CLIENT_DIR" >&2
   return 0
 }
 
@@ -2647,17 +2799,30 @@ link_vless() {
   return 0
 }
 
+# VMess 的对外名称：只有"域名证书 + TLS 开启"才叫 VMess-WS-TLS，
+# 自签证书（客户端需跳过校验）与关闭 TLS 都叫 VMess-WS
+vmess_display_name() {
+  if [ "$(proto_tls_enabled vmess-ws-tls)" != "true" ]; then printf 'VMess-WS'; return 0; fi
+  if [ "$(proto_cert_mode vmess-ws-tls)" = "acme" ]; then printf 'VMess-WS-TLS'; else printf 'VMess-WS'; fi
+  return 0
+}
+
 link_vmess() {
-  local _lm_server _lm_port _lm_uuid _lm_path _lm_ps _lm_json
+  local _lm_server _lm_port _lm_uuid _lm_path _lm_ps _lm_json _lm_tls
   _lm_server="$(_client_server)"; _lm_port="$(proto_port vmess-ws-tls)"
   _lm_uuid="$(secret_get vmess_uuid)"; _lm_path="$(state_get '.protocols["vmess-ws-tls"].path')"
-  _lm_ps="EasySB-VMess-WS-TLS-${_lm_server}"
+  _lm_tls="$(proto_tls_enabled vmess-ws-tls)"
+  _lm_ps="EasySB-$(vmess_display_name)-${_lm_server}"
   _lm_json="$(jq -nc --arg v "2" --arg ps "$_lm_ps" --arg add "$_lm_server" \
       --argjson port "$_lm_port" --arg id "$_lm_uuid" --arg host "$_lm_server" \
-      --arg path "$_lm_path" '
+      --arg path "$_lm_path" --arg insec "$(proto_insecure_json vmess-ws-tls)" \
+      --argjson tls "$_lm_tls" '
       {v:$v, ps:$ps, add:$add, port:$port, id:$id, aid:"0", scy:"auto",
-       net:"ws", type:"none", host:$host, path:$path, tls:"tls",
-       sni:$add, alpn:"h2,http/1.1", fp:"chrome"}')"
+       net:"ws", type:"none", host:$host, path:$path,
+       tls:(if $tls then "tls" else "" end),
+       sni:(if $tls then $add else "" end),
+       alpn:(if $tls then "h2,http/1.1" else "" end), fp:"chrome",
+       allowInsecure:($insec == "true")}')"
   printf 'vmess://%s\n' "$(printf '%s' "$_lm_json" | base64 | tr -d '\n')"
   return 0
 }
@@ -2672,7 +2837,7 @@ link_hysteria2() {
     _lh_hopint="$(state_get '.protocols.hysteria2.hop.interval')"
   fi
   _lh_name="$(url_encode "EasySB-Hysteria2-${_lh_server}")"
-  _lh_q="sni=${_lh_server}&insecure=0&alpn=h3"
+  _lh_q="sni=${_lh_server}&insecure=$(proto_insecure_flag hysteria2)&alpn=h3"
   [ -n "$_lh_hop" ] && _lh_q="${_lh_q}&mport=$(url_encode "$_lh_hop")&hop_interval=${_lh_hopint}"
   printf 'hysteria2://%s@%s:%s?%s#%s\n' "$(url_encode "$_lh_pw")" "$_lh_server" "$_lh_port" "$_lh_q" "$_lh_name"
   return 0
@@ -2683,8 +2848,8 @@ link_tuic() {
   _lt_server="$(_client_server)"; _lt_port="$(proto_port tuic)"
   _lt_uuid="$(secret_get tuic_uuid)"; _lt_pw="$(secret_get tuic_password)"
   _lt_name="$(url_encode "EasySB-TUIC-${_lt_server}")"
-  printf 'tuic://%s:%s@%s:%s?congestion_control=bbr&udp_relay_mode=native&alpn=h3&sni=%s&allow_insecure=0#%s\n' \
-    "$_lt_uuid" "$(url_encode "$_lt_pw")" "$_lt_server" "$_lt_port" "$_lt_server" "$_lt_name"
+  printf 'tuic://%s:%s@%s:%s?congestion_control=bbr&udp_relay_mode=native&alpn=h3&sni=%s&allow_insecure=%s#%s\n' \
+    "$_lt_uuid" "$(url_encode "$_lt_pw")" "$_lt_server" "$_lt_port" "$_lt_server" "$(proto_insecure_flag tuic)" "$_lt_name"
   return 0
 }
 
@@ -2693,8 +2858,8 @@ link_anytls() {
   _la_server="$(_client_server)"; _la_port="$(proto_port anytls)"
   _la_pw="$(secret_get anytls_password)"
   _la_name="$(url_encode "EasySB-AnyTLS-${_la_server}")"
-  printf 'anytls://%s@%s:%s?sni=%s&insecure=0&fp=chrome#%s\n' \
-    "$(url_encode "$_la_pw")" "$_la_server" "$_la_port" "$_la_server" "$_la_name"
+  printf 'anytls://%s@%s:%s?sni=%s&insecure=%s&fp=chrome#%s\n' \
+    "$(url_encode "$_la_pw")" "$_la_server" "$_la_port" "$_la_server" "$(proto_insecure_flag anytls)" "$_la_name"
   return 0
 }
 
@@ -5298,8 +5463,9 @@ sub_formats() {
   cat <<'EOF'
 base64	通用订阅（v2rayN / Shadowrocket / NekoBox 等，Base64 节点列表）
 links	纯文本节点链接（每行一条）
-singbox	sing-box 客户端配置（JSON）
-mihomo	Mihomo / Clash 配置（YAML）
+singbox	sing-box 客户端配置（按仓库 Templates/tun-fakeip.json 的 TUN + FakeIP + 规则分流模板生成）
+singbox-mixed	sing-box 精简配置（mixed 入站 10000 + 五条节点，适合只当本地代理用）
+mihomo	Mihomo / Clash 配置（按仓库 Mihomo 模板生成：fake-ip DNS + sniffer + 负载均衡/自动选择/手动选择）
 EOF
   return 0
 }
@@ -5331,134 +5497,212 @@ _mihomo_yaml_quote() {
 }
 
 sub_mihomo_yaml() {
-  local _mh_domain _mh_port _mh_p _mh_name _mh_prefix
+  local _mh_domain _mh_port _mh_p _mh_name _mh_names=""
   _mh_domain="$(state_get .domain)"
   [ -n "$_mh_domain" ] || { error "尚未设置域名，无法生成 Mihomo 配置"; return 1; }
-  _mh_prefix="$(state_get .sub.name)"; [ -n "$_mh_prefix" ] || _mh_prefix="EasySB"
 
-  printf '# EasySB 订阅 · Mihomo/Clash 配置（由脚本生成，请勿手改）\n'
-  printf 'mixed-port: 7890\n'
-  printf 'allow-lan: false\n'
+  # 结构对齐仓库 Mihomo 模板：顶层端口/DNS(fake-ip)/sniffer → proxies → 三个策略组 → 四条规则
+  printf '# EasySB 订阅 · Mihomo / Clash 配置（按仓库 Mihomo 模板生成）\n'
+  printf 'port: 7890\n'
+  printf 'allow-lan: true\n'
   printf 'mode: rule\n'
-  printf 'log-level: warning\n'
-  printf 'ipv6: false\n'
-  printf 'external-controller: 127.0.0.1:9090\n'
+  printf 'log-level: info\n'
+  printf 'unified-delay: true\n'
+  printf '\n'
   printf 'dns:\n'
   printf '  enable: true\n'
-  printf '  ipv6: false\n'
+  printf '  listen: "0.0.0.0:1053"\n'
+  printf '  ipv6: true\n'
+  printf '  prefer-h3: false\n'
+  printf '  respect-rules: true\n'
+  printf '  use-system-hosts: false\n'
+  printf '  cache-algorithm: "arc"\n'
   printf '  enhanced-mode: fake-ip\n'
   printf '  fake-ip-range: 198.18.0.1/16\n'
+  printf '\n'
+  printf '  fake-ip-filter:\n'
+  printf '    - "+.lan"\n'
+  printf '    - "+.local"\n'
+  printf '    - "+.msftconnecttest.com"\n'
+  printf '    - "+.msftncsi.com"\n'
+  printf '    - "localhost.ptlogin2.qq.com"\n'
+  printf '    - "localhost.sec.qq.com"\n'
+  printf '    - "+.in-addr.arpa"\n'
+  printf '    - "+.ip6.arpa"\n'
+  printf '    - "time.*.com"\n'
+  printf '    - "time.*.gov"\n'
+  printf '    - "pool.ntp.org"\n'
+  printf '    - "localhost.work.weixin.qq.com"\n'
+  printf '\n'
+  printf '  default-nameserver:\n'
+  printf '    - "223.5.5.5"\n'
+  printf '    - "119.29.29.29"\n'
+  printf '\n'
   printf '  nameserver:\n'
-  printf '    - https://223.5.5.5/dns-query\n'
-  printf '    - https://1.1.1.1/dns-query\n'
-  printf '  fallback:\n'
-  printf '    - https://8.8.8.8/dns-query\n'
+  printf '    - "https://1.1.1.1/dns-query"\n'
+  printf '    - "https://8.8.8.8/dns-query"\n'
+  printf '\n'
+  printf '  proxy-server-nameserver:\n'
+  printf '    - "https://223.5.5.5/dns-query"\n'
+  printf '    - "https://doh.pub/dns-query"\n'
+  printf '\n'
+  printf 'sniffer:\n'
+  printf '  enable: true\n'
+  printf '  sniff:\n'
+  printf '    HTTP:\n'
+  printf '      ports:\n'
+  printf '        - 80\n'
+  printf '        - 8080\n'
+  printf '    TLS:\n'
+  printf '      ports:\n'
+  printf '        - 443\n'
+  printf '        - 8443\n'
+  printf '    QUIC:\n'
+  printf '      ports:\n'
+  printf '        - 443\n'
+  printf '        - 8443\n'
+  printf '\n'
   printf 'proxies:\n'
 
-  local _mh_names=""
   for _mh_p in $(proto_enabled_list); do
-    _mh_name="$(printf '%s-%s' "$_mh_prefix" "$_mh_p")"
-    _mh_names="$_mh_names $_mh_name"
     _mh_port="$(proto_port "$_mh_p")"
     case "$_mh_p" in
+      vless-vision-reality) _mh_name="vless-reality-vision-${_mh_domain}" ;;
+      vmess-ws-tls)
+        # 与分享链接一致：域名证书才叫 vmess-ws-tls，自签/关闭 TLS 叫 vmess-ws
+        if [ "$(vmess_display_name)" = "VMess-WS-TLS" ]; then
+          _mh_name="vmess-ws-tls-${_mh_domain}"
+        else
+          _mh_name="vmess-ws-${_mh_domain}"
+        fi
+        ;;
+      hysteria2)            _mh_name="hysteria2-${_mh_domain}" ;;
+      tuic)                 _mh_name="tuic5-${_mh_domain}" ;;
+      anytls)               _mh_name="anytls-${_mh_domain}" ;;
+      *)                    _mh_name="${_mh_p}-${_mh_domain}" ;;
+    esac
+    _mh_names="$_mh_names $_mh_name"
+    case "$_mh_p" in
       vless-vision-reality)
-        printf '  - name: %s\n' "$(_mihomo_yaml_quote "$_mh_name")"
+        printf '  - name: %s\n' "$_mh_name"
         printf '    type: vless\n'
-        printf '    server: %s\n' "$(_mihomo_yaml_quote "$_mh_domain")"
+        printf '    server: %s\n' "$_mh_domain"
         printf '    port: %s\n' "$_mh_port"
-        printf '    uuid: %s\n' "$(_mihomo_yaml_quote "$(secret_get vless_uuid)")"
+        printf '    uuid: %s\n' "$(secret_get vless_uuid)"
         printf '    network: tcp\n'
-        printf '    tls: true\n'
         printf '    udp: true\n'
+        printf '    tls: true\n'
         printf '    flow: xtls-rprx-vision\n'
-        printf '    servername: %s\n' "$(_mihomo_yaml_quote "$(state_get .reality.server_name)")"
-        printf '    client-fingerprint: chrome\n'
+        printf '    servername: %s\n' "$(state_get .reality.server_name)"
         printf '    reality-opts:\n'
-        printf '      public-key: %s\n' "$(_mihomo_yaml_quote "$(state_get .reality.public_key)")"
-        printf '      short-id: %s\n' "$(_mihomo_yaml_quote "$(state_get .reality.short_id)")"
+        printf '      public-key: %s\n' "$(state_get .reality.public_key)"
+        printf '      short-id: %s\n' "$(state_get .reality.short_id)"
+        printf '    client-fingerprint: chrome\n'
         ;;
       vmess-ws-tls)
-        printf '  - name: %s\n' "$(_mihomo_yaml_quote "$_mh_name")"
+        printf '  - name: %s\n' "$_mh_name"
         printf '    type: vmess\n'
-        printf '    server: %s\n' "$(_mihomo_yaml_quote "$_mh_domain")"
+        printf '    server: %s\n' "$_mh_domain"
         printf '    port: %s\n' "$_mh_port"
-        printf '    uuid: %s\n' "$(_mihomo_yaml_quote "$(secret_get vmess_uuid)")"
+        printf '    uuid: %s\n' "$(secret_get vmess_uuid)"
         printf '    alterId: 0\n'
         printf '    cipher: auto\n'
         printf '    udp: true\n'
-        printf '    tls: true\n'
-        printf '    servername: %s\n' "$(_mihomo_yaml_quote "$_mh_domain")"
-        printf '    client-fingerprint: chrome\n'
+        if [ "$(proto_tls_enabled vmess-ws-tls)" = "true" ]; then
+          printf '    tls: true\n'
+          printf '    skip-cert-verify: %s\n' "$(_sub_yaml_bool "$(proto_insecure_json vmess-ws-tls)")"
+        else
+          printf '    tls: false\n'
+        fi
         printf '    network: ws\n'
+        printf '    servername: %s\n' "$_mh_domain"
         printf '    ws-opts:\n'
-        printf '      path: %s\n' "$(_mihomo_yaml_quote "$(state_get '.protocols["vmess-ws-tls"].path')")"
+        printf '      path: "%s"\n' "$(state_get '.protocols["vmess-ws-tls"].path')"
         printf '      headers:\n'
-        printf '        Host: %s\n' "$(_mihomo_yaml_quote "$_mh_domain")"
+        printf '        Host: %s\n' "$_mh_domain"
         ;;
       hysteria2)
-        printf '  - name: %s\n' "$(_mihomo_yaml_quote "$_mh_name")"
+        printf '  - name: %s\n' "$_mh_name"
         printf '    type: hysteria2\n'
-        printf '    server: %s\n' "$(_mihomo_yaml_quote "$_mh_domain")"
+        printf '    server: %s\n' "$_mh_domain"
         printf '    port: %s\n' "$_mh_port"
-        printf '    password: %s\n' "$(_mihomo_yaml_quote "$(secret_get hysteria2_password)")"
-        printf '    sni: %s\n' "$(_mihomo_yaml_quote "$_mh_domain")"
+        if [ "$(state_get '.protocols.hysteria2.hop.enabled')" = "true" ]; then
+          printf '    ports: %s\n' "$(state_get '.protocols.hysteria2.hop.range')"
+        fi
+        printf '    password: %s\n' "$(secret_get hysteria2_password)"
         printf '    alpn:\n'
         printf '      - h3\n'
-        printf '    skip-cert-verify: false\n'
-        if [ "$(state_get '.protocols.hysteria2.hop.enabled')" = "true" ]; then
-          printf '    ports: %s\n' "$(_mihomo_yaml_quote "$(state_get '.protocols.hysteria2.hop.range')")"
-          printf '    hop-interval: %s\n' "$(printf '%s' "$(state_get '.protocols.hysteria2.hop.interval')" | tr -d 's')"
-        fi
+        printf '    sni: %s\n' "$_mh_domain"
+        printf '    skip-cert-verify: %s\n' "$(_sub_yaml_bool "$(proto_insecure_json hysteria2)")"
+        printf '    fast-open: true\n'
         ;;
       tuic)
-        printf '  - name: %s\n' "$(_mihomo_yaml_quote "$_mh_name")"
+        printf '  - name: %s\n' "$_mh_name"
         printf '    type: tuic\n'
-        printf '    server: %s\n' "$(_mihomo_yaml_quote "$_mh_domain")"
+        printf '    server: %s\n' "$_mh_domain"
         printf '    port: %s\n' "$_mh_port"
-        printf '    uuid: %s\n' "$(_mihomo_yaml_quote "$(secret_get tuic_uuid)")"
-        printf '    password: %s\n' "$(_mihomo_yaml_quote "$(secret_get tuic_password)")"
-        printf '    congestion-controller: bbr\n'
-        printf '    udp-relay-mode: native\n'
-        printf '    sni: %s\n' "$(_mihomo_yaml_quote "$_mh_domain")"
+        printf '    uuid: %s\n' "$(secret_get tuic_uuid)"
+        printf '    password: %s\n' "$(secret_get tuic_password)"
         printf '    alpn:\n'
         printf '      - h3\n'
+        printf '    disable-sni: false\n'
+        printf '    reduce-rtt: true\n'
+        printf '    udp-relay-mode: native\n'
+        printf '    congestion-controller: bbr\n'
+        printf '    sni: %s\n' "$_mh_domain"
+        printf '    skip-cert-verify: %s\n' "$(_sub_yaml_bool "$(proto_insecure_json tuic)")"
         ;;
       anytls)
-        printf '  - name: %s\n' "$(_mihomo_yaml_quote "$_mh_name")"
+        printf '  - name: %s\n' "$_mh_name"
         printf '    type: anytls\n'
-        printf '    server: %s\n' "$(_mihomo_yaml_quote "$_mh_domain")"
+        printf '    server: %s\n' "$_mh_domain"
         printf '    port: %s\n' "$_mh_port"
-        printf '    password: %s\n' "$(_mihomo_yaml_quote "$(secret_get anytls_password)")"
-        printf '    sni: %s\n' "$(_mihomo_yaml_quote "$_mh_domain")"
+        printf '    password: %s\n' "$(secret_get anytls_password)"
+        printf '    sni: %s\n' "$_mh_domain"
+        printf '    skip-cert-verify: %s\n' "$(_sub_yaml_bool "$(proto_insecure_json anytls)")"
         printf '    udp: true\n'
         printf '    client-fingerprint: chrome\n'
         ;;
     esac
   done
 
-  local _mh_list=""
-  local _mh_n
+  local _mh_proxies="" _mh_n
   for _mh_n in $_mh_names; do
-    _mh_list="${_mh_list}      - ${_mh_n}\n"
+    _mh_proxies="${_mh_proxies}      - ${_mh_n}\n"
   done
+
+  printf '\n'
   printf 'proxy-groups:\n'
-  printf '  - name: PROXY\n'
-  printf '    type: select\n'
+  printf '\n'
+  printf '  - name: 负载均衡\n'
+  printf '    type: load-balance\n'
+  printf '    url: https://www.gstatic.com/generate_204\n'
+  printf '    interval: 300\n'
+  printf '    strategy: round-robin\n'
   printf '    proxies:\n'
-  printf '      - AUTO\n'
-  printf '%b' "$_mh_list"
-  printf '  - name: AUTO\n'
+  printf '%b' "$_mh_proxies"
+  printf '\n'
+  printf '  - name: 自动选择\n'
   printf '    type: url-test\n'
-  printf '    url: http://www.gstatic.com/generate_204\n'
+  printf '    url: https://www.gstatic.com/generate_204\n'
   printf '    interval: 300\n'
   printf '    tolerance: 50\n'
   printf '    proxies:\n'
-  printf '%b' "$_mh_list"
+  printf '%b' "$_mh_proxies"
+  printf '\n'
+  printf '  - name: 🌍选择代理节点\n'
+  printf '    type: select\n'
+  printf '    proxies:\n'
+  printf '      - 负载均衡\n'
+  printf '      - 自动选择\n'
+  printf '      - DIRECT\n'
+  printf '%b' "$_mh_proxies"
+  printf '\n'
   printf 'rules:\n'
-  printf '  - GEOIP,private,DIRECT,no-resolve\n'
-  printf '  - GEOSITE,cn,DIRECT\n'
+  printf '  - GEOIP,LAN,DIRECT\n'
+  printf '  - GEOSITE,CN,DIRECT\n'
   printf '  - GEOIP,CN,DIRECT\n'
-  printf '  - MATCH,PROXY\n'
+  printf '  - MATCH,🌍选择代理节点\n'
   return 0
 }
 
@@ -5466,6 +5710,135 @@ sub_singbox_json() {
   local _sub_singbox_json_src="${ESB_CLIENT_DIR}/all.json"
   [ -f "$_sub_singbox_json_src" ] || { render_client_all || return 1; }
   cat "$_sub_singbox_json_src"
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# sing-box TUN 模板（按仓库 Templates/tun-fakeip.json 生成）
+# 做法：拉取仓库模板 → 去掉 JSONC 注释 → 只把"节点类" outbound 换成我们生成的，
+#       其余（dns / inbounds / route / rule_set / experimental / 策略组 / direct）原样保留。
+# ---------------------------------------------------------------------------
+_sub_singbox_tpl_raw()  { printf '%s\n' "${ESB_SUB_SINGBOX_TPL_URL:-https://raw.githubusercontent.com/${ESB_REPO}/${ESB_REPO_BRANCH}/Templates/tun-fakeip.json}"; }
+_sub_singbox_tpl_file() { printf '%s\n' "${ESB_DIR}/templates/tun-fakeip.jsonc"; }
+
+# 获取模板（带缓存；离线时用缓存；都没有则失败）
+sub_singbox_template() {
+  local _sub_tpl_url _sub_tpl_file _sub_tpl_age=""
+  _sub_tpl_url="$(_sub_singbox_tpl_raw)"
+  _sub_tpl_file="$(_sub_singbox_tpl_file)"
+  mkdir -p "$(dirname "$_sub_tpl_file")" 2>/dev/null || true
+  if [ -f "$_sub_tpl_file" ]; then
+    _sub_tpl_age="$(find "$_sub_tpl_file" -mtime +7 2>/dev/null)"
+    [ -n "$_sub_tpl_age" ] || { printf '%s\n' "$_sub_tpl_file"; return 0; }
+  fi
+  if [ "${ESB_OFFLINE:-0}" = "1" ]; then
+    [ -f "$_sub_tpl_file" ] && { printf '%s\n' "$_sub_tpl_file"; return 0; }
+    error "离线模式下没有缓存的 sing-box 模板"
+    return 1
+  fi
+  local _sub_tpl_tmp="${_sub_tpl_file}.tmp.$$"
+  if http_get "$_sub_tpl_url" "$_sub_tpl_tmp"; then
+    mv -f "$_sub_tpl_tmp" "$_sub_tpl_file" 2>/dev/null || true
+    printf '%s\n' "$_sub_tpl_file"
+    return 0
+  fi
+  rm -f "$_sub_tpl_tmp" 2>/dev/null || true
+  if [ -f "$_sub_tpl_file" ]; then
+    log_warn "无法更新 sing-box 模板，改用本地缓存"
+    printf '%s\n' "$_sub_tpl_file"
+    return 0
+  fi
+  error "无法获取 sing-box 模板：$_sub_tpl_url"
+  return 1
+}
+
+# JSONC → JSON（字符串感知：URL 里的 // 不会被当成注释）
+_sub_jsonc_strip() {
+  awk '
+    BEGIN { q = sprintf("%c", 34); bs = sprintf("%c", 92); instr = 0; esc = 0; inblock = 0 }
+    {
+      line = $0; out = ""; i = 1; n = length(line)
+      while (i <= n) {
+        c = substr(line, i, 1)
+        if (instr) {
+          out = out c
+          if (esc) { esc = 0 }
+          else if (c == bs) { esc = 1 }
+          else if (c == q) { instr = 0 }
+          i++; continue
+        }
+        if (c == q) { instr = 1; out = out c; i++; continue }
+        nxt = substr(line, i + 1, 1)
+        if (c == "/" && nxt == "/") { break }
+        if (c == "/" && nxt == "*") { inblock = 1; i += 2; continue }
+        if (inblock && c == "*" && nxt == "/") { inblock = 0; i += 2; continue }
+        if (!inblock) { out = out c }
+        i++
+      }
+      print out
+    }
+  '
+}
+
+# 按标签把模板里的节点 outbound 换成我们生成的（策略组 / direct / 其余配置保持模板原样）
+sub_singbox_tun_json() {
+  local _sub_tun_tpl _sub_tun_clean _sub_tun_p _sub_tun_node=""
+  _sub_tun_tpl="$(sub_singbox_template)" || return 1
+  _sub_tun_clean="${ESB_TMP}/tun-fakeip.json"
+  _sub_jsonc_strip <"$_sub_tun_tpl" >"$_sub_tun_clean" || { error "模板去注释失败"; return 1; }
+  if ! jq -e '.outbounds' "$_sub_tun_clean" >/dev/null 2>&1; then
+    error "sing-box 模板结构异常（缺少 outbounds）"
+    return 1
+  fi
+
+  local _sub_tun_prog='.' _sub_tun_args=""
+  # 逐个已启用协议：把模板中对应 tag 的 outbound 整体替换
+  for _sub_tun_p in $(proto_enabled_list); do
+    _sub_tun_node="${ESB_TMP}/node-${_sub_tun_p}.json"
+    render_outbound "$_sub_tun_p" >"$_sub_tun_node" || { error "渲染节点失败：$_sub_tun_p"; return 1; }
+    if ! jq -e --arg t "$_sub_tun_p" '[.outbounds[]|select(.tag==$t)]|length>0' "$_sub_tun_clean" >/dev/null 2>&1; then
+      log_warn "模板里没有名为 $_sub_tun_p 的节点，跳过替换"
+      continue
+    fi
+    if ! jq --slurpfile n "$_sub_tun_node" --arg t "$_sub_tun_p" \
+          '(.outbounds[] | select(.tag==$t)) = $n[0]' "$_sub_tun_clean" >"${_sub_tun_clean}.new"; then
+      error "合并节点失败：$_sub_tun_p"
+      return 1
+    fi
+    mv -f "${_sub_tun_clean}.new" "$_sub_tun_clean" || return 1
+  done
+
+  # 模板里存在、但本次没启用的节点：从策略组引用与 outbounds 中摘掉，避免引用不存在的 outbound
+  local _sub_tun_all="vless-vision-reality vmess-ws-tls anytls hysteria2 tuic"
+  local _sub_tun_enabled=" $(proto_enabled_list) "
+  local _sub_tun_off=""
+  local _sub_tun_k
+  for _sub_tun_k in $_sub_tun_all; do
+    case "$_sub_tun_enabled" in
+      *" $_sub_tun_k "*) ;;
+      *) _sub_tun_off="$_sub_tun_off $_sub_tun_k" ;;
+    esac
+  done
+  if [ -n "$(trim "$_sub_tun_off")" ]; then
+    jq --arg off "$(trim "$_sub_tun_off")" '
+      ($off | split(" ")) as $offlist
+      | .outbounds = [ .outbounds[]
+          | select((.tag as $t | $offlist | index($t)) == null)
+          | if .outbounds then .outbounds = [ .outbounds[] | select(. as $x | $offlist | index($x) | not) ] else . end ]
+    ' "$_sub_tun_clean" >"${_sub_tun_clean}.new" && mv -f "${_sub_tun_clean}.new" "$_sub_tun_clean"
+    log_info "模板中未启用的节点已摘除：$(trim "$_sub_tun_off")" >&2
+  fi
+
+  jq '.' "$_sub_tun_clean"
+  return 0
+}
+
+# YAML 布尔写法（mihomo 只认 true/false）
+_sub_yaml_bool() {
+  case "${1-}" in
+    true|True|TRUE|1) printf 'true' ;;
+    *) printf 'false' ;;
+  esac
   return 0
 }
 
@@ -5486,7 +5859,15 @@ sub_write_files() {
 
   sub_links_text >"${_sub_write_tmp}/links.txt" || return 1
   sub_links_base64 >"${_sub_write_tmp}/sub" || return 1
-  sub_singbox_json >"${_sub_write_tmp}/singbox.json" || return 1
+  # singbox.json：按仓库 Templates/tun-fakeip.json 模板生成（TUN + FakeIP + 规则分流）
+  if sub_singbox_tun_json >"${_sub_write_tmp}/singbox.json"; then
+    :
+  else
+    log_warn "sing-box TUN 模板配置生成失败，退回精简配置"
+    sub_singbox_json >"${_sub_write_tmp}/singbox.json" || return 1
+  fi
+  # singbox-mixed.json：精简配置（mixed 入站，仅代理本机程序）
+  sub_singbox_json >"${_sub_write_tmp}/singbox-mixed.json" || return 1
   if sub_mihomo_yaml >"${_sub_write_tmp}/mihomo.yaml"; then
     :
   else
@@ -5512,7 +5893,7 @@ sub_write_files() {
   # 本地也留一份纯文本链接，方便直接复制
   sub_links_text >"${ESB_CLIENT_DIR}/links.txt" 2>/dev/null || true
   chmod 600 "${ESB_CLIENT_DIR}/links.txt" 2>/dev/null || true
-  log_ok "订阅文件已生成：$_sub_write_dir"
+  log_ok "订阅文件已生成：$_sub_write_dir" >&2
   return 0
 }
 
@@ -5522,6 +5903,7 @@ sub_url_list() {
   printf 'base64\t%s/sub\n' "$_sub_url_base"
   printf 'links\t%s/links.txt\n' "$_sub_url_base"
   printf 'singbox\t%s/singbox.json\n' "$_sub_url_base"
+  printf 'singbox-mixed\t%s/singbox-mixed.json\n' "$_sub_url_base"
   printf 'mihomo\t%s/mihomo.yaml\n' "$_sub_url_base"
   return 0
 }
@@ -5592,7 +5974,7 @@ EOF
     return 1
   fi
   service_mgr nginx reload >/dev/null 2>&1 || service_mgr nginx restart >/dev/null 2>&1 || true
-  log_ok "订阅站点已部署：http://$(state_get .domain):${_sub_site_deploy_port}/sub/<token>/"
+  log_ok "订阅站点已部署：http://$(state_get .domain):${_sub_site_deploy_port}/sub/<token>/" >&2
   return 0
 }
 
@@ -5604,7 +5986,7 @@ sub_site_remove() {
   if run_gate "nginx -t" nginx -t >/dev/null 2>&1; then
     service_mgr nginx reload >/dev/null 2>&1 || true
   fi
-  log_info "已移除独立订阅站点配置"
+  log_info "已移除独立订阅站点配置" >&2
   return 0
 }
 
@@ -5622,7 +6004,7 @@ sub_enable() {
     fw_open "$_sub_enable_port" tcp >/dev/null 2>&1 || true
   fi
   state_set ".sub.enabled" "true" >/dev/null 2>&1 || true
-  log_ok "订阅已启用"
+  log_ok "订阅已启用" >&2
   return 0
 }
 
@@ -5630,7 +6012,7 @@ sub_disable() {
   state_set ".sub.enabled" "false" >/dev/null 2>&1 || true
   sub_site_remove
   fw_close "$(state_get .sub.port)" tcp >/dev/null 2>&1 || true
-  log_info "订阅已关闭（订阅文件仍保留在 $(sub_dir)）"
+  log_info "订阅已关闭（订阅文件仍保留在 $(sub_dir)）" >&2
   return 0
 }
 
@@ -5687,7 +6069,7 @@ ui_main() {
     printf '  8) 卸载 EasySB\n'
     printf '  0) 退出\n'
     ui_blank
-    printf '请选择 [0-8]: '
+    printf '请选择 [0-9]: '
     IFS= read -r _ui_main_choice || _ui_main_choice="0"
     _ui_main_choice="${_ui_main_choice%$'\r'}"
     case "$_ui_main_choice" in
@@ -5938,6 +6320,7 @@ ui_install_kernel() {
 }
 
 # 证书准备（部署过程中调用）
+# 让用户选择证书来源：申请 Let's Encrypt 域名证书（推荐）或生成自签证书（无需域名解析）
 ui_prepare_cert() {
   local _ui_prepare_cert_need=0 _ui_prepare_cert_p
   for _ui_prepare_cert_p in $(proto_enabled_list); do
@@ -5947,13 +6330,32 @@ ui_prepare_cert() {
 
   local _ui_prepare_cert_domain; _ui_prepare_cert_domain="$(state_get .domain)"
   if [ "$(state_get .cert.domain)" = "$_ui_prepare_cert_domain" ] && render_cert_ready; then
-    log_ok "已有可用证书：$(state_get .cert.crt)"
+    log_ok "已有可用证书：$(state_get .cert.crt)（来源：$(state_get .cert.source)）"
+    log_info "如需换一种证书来源，可在菜单【证书管理】里重新申请或生成自签证书"
     return 0
   fi
   if render_cert_ready; then
     log_info "当前已应用证书域名：$(state_get .cert.domain)（与部署域名 $_ui_prepare_cert_domain 不一致）"
   fi
 
+  # --- 选择证书来源 -------------------------------------------------------
+  local _ui_prepare_cert_source=""
+  ui_blank
+  log_info "需要为 $_ui_prepare_cert_domain 准备证书（用于 VMess-WS-TLS / Hysteria2 / TUIC / AnyTLS）"
+  ask_single _ui_prepare_cert_source "请选择证书来源" \
+    "acme|申请域名证书（Let's Encrypt，浏览器与客户端都认可，需域名已解析到本机）" \
+    "self-signed|生成自签证书（不需要域名解析，客户端必须跳过证书校验）"
+
+  if [ "$_ui_prepare_cert_source" = "self-signed" ]; then
+    log_info "生成自签证书（有效期 3650 天，仅用于加密通道，客户端将自动配置为跳过校验）"
+    cert_self_signed "$_ui_prepare_cert_domain" || { error "生成自签证书失败"; return 1; }
+    cert_use "$_ui_prepare_cert_domain" >/dev/null 2>&1 || { error "应用自签证书失败"; return 1; }
+    log_ok "已应用自签证书：$(state_get .cert.crt)"
+    log_info "提示：分享链接与订阅里已写入 insecure=1 / skip-cert-verify，客户端无需手工设置"
+    return 0
+  fi
+
+  # --- ACME ---------------------------------------------------------------
   if ! cert_tool_installed; then
     log_warn "尚未安装证书申请工具 acme.sh"
     ask_yesno "现在安装 acme.sh 吗？" y || { error "没有证书无法部署需要证书的协议"; return 1; }
@@ -5986,7 +6388,16 @@ EOF
     _ui_prepare_cert_arg="dns:$_ui_prepare_cert_prov"
     ui_dns_env_tip "$_ui_prepare_cert_prov"
   fi
-  cert_apply "$_ui_prepare_cert_domain" "$_ui_prepare_cert_arg" || return 1
+  if ! cert_apply "$_ui_prepare_cert_domain" "$_ui_prepare_cert_arg"; then
+    log_warn "域名证书申请失败（常见原因：域名未解析到本机 / 80 端口不可达 / 触发 CA 频率限制）"
+    if ask_yesno "改用自签证书继续部署吗？" y; then
+      cert_self_signed "$_ui_prepare_cert_domain" || { error "生成自签证书失败"; return 1; }
+      cert_use "$_ui_prepare_cert_domain" >/dev/null 2>&1 || { error "应用自签证书失败"; return 1; }
+      log_ok "已应用自签证书（客户端将自动跳过证书校验）"
+      return 0
+    fi
+    return 1
+  fi
   cert_use "$_ui_prepare_cert_domain" >/dev/null 2>&1 || true
   return 0
 }
@@ -6149,33 +6560,222 @@ ui_cert_menu() {
     local _ui_cert_menu_applied_domain; _ui_cert_menu_applied_domain="$(state_get .cert.domain)"
     printf '  当前已应用证书：%s\n' "${_ui_cert_menu_applied_domain:-无}"
     if [ -n "$_ui_cert_menu_applied_domain" ]; then
+      printf '  证书来源　　　：%s\n' "$(state_get .cert.source)"
       printf '  剩余有效期　　：%s 天\n' "$(cert_expiring_days "$_ui_cert_menu_applied_domain")"
     fi
     ui_blank
-    printf '  1) 申请新证书\n'
-    printf '  2) 证书列表\n'
-    printf '  3) 应用证书到 sing-box\n'
-    printf '  4) 删除证书\n'
-    printf '  5) 续期（全部）\n'
-    printf '  6) 查看证书详情\n'
-    printf '  7) 续期后自动重载服务\n'
+    printf '  1) 申请域名证书（Let'"'"'s Encrypt）\n'
+    printf '  2) 生成自签证书\n'
+    printf '  9) 配置证书模式（按协议切换）\n'
+    printf '  3) 证书列表\n'
+    printf '  4) 应用证书到 sing-box\n'
+    printf '  5) 删除证书\n'
+    printf '  6) 续期（全部）\n'
+    printf '  7) 查看证书详情\n'
+    printf '  8) 续期后自动重载服务\n'
     printf '  0) 返回\n'
-    printf '请选择 [0-7]: '
+    printf '请选择 [0-8]: '
     IFS= read -r _ui_cert_menu_choice || _ui_cert_menu_choice="0"
     _ui_cert_menu_choice="${_ui_cert_menu_choice%$'\r'}"
     case "$_ui_cert_menu_choice" in
       1) ui_cert_apply_flow ;;
-      2) ui_cert_list_flow ;;
-      3) ui_cert_use_flow ;;
-      4) ui_cert_delete_flow ;;
-      5) ui_cert_renew_flow ;;
-      6) ui_cert_detail_flow ;;
-      7) cert_reloadcmd_setup && log_ok "已设置续期后自动重载" ;;
+      2) ui_cert_self_signed_flow ;;
+      9) ui_cert_mode_menu ;;
+      3) ui_cert_list_flow ;;
+      4) ui_cert_use_flow ;;
+      5) ui_cert_delete_flow ;;
+      6) ui_cert_renew_flow ;;
+      7) ui_cert_detail_flow ;;
+      8) cert_reloadcmd_setup && log_ok "已设置续期后自动重载" ;;
       0|'') return 0 ;;
       *) log_warn "无效选项" ;;
     esac
     pause
   done
+}
+
+# 菜单入口：生成自签证书（可选立即应用）
+# ---------------------------------------------------------------------------
+# 证书模式配置：按协议逐个查看/切换（REALITY 换握手域名；VMess 可开关 TLS；
+# Hysteria2 / TUIC / AnyTLS 可在自签证书与域名证书之间切换）
+# ---------------------------------------------------------------------------
+ui_cert_mode_label() {
+  local _ucml_p="$1" _ucml_mode
+  _ucml_mode="$(proto_cert_mode "$_ucml_p")"
+  case "$_ucml_p" in
+    vless-vision-reality)
+      printf 'VLESS-Vision-REALITY 协议：REALITY 握手域名 %s（免证书，不支持证书域名）' \
+        "$(state_get .reality.server_name)"
+      ;;
+    vmess-ws-tls)
+      if [ "$(proto_tls_enabled vmess-ws-tls)" != "true" ]; then
+        printf 'VMess-WS 协议：当前已关闭 TLS（开启 TLS 需选择证书模式）'
+      else
+        printf '%s 协议：证书模式 %s' "$(vmess_display_name)" "$(_ui_cert_mode_cn "$_ucml_mode")"
+      fi
+      ;;
+    hysteria2) printf 'Hysteria2 协议：证书模式 %s' "$(_ui_cert_mode_cn "$_ucml_mode")" ;;
+    tuic)      printf 'TUIC 协议：证书模式 %s' "$(_ui_cert_mode_cn "$_ucml_mode")" ;;
+    anytls)    printf 'AnyTLS 协议：证书模式 %s' "$(_ui_cert_mode_cn "$_ucml_mode")" ;;
+    *)         printf '%s 协议：证书模式 %s' "$_ucml_p" "$(_ui_cert_mode_cn "$_ucml_mode")" ;;
+  esac
+  return 0
+}
+
+_ui_cert_mode_cn() {
+  case "${1-}" in
+    self-signed) printf '自签证书（客户端跳过校验）' ;;
+    acme)        printf '域名证书（Let'"'"'s Encrypt：%s）' "$(state_get .domain)" ;;
+    *)           printf '%s' "${1-未知}" ;;
+  esac
+  return 0
+}
+
+ui_cert_mode_menu() {
+  local _ucmm_choice="" _ucmm_p _ucmm_i=0
+  local -a _ucmm_items=() _ucmm_protos=()
+  for _ucmm_p in $(proto_enabled_list); do
+    _ucmm_i=$((_ucmm_i + 1))
+    _ucmm_items+=("${_ucmm_i}|$(ui_cert_mode_label "$_ucmm_p")")
+    _ucmm_protos+=("$_ucmm_p")
+  done
+  [ "$_ucmm_i" -gt 0 ] || { log_warn "当前没有已启用的协议"; return 1; }
+
+  ui_title "配置证书模式（按协议）"
+  printf '  当前已应用证书：%s（%s）\n' "$(state_get .cert.domain)" "$(state_get .cert.source)"
+  ui_blank
+  ask_single _ucmm_choice "请选择要切换证书模式的协议" "${_ucmm_items[@]}" "0|返回"
+  [ "$_ucmm_choice" = "0" ] && return 0
+  case "$_ucmm_choice" in
+    vless-vision-reality) ui_cert_mode_reality_flow ;;
+    vmess-ws-tls)         ui_cert_mode_vmess_flow ;;
+    hysteria2|tuic|anytls) ui_cert_mode_tls_flow "$_ucmm_choice" ;;
+    *) : ;;
+  esac
+  return 0
+}
+
+# REALITY：只换握手域名（第三方站点，需要 TLS1.3 + H2），不能用自己的证书域名
+ui_cert_mode_reality_flow() {
+  local _ucmr_new=""
+  ui_blank
+  log_info "REALITY 不申请证书：它借用第三方站点的 TLS 握手（如 www.microsoft.com / apple.com）"
+  log_info "当前握手域名：$(state_get .reality.server_name):$(state_get .reality.handshake_port)"
+  ask_input _ucmr_new "请输入新的 REALITY 握手域名（留空保持不变）" ""
+  [ -n "$_ucmr_new" ] || return 0
+  validate_domain "$_ucmr_new" || { error "域名格式不正确"; return 1; }
+  if [ "$_ucmr_new" = "$(state_get .domain)" ]; then
+    error "REALITY 握手域名不能使用自己的证书域名（$(_ucmr_new)）"
+    return 1
+  fi
+  if ! ui_reality_probe "$_ucmr_new"; then
+    log_warn "$_ucmr_new 不符合 REALITY 要求（需要 TLS1.3 + HTTP/2，且不重定向）"
+    ask_yesno "仍要使用该域名吗？" n || return 0
+  fi
+  state_set_str ".reality.handshake_server" "$_ucmr_new" || return 1
+  state_set_str ".reality.server_name" "$_ucmr_new" || return 1
+  apply_change "切换 REALITY 握手域名 -> $_ucmr_new" || return 1
+  log_ok "已切换 REALITY 握手域名：$_ucmr_new"
+  log_info "记得让客户端重新导入订阅（节点链接已更新）"
+  return 0
+}
+
+# 探测第三方域名是否适合做 REALITY 握手目标
+ui_reality_probe() {
+  local _ucrp_d="$1"
+  cmd_exists openssl || { log_warn "缺少 openssl，跳过探测"; return 0; }
+  local _ucrp_out
+  _ucrp_out="$(printf '' | timeout 10 openssl s_client -connect "${_ucrp_d}:443" -servername "$_ucrp_d" \
+      -tls1_3 -alpn h2 2>/dev/null | head -30)" || true
+  printf '%s' "$_ucrp_out" | grep -q 'TLSv1.3' || return 1
+  printf '%s' "$_ucrp_out" | grep -qi 'ALPN protocol: h2' || return 1
+  return 0
+}
+
+# VMess：开启/关闭 TLS（开启时选证书模式）
+ui_cert_mode_vmess_flow() {
+  local _ucmv_choice=""
+  ui_blank
+  if [ "$(proto_tls_enabled vmess-ws-tls)" = "true" ]; then
+    log_info "当前：VMess-WS-TLS（TLS 已开启，证书模式 $(_ui_cert_mode_cn "$(proto_cert_mode vmess-ws-tls)")）"
+    ask_single _ucmv_choice "请选择要切换到的模式" \
+      "tls-acme|开启 TLS，使用域名证书（$(state_get .domain)）" \
+      "tls-self|开启 TLS，使用自签证书（客户端跳过校验）" \
+      "no-tls|关闭 TLS（纯 VMess-WS，无需证书）" \
+      "0|返回"
+  else
+    log_info "当前：VMess-WS（TLS 已关闭）"
+    ask_single _ucmv_choice "请选择要切换到的模式" \
+      "tls-acme|开启 TLS，使用域名证书（$(state_get .domain)）" \
+      "tls-self|开启 TLS，使用自签证书（客户端跳过校验）" \
+      "0|返回"
+  fi
+  case "$_ucmv_choice" in
+    0|"") return 0 ;;
+    tls-acme)
+      proto_tls_set vmess-ws-tls true || return 1
+      proto_cert_mode_set vmess-ws-tls acme || return 1
+      cert_files_for_proto vmess-ws-tls >/dev/null || { error "没有可用的域名证书，请先在【证书管理】申请"; return 1; }
+      ;;
+    tls-self)
+      proto_tls_set vmess-ws-tls true || return 1
+      proto_cert_mode_set vmess-ws-tls self-signed || return 1
+      ;;
+    no-tls)
+      proto_tls_set vmess-ws-tls false || return 1
+      ;;
+  esac
+  apply_change "切换 VMess-WS 的 TLS 模式 -> $_ucmv_choice" || return 1
+  log_ok "已切换：$(ui_cert_mode_label vmess-ws-tls)"
+  log_info "记得让客户端重新导入订阅（节点链接与端口参数已更新）"
+  return 0
+}
+
+# Hysteria2 / TUIC / AnyTLS：自签 <-> 域名证书
+ui_cert_mode_tls_flow() {
+  local _ucmt_p="$1" _ucmt_choice=""
+  ui_blank
+  log_info "当前：$(ui_cert_mode_label "$_ucmt_p")"
+  ask_single _ucmt_choice "请选择该协议的证书模式" \
+    "acme|切换到域名证书（$(state_get .domain)，Let's Encrypt）" \
+    "self-signed|切换到自签证书（无需域名解析，客户端跳过校验）" \
+    "0|返回"
+  case "$_ucmt_choice" in
+    0|"") return 0 ;;
+    acme)
+      proto_cert_mode_set "$_ucmt_p" acme || return 1
+      if ! cert_files_for_proto "$_ucmt_p" >/dev/null; then
+        proto_cert_mode_set "$_ucmt_p" auto >/dev/null 2>&1 || true
+        error "没有可用的域名证书（$_ucmt_p），请先在【证书管理】申请域名证书"
+        return 1
+      fi
+      ;;
+    self-signed)
+      proto_cert_mode_set "$_ucmt_p" self-signed || return 1
+      cert_selfsigned_paths "$(state_get .domain)" >/dev/null || { error "生成自签证书失败"; return 1; }
+      ;;
+  esac
+  apply_change "切换 $_ucmt_p 的证书模式 -> $_ucmt_choice" || return 1
+  log_ok "已切换：$(ui_cert_mode_label "$_ucmt_p")"
+  log_info "记得让客户端重新导入订阅（链接里的 insecure / skip-cert-verify 已更新）"
+  return 0
+}
+
+ui_cert_self_signed_flow() {
+  local _ui_ss_domain=""
+  ask_input _ui_ss_domain "请输入证书域名（自签证书，需与部署域名一致）" "$(state_get .domain)"
+  validate_domain "$_ui_ss_domain" || { error "域名格式不正确"; return 1; }
+  if [ "$(state_get .cert.domain)" = "$_ui_ss_domain" ] && render_cert_ready; then
+    ask_yesno "当前已应用的就是这个域名的证书，仍要重新生成自签证书吗？" n || return 0
+  fi
+  cert_self_signed "$_ui_ss_domain" || return 1
+  if ask_yesno "现在把该自签证书应用到 sing-box（并重启服务）吗？" y; then
+    cert_use "$_ui_ss_domain" || return 1
+    log_ok "已应用自签证书：$_ui_ss_domain"
+    log_info "订阅与分享链接会自动带上 insecure=1 / skip-cert-verify（客户端无需手工设置）"
+    apply_change "应用自签证书 $_ui_ss_domain" || return 1
+  fi
+  return 0
 }
 
 ui_cert_apply_flow() {

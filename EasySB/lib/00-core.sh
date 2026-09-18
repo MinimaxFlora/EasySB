@@ -53,7 +53,9 @@ log_warn()  { printf '%s[警告]%s %s\n'   "$C_YELLOW" "$C_RESET" "$*" >&2; esb_
 log_err()   { printf '%s[错误]%s %s\n'   "$C_RED"    "$C_RESET" "$*" >&2; esb_log_raw "[FAIL] $*"; return 0; }
 log_debug() {
   [ "${ESB_DEBUG:-0}" = "1" ] || return 0
-  printf '%s[调试]%s %s\n' "$C_DIM" "$C_RESET" "$*"
+  # 调试信息一律走 stderr：stdout 在渲染/订阅模块里是"数据通道"，
+  # 任何一行日志混进去都会写坏生成的 JSON/YAML/链接。
+  printf '%s[调试]%s %s\n' "$C_DIM" "$C_RESET" "$*" >&2
   esb_log_raw "[DBG ] $*"
   return 0
 }
