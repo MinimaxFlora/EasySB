@@ -621,6 +621,10 @@ esb_paths_init() {
   ESB_BACKUP_DIR="${ESB_BACKUP_DIR:-${ESB_ROOT}/var/backups/easysb}"
   ESB_WEB_ROOT="${ESB_WEB_ROOT:-${ESB_ROOT}/var/www/easysb}"
   ESB_NGINX_CONF="${ESB_NGINX_CONF:-${ESB_ROOT}/etc/nginx/conf.d/easysb.conf}"
+  # 临时目录也在这里兜底：模块被单独 source（没有走 esb_init）时，
+  # 任何 ${ESB_TMP} 使用点都会因 set -u 报 "unbound variable"
+  ESB_TMP="${ESB_TMP:-${TMPDIR:-/tmp}/easysb.$$}"
+  mkdir -p "$ESB_TMP" 2>/dev/null || true
   return 0
 }
 
@@ -2105,8 +2109,20 @@ cert_renew() {
   _cert_renew_home="$(cert_acme_home)"
   _cert_renew_acme="${_cert_renew_home}/acme.sh"
   log_info "续期证书：$_cert_renew_domain"
-  if ! _cert_acme_exec "-" "-" "续期证书 $_cert_renew_domain" "$_cert_renew_acme" \
-        --home "$_cert_renew_home" --renew -d "$_cert_renew_domain" --force; then
+  local -a _cert_renew_args=()
+  _cert_renew_args=(--home "$_cert_renew_home" --renew -d "$_cert_renew_domain")
+  # 默认不强制：acme.sh 只在确实到期/临近到期时才真正续期。
+  # （无条件 --force 会白白消耗 Let's Encrypt 的签发频率额度，真机上实测过会被拒。）
+  if [ "${ESB_CERT_FORCE:-0}" = "1" ]; then
+    _cert_renew_args+=(--force)
+    log_info "ESB_CERT_FORCE=1：强制续期"
+  fi
+  if ! _cert_acme_exec "-" "-" "续期证书 $_cert_renew_domain" "$_cert_renew_acme" "${_cert_renew_args[@]}"; then
+    # 未到续期时间时 acme.sh 也会返回非 0（Skipping），这不是错误
+    if _cert_acme_has_cert "$_cert_renew_domain"; then
+      log_warn "未到续期时间（剩余 $(cert_expiring_days "$_cert_renew_domain") 天），本次无需续期"
+      return 0
+    fi
     error "续期失败：$_cert_renew_domain（可尝试重新申请：cert_apply $_cert_renew_domain <mode>）"
     return 1
   fi

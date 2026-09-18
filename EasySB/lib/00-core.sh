@@ -550,6 +550,10 @@ esb_paths_init() {
   ESB_BACKUP_DIR="${ESB_BACKUP_DIR:-${ESB_ROOT}/var/backups/easysb}"
   ESB_WEB_ROOT="${ESB_WEB_ROOT:-${ESB_ROOT}/var/www/easysb}"
   ESB_NGINX_CONF="${ESB_NGINX_CONF:-${ESB_ROOT}/etc/nginx/conf.d/easysb.conf}"
+  # 临时目录也在这里兜底：模块被单独 source（没有走 esb_init）时，
+  # 任何 ${ESB_TMP} 使用点都会因 set -u 报 "unbound variable"
+  ESB_TMP="${ESB_TMP:-${TMPDIR:-/tmp}/easysb.$$}"
+  mkdir -p "$ESB_TMP" 2>/dev/null || true
   return 0
 }
 
