@@ -151,9 +151,9 @@ func TestActionableStubSetsToast(t *testing.T) {
 func TestFormSubmit(t *testing.T) {
 	a := newTestApp(t)
 	var got string
-	a.openForm("UUID", "enter value", "abc", "", func(a *App, v string) error {
+	a.openForm("UUID", "enter value", "abc", "", func(a *App, v string) (tea.Cmd, error) {
 		got = v
-		return nil
+		return nil, nil
 	})
 
 	for _, r := range "def" {
@@ -173,8 +173,8 @@ func TestFormSubmit(t *testing.T) {
 
 func TestFormValidationKeepsOpen(t *testing.T) {
 	a := newTestApp(t)
-	a.openForm("title", "prompt", "", "", func(a *App, v string) error {
-		return errors.New("bad value")
+	a.openForm("title", "prompt", "", "", func(a *App, v string) (tea.Cmd, error) {
+		return nil, errors.New("bad value")
 	})
 
 	m, _ := a.Update(press(tea.KeyEnter))

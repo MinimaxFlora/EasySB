@@ -39,6 +39,24 @@ func TestPathsAndDomains(t *testing.T) {
 	}
 }
 
+func TestACMEInstalled(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if ACMEInstalled() {
+		t.Fatal("expected acme.sh to be missing")
+	}
+	dir := filepath.Join(home, ".acme.sh")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "acme.sh"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if !ACMEInstalled() {
+		t.Fatal("expected acme.sh to be detected")
+	}
+}
+
 func TestGenerateSelfSigned(t *testing.T) {
 	if _, err := exec.LookPath("openssl"); err != nil {
 		t.Skip("openssl not available")

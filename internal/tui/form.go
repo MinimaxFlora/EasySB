@@ -11,8 +11,8 @@ import (
 )
 
 // formSubmit applies a submitted value. Returning an error keeps the form open
-// and shows the message to the user.
-type formSubmit func(a *App, value string) error
+// and shows the message; a non-nil command is dispatched after the form closes.
+type formSubmit func(a *App, value string) (tea.Cmd, error)
 
 type formModel struct {
 	title  string

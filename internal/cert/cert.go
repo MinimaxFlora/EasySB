@@ -5,6 +5,8 @@ package cert
 import (
 	"context"
 	"errors"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -132,6 +134,103 @@ func runOpenSSL(ctx context.Context, args ...string) error {
 		return errors.New("openssl " + args[0] + ": " + msg)
 	}
 	return nil
+}
+
+// ACMEInstalled reports whether the acme.sh script is available.
+func ACMEInstalled() bool {
+	for _, p := range []string{ACMESh(), filepath.Join(ACMEDir(), "acme.sh")} {
+		if info, err := os.Stat(p); err == nil && info.Mode()&0o111 != 0 {
+			return true
+		}
+	}
+	return false
+}
+
+const acmeInstallerURL = "https://get.acme.sh"
+
+// EnsureACME installs acme.sh when it is missing, using the given account email.
+func EnsureACME(ctx context.Context, email string, log func(string)) error {
+	if ACMEInstalled() {
+		return nil
+	}
+	if strings.TrimSpace(email) == "" {
+		return errors.New("acme email is required")
+	}
+	installer := filepath.Join(os.TempDir(), "acme-install.sh")
+	log("GET " + acmeInstallerURL)
+	if err := downloadFile(ctx, acmeInstallerURL, installer); err != nil {
+		return err
+	}
+
+	cmd := exec.CommandContext(ctx, "sh", installer, "email="+email)
+	cmd.Env = append(os.Environ(), "LC_ALL=C")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return errors.New("install acme.sh: " + strings.TrimSpace(string(out)))
+	}
+	if !ACMEInstalled() {
+		return errors.New("acme.sh install did not produce a script")
+	}
+	return nil
+}
+
+// Issue requests a certificate with the acme.sh standalone method.
+func Issue(ctx context.Context, domain string, log func(string)) error {
+	if !ACMEInstalled() {
+		return errors.New("acme.sh is not installed")
+	}
+	log("$ acme.sh --issue --standalone -d " + domain)
+	cmd := exec.CommandContext(ctx, ACMESh(), "--issue", "--standalone", "-d", domain, "--keylength", "ec-256", "--force")
+	cmd.Env = append(os.Environ(), "LC_ALL=C")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return errors.New("issue: " + lastLine(string(out)))
+	}
+	return nil
+}
+
+// Remove deletes a certificate managed by acme.sh.
+func Remove(ctx context.Context, domain string) error {
+	if !ACMEInstalled() {
+		return nil
+	}
+	cmd := exec.CommandContext(ctx, ACMESh(), "--remove", "-d", domain, "--ecc")
+	cmd.Env = append(os.Environ(), "LC_ALL=C")
+	_, err := cmd.CombinedOutput()
+	return err
+}
+
+func downloadFile(ctx context.Context, url, dest string) error {
+	cctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(cctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("User-Agent", "EasySB")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return errors.New("download " + url + ": " + resp.Status)
+	}
+	f, err := os.Create(dest)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = io.Copy(f, resp.Body)
+	return err
+}
+
+func lastLine(s string) string {
+	lines := strings.Split(strings.TrimSpace(s), "\n")
+	if len(lines) == 0 {
+		return s
+	}
+	return lines[len(lines)-1]
 }
 
 func exists(path string) bool {

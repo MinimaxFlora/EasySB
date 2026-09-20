@@ -165,10 +165,10 @@ func buildDomain() *menu {
 		id:    "domain",
 		title: tk("domain_title"),
 		nodes: []*node{
-			leaf("domain-issue", "domain_issue", "domain_prompt", stub("domain_installing_acme")),
-			leaf("domain-list", "domain_list", "domain_empty", stub("domain_list")),
-			leaf("domain-switch", "domain_switch", "domain_select", stub("domain_switch")),
-			leaf("domain-remove", "domain_remove", "domain_remove_confirm", stub("domain_remove")),
+			leaf("domain-issue", "domain_issue", "domain_prompt", issueCertAction()),
+			leaf("domain-list", "domain_list", "domain_empty", listCerts()),
+			leaf("domain-switch", "domain_switch", "domain_select", switchCertAction()),
+			leaf("domain-remove", "domain_remove", "domain_remove_confirm", removeCertAction()),
 		},
 	}
 }

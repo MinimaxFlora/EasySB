@@ -172,14 +172,19 @@ func (a *App) handleFormKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		a.form = nil
 		return a, nil
 	case "enter":
+		var cmd tea.Cmd
 		if f.submit != nil {
-			if err := f.submit(a, f.input.Value()); err != nil {
+			var err error
+			cmd, err = f.submit(a, f.input.Value())
+			if err != nil {
 				f.err = err.Error()
 				return a, nil
 			}
 		}
-		a.form = nil
-		return a, collectStatus(a.scriptVersion)
+		if a.form == f {
+			a.form = nil
+		}
+		return a, tea.Batch(cmd, collectStatus(a.scriptVersion))
 	default:
 		return a, f.update(msg)
 	}

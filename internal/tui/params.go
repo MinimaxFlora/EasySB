@@ -19,20 +19,20 @@ func editUUID() actionFunc {
 	return func(a *App) tea.Cmd {
 		lang := a.lang
 		cfg := state.Load()
-		a.openForm(lang.T("param_uuid"), lang.T("param_uuid_prompt"), cfg.UUID, lang.T("param_uuid_gen"), func(a *App, value string) error {
+		a.openForm(lang.T("param_uuid"), lang.T("param_uuid_prompt"), cfg.UUID, lang.T("param_uuid_gen"), func(a *App, value string) (tea.Cmd, error) {
 			value = strings.TrimSpace(value)
 			if value == "" {
 				value = core.GenerateUUID(context.Background())
 			}
 			if value == "" {
-				return errors.New(lang.T("invalid"))
+				return nil, errors.New(lang.T("invalid"))
 			}
 			cfg.UUID = value
 			if err := cfg.Save(); err != nil {
-				return err
+				return nil, err
 			}
 			a.setToast(lang.T("node_params_saved"), false)
-			return nil
+			return nil, nil
 		})
 		return nil
 	}
@@ -43,20 +43,20 @@ func editPassword() actionFunc {
 	return func(a *App) tea.Cmd {
 		lang := a.lang
 		cfg := state.Load()
-		a.openForm(lang.T("param_password"), lang.T("param_pw_prompt"), cfg.Password, lang.T("param_pw_gen"), func(a *App, value string) error {
+		a.openForm(lang.T("param_password"), lang.T("param_pw_prompt"), cfg.Password, lang.T("param_pw_gen"), func(a *App, value string) (tea.Cmd, error) {
 			value = strings.TrimSpace(value)
 			if value == "" {
 				value = secret.Password()
 			}
 			if value == "" {
-				return errors.New(lang.T("invalid"))
+				return nil, errors.New(lang.T("invalid"))
 			}
 			cfg.Password = value
 			if err := cfg.Save(); err != nil {
-				return err
+				return nil, err
 			}
 			a.setToast(lang.T("node_params_saved"), false)
-			return nil
+			return nil, nil
 		})
 		return nil
 	}
@@ -68,20 +68,20 @@ func editHop() actionFunc {
 		lang := a.lang
 		cfg := state.Load()
 		prompt := fmt.Sprintf(lang.T("param_hop_prompt"), state.DefaultHopRange)
-		a.openForm(lang.T("param_hop"), prompt, cfg.HopRange, "", func(a *App, value string) error {
+		a.openForm(lang.T("param_hop"), prompt, cfg.HopRange, "", func(a *App, value string) (tea.Cmd, error) {
 			value = strings.TrimSpace(value)
 			if value == "" {
 				value = state.DefaultHopRange
 			}
 			if !validHopRange(value) {
-				return errors.New(lang.T("param_invalid_range"))
+				return nil, errors.New(lang.T("param_invalid_range"))
 			}
 			cfg.HopRange = value
 			if err := cfg.Save(); err != nil {
-				return err
+				return nil, err
 			}
 			a.setToast(lang.T("node_params_saved"), false)
-			return nil
+			return nil, nil
 		})
 		return nil
 	}
@@ -107,26 +107,26 @@ func editPort(proto string) actionFunc {
 		lang := a.lang
 		cfg := state.Load()
 		prompt := fmt.Sprintf(lang.T("param_port_prompt"), cfg.Ports[proto])
-		a.openForm(state.Labels[proto], prompt, cfg.Ports[proto], "", func(a *App, value string) error {
+		a.openForm(state.Labels[proto], prompt, cfg.Ports[proto], "", func(a *App, value string) (tea.Cmd, error) {
 			value = strings.TrimSpace(value)
 			if value == "" {
 				value = cfg.Ports[proto]
 			}
 			n, err := strconv.Atoi(value)
 			if err != nil || n < 1 || n > 65535 {
-				return errors.New(lang.T("port_invalid"))
+				return nil, errors.New(lang.T("port_invalid"))
 			}
 			for _, k := range state.Keys {
 				if k != proto && cfg.Ports[k] == value {
-					return errors.New(lang.T("port_conflict"))
+					return nil, errors.New(lang.T("port_conflict"))
 				}
 			}
 			cfg.Ports[proto] = value
 			if err := cfg.Save(); err != nil {
-				return err
+				return nil, err
 			}
 			a.setToast(lang.T("node_params_saved"), false)
-			return nil
+			return nil, nil
 		})
 		return nil
 	}
@@ -157,17 +157,17 @@ func editSNI() actionFunc {
 			current = state.DefaultSNI
 		}
 		prompt := fmt.Sprintf(lang.T("param_sni_prompt"), current)
-		a.openForm(lang.T("param_sni"), prompt, current, "", func(a *App, value string) error {
+		a.openForm(lang.T("param_sni"), prompt, current, "", func(a *App, value string) (tea.Cmd, error) {
 			value = strings.TrimSpace(value)
 			if value == "" {
 				value = current
 			}
 			cfg.RealitySNI = value
 			if err := cfg.Save(); err != nil {
-				return err
+				return nil, err
 			}
 			a.setToast(lang.T("node_params_saved"), false)
-			return nil
+			return nil, nil
 		})
 		return nil
 	}

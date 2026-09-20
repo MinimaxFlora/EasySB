@@ -113,6 +113,30 @@ func hasServerConfig() bool {
 	return err == nil && info.Size() > 0
 }
 
+// renderConfig resolves the active certificate and renders config.json bytes.
+func renderConfig(cfg state.Config) ([]byte, error) {
+	pair, err := cert.ResolveActive(cfg.Domain)
+	if err != nil {
+		return nil, err
+	}
+	params := config.ParamsFromState(cfg)
+	params.CertFullchain = pair.Fullchain
+	params.CertKey = pair.Key
+	return config.Build(params)
+}
+
+// writeConfig renders and writes config.json to the working directory.
+func writeConfig(cfg state.Config) error {
+	data, err := renderConfig(cfg)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(sysinfo.WorkDir, 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(sysinfo.ConfigJSON, data, 0o644)
+}
+
 func showSubscriptionURL() actionFunc {
 	return func(a *App) tea.Cmd {
 		lang := a.lang
@@ -210,11 +234,7 @@ func deployNode() actionFunc {
 			if cfg.Domain == "" && cfg.CertDomain != "" {
 				cfg.Domain = cfg.CertDomain
 			}
-			certPair, err := cert.ResolveActive(cfg.Domain)
-			if err != nil {
-				return err
-			}
-			if certPair.SelfSigned && cfg.Domain == "" {
+			if cfg.Domain == "" && config.ParamsFromState(cfg).NeedsCert() {
 				log(lang.T("node_need_domain"))
 				log("→ self-signed placeholder certificate")
 			}
@@ -226,17 +246,7 @@ func deployNode() actionFunc {
 				}
 			}
 
-			params := config.ParamsFromState(cfg)
-			params.CertFullchain = certPair.Fullchain
-			params.CertKey = certPair.Key
-			data, err := config.Build(params)
-			if err != nil {
-				return err
-			}
-			if err := os.MkdirAll(sysinfo.WorkDir, 0o755); err != nil {
-				return err
-			}
-			if err := os.WriteFile(sysinfo.ConfigJSON, data, 0o644); err != nil {
+			if err := writeConfig(cfg); err != nil {
 				return err
 			}
 			log("write " + sysinfo.ConfigJSON)
