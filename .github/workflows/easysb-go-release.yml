@@ -21,6 +21,12 @@ on:
 permissions:
   contents: write
 
+# Only the newest commit may publish, so an older run can never overwrite the
+# release assets after a newer one.
+concurrency:
+  group: easysb-go-release
+  cancel-in-progress: true
+
 env:
   TZ: Asia/Shanghai
   RELEASE_TAG: easysb-go
