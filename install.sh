@@ -221,7 +221,7 @@ ensure_go() {
 
 # 官方 tarball 兜底 / Fallback: official tarball
 _install_go_tarball() {
-  local goversion='1.25.6' goarch tgz tmp
+  local goversion='1.27.1' goarch tgz tmp
   case "$ARCH" in
     amd64) goarch='amd64' ;;
     arm64) goarch='arm64' ;;
@@ -260,7 +260,7 @@ build_from_source() {
   [ -f "$srcdir/go.mod" ] || { warn "$(say '未找到源码' 'source tree not found')"; return 1; }
   ensure_go
   say "正在从源码构建" "Building from source"
-  ( cd "$srcdir" && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$out" ./cmd/easysb ) || return 1
+  ( cd "$srcdir" && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$out" . ) || return 1
   [ -s "$out" ] || return 1
   return 0
 }

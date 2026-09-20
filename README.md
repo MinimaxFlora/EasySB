@@ -58,8 +58,9 @@ EasySB 是一个面向 Linux VPS 的 sing-box 五合一部署脚本，把协议�
 
 ```text
 .
-├── cmd/easysb/                   # Go 入口（TUI 主程序）
-├── internal/                     # Go 实现：i18n / theme / icons / sysinfo / tui
+├── main.go                       # Go 入口（TUI 主程序）
+├── install.sh                    # 一键安装脚本（依赖 / 二进制 / Nerd Font）
+├── internal/                     # Go 实现：i18n / theme / icons / sysinfo / state / subscribe / tui
 ├── go.mod                        # Go module 定义
 ├── legacy/EasySB/                # 归档的 bash 版一键部署脚本
 │   ├── lib/                      # 源码模块，编号顺序即合成顺序（12 个）
@@ -293,11 +294,11 @@ NAT 规则重启即失效，因此脚本会生成开机恢复单元：
 
 ## 开发者：构建与测试
 
-Go 版（主实现）：
+Go 版（主实现，需要 Go 1.27.1，`go.mod` 已声明 `go 1.27.1`，启用 `GOTOOLCHAIN=auto` 时会自动获取该工具链）：
 
 ```bash
 # 编译二进制
-go build -o easysb ./cmd/easysb
+go build -o easysb .
 
 # 运行测试
 go test ./...

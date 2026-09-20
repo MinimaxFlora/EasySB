@@ -58,8 +58,9 @@ EasySB is a 5-in-1 sing-box deployment script for Linux VPS. It brings protocol 
 
 ```text
 .
-├── cmd/easysb/                   # Go entrypoint (TUI)
-├── internal/                     # Go packages: i18n / theme / icons / sysinfo / tui
+├── main.go                       # Go entrypoint (TUI)
+├── install.sh                    # One-click installer (deps / binary / Nerd Font)
+├── internal/                     # Go packages: i18n / theme / icons / sysinfo / state / subscribe / tui
 ├── go.mod                        # Go module definition
 ├── legacy/EasySB/                # Archived bash implementation
 │   ├── lib/                      # Source modules, order equals composition order (12)
@@ -287,11 +288,11 @@ The unit restores rules via `bash /etc/sing-box/easysb.sh --apply-firewall`. It 
 
 ## Developers: Build and Test
 
-Go implementation (primary):
+Go implementation (primary, requires Go 1.27.1; `go.mod` declares `go 1.27.1`, and `GOTOOLCHAIN=auto` fetches that toolchain automatically):
 
 ```bash
 # Build the binary
-go build -o easysb ./cmd/easysb
+go build -o easysb .
 
 # Run tests
 go test ./...

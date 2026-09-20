@@ -1,6 +1,6 @@
 name: Build EasySB Go binary
 
-# 源码：根目录 Go module（cmd/easysb、internal/**）
+# 源码：根目录 Go module（main.go、internal/**）
 # 产物：easysb-linux-<arch> 静态二进制，以固定 tag `easysb-go` 发布
 # 安装：bash install.sh（默认优先下载该 tag 下的二进制，失败时回退源码构建）
 
@@ -74,7 +74,7 @@ jobs:
           set -euo pipefail
           go build -trimpath \
             -ldflags "-s -w -X main.version=${{ steps.ver.outputs.version }}" \
-            -o "dist/easysb-linux-${{ matrix.asset }}" ./cmd/easysb
+            -o "dist/easysb-linux-${{ matrix.asset }}" .
           ls -lh "dist/easysb-linux-${{ matrix.asset }}"
 
       - name: 上传构建产物
