@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -9,6 +10,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/MinimaxFlora/EasySB/internal/i18n"
+	"github.com/MinimaxFlora/EasySB/internal/state"
 	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
 )
 
@@ -359,6 +361,18 @@ func TestDashboardFitsNarrowWidths(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestPublishSubscriptionNeedsHost(t *testing.T) {
+	var logged []string
+	err := publishSubscription(context.Background(), state.Config{},
+		func(s string) { logged = append(logged, s) }, i18n.Chinese)
+	if err != nil {
+		t.Fatalf("publishSubscription returned %v", err)
+	}
+	if len(logged) == 0 || !strings.Contains(logged[0], i18n.Chinese.T("sub_need_domain")) {
+		t.Fatalf("expected a need-domain hint, got %v", logged)
 	}
 }
 

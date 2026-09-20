@@ -308,6 +308,9 @@ func deployNode() actionFunc {
 			}
 
 			log(lang.T("node_deploy_done"))
+			if err := publishSubscription(ctx, cfg, log, lang); err != nil {
+				log(lang.T("sub_need_nginx") + ": " + err.Error())
+			}
 			return nil
 		})
 	}

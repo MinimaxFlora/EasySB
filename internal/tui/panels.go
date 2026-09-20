@@ -61,8 +61,12 @@ func (a *App) overviewRows(width int) []string {
 	}
 	nodeStyle := func(v string) string { return a.stateValue(v, nodeOK, false, nodeKnown) }
 
+	// The EasySB version shares the stable-channel green so the two version
+	// readouts look consistent.
+	versionStyle := func(v string) string { return a.palette.Colored(a.palette.OK, v) }
+
 	return []string{
-		a.styledTwoCols(width, a.lang.T("ov_version"), a.scriptVersion, a.palette.Value,
+		a.styledTwoCols(width, a.lang.T("ov_version"), a.scriptVersion, versionStyle,
 			a.lang.T("ov_core"), corePlain, coreStyle),
 		a.styledTwoCols(width,
 			a.lang.T("ov_service"), "● "+a.lang.T(svcKey), svcStyle,

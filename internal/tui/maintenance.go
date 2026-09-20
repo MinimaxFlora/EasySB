@@ -8,12 +8,38 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/MinimaxFlora/EasySB/internal/firewall"
+	"github.com/MinimaxFlora/EasySB/internal/i18n"
 	"github.com/MinimaxFlora/EasySB/internal/nginx"
 	"github.com/MinimaxFlora/EasySB/internal/state"
 	"github.com/MinimaxFlora/EasySB/internal/subscribe"
 	"github.com/MinimaxFlora/EasySB/internal/uninstall"
 	"github.com/MinimaxFlora/EasySB/internal/update"
 )
+
+// publishSubscription installs nginx when it is missing, renders subscribe.json
+// plus the nginx site, and reports the public subscription URL. It is shared by
+// node deployment and the manual regenerate action.
+func publishSubscription(ctx context.Context, cfg state.Config, log func(string), lang i18n.Lang) error {
+	if cfg.Host() == "" {
+		log(lang.T("sub_need_domain"))
+		return nil
+	}
+	if err := nginx.Ensure(ctx, log); err != nil {
+		return err
+	}
+	subPath, sharePath, err := subscribe.GenerateFiles(cfg)
+	if err != nil {
+		return err
+	}
+	log(lang.T("sub_generated") + ": " + subPath)
+	log(lang.T("sub_links") + ": " + sharePath)
+	if err := nginx.WriteSite(cfg); err != nil {
+		return err
+	}
+	log(lang.T("svc_nginx_ok"))
+	log(lang.T("sub_url") + ": " + subscribe.URL(cfg))
+	return nil
+}
 
 // regenerateSubscription renders subscribe.json and publishes it over nginx.
 func regenerateSubscription() actionFunc {
@@ -28,21 +54,7 @@ func regenerateSubscription() actionFunc {
 			if cfg.Host() == "" {
 				return errors.New(lang.T("sub_need_domain"))
 			}
-			if err := nginx.Ensure(ctx, log); err != nil {
-				return err
-			}
-			subPath, sharePath, err := subscribe.GenerateFiles(cfg)
-			if err != nil {
-				return err
-			}
-			log(lang.T("sub_generated") + ": " + subPath)
-			log(lang.T("sub_links") + ": " + sharePath)
-			if err := nginx.WriteSite(cfg); err != nil {
-				return err
-			}
-			log(lang.T("svc_nginx_ok"))
-			log(lang.T("sub_url") + ": " + subscribe.URL(cfg))
-			return nil
+			return publishSubscription(ctx, cfg, log, lang)
 		})
 	}
 }

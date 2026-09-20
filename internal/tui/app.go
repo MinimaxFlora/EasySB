@@ -472,28 +472,39 @@ func (a *App) dashboard() string {
 	if showQuote {
 		used++
 	}
-	leftover := budget - used
 
 	type row struct {
-		text    string
-		sep     bool
-		rule    bool
-		blankOK bool
+		text string
+		sep  bool
+		rule bool
+		gap  bool
 	}
 	var rows []row
-	addText := func(s string, blankOK bool) { rows = append(rows, row{text: s, blankOK: blankOK}) }
-	addSection := func(titleKey string, lines []string) {
+	body := func(text string, gap bool) { rows = append(rows, row{text: text, gap: gap}) }
+	// The tagline rule already closes the header, so the first section or menu
+	// divider does not need a second line right beneath it.
+	sepSeen := false
+	addSep := func() {
+		if !sepSeen {
+			sepSeen = true
+			return
+		}
 		rows = append(rows, row{sep: true})
-		addText(a.sectionTitle(titleKey), len(lines) > 0)
-		for i, l := range lines {
-			addText(l, i == len(lines)-1)
+	}
+	// Each section row is eligible for a trailing blank so the panels breathe
+	// like the menu does.
+	addSection := func(titleKey string, lines []string) {
+		addSep()
+		body(a.sectionTitle(titleKey), false)
+		for _, l := range lines {
+			body(l, true)
 		}
 	}
 
 	for i := 0; i < len(logo); i++ {
-		addText(logo[i], i == len(logo)-1)
+		body(logo[i], false)
 	}
-	addText(a.taglineLine(inner), true)
+	body(a.taglineLine(inner), false)
 	rows = append(rows, row{rule: true})
 	if showOverview {
 		addSection("panel_overview", a.overviewRows(inner))
@@ -505,31 +516,46 @@ func (a *App) dashboard() string {
 		addSection("panel_node", a.nodeSection(inner)[1:])
 	}
 
-	rows = append(rows, row{sep: true})
+	addSep()
 	menuTitle := "  " + a.palette.Bold(a.palette.Primary, a.current().title(a.lang))
 	items, hidden := a.menuViewport(menuRows, inner, a.menuLabelColumn())
 	if hidden > 0 {
 		menuTitle += a.palette.Dim(fmt.Sprintf("  (+%d)", hidden))
 	}
-	addText(menuTitle, true)
-	// Draw the breathing room only when every gap fits, so the spacing stays
-	// even instead of opening a single random hole in the list.
-	gaps := 0
-	if len(items) > 1 && leftover >= len(items)-1 {
-		gaps = len(items) - 1
-		leftover -= gaps
-	}
+	body(menuTitle, false)
 	for i, l := range items {
-		if i > 0 && i <= gaps {
-			addText("", false)
-		}
-		addText(l, i == len(items)-1)
+		body(l, i < len(items)-1)
 	}
 	if a.hasNavRow() {
-		addText(a.rowLine(a.onNavRow(), a.iconSet.Arrow+" "+a.navLabel(), inner), true)
+		body(a.rowLine(a.onNavRow(), a.iconSet.Arrow+" "+a.navLabel(), inner), false)
 	}
 	if showQuote {
-		addText(a.quoteLine(inner), false)
+		body(a.quoteLine(inner), false)
+	}
+
+	// Spread the leftover rows evenly over every eligible gap, so no single
+	// section hoards the whitespace. Recompute from the rows actually built,
+	// since the first divider is folded into the header rule.
+	leftover := budget - len(rows)
+	if leftover < 0 {
+		leftover = 0
+	}
+	gapIndex := make([]int, len(rows))
+	gapCount := 0
+	for i, r := range rows {
+		if r.gap {
+			gapCount++
+			gapIndex[i] = gapCount
+		}
+	}
+	extra := make([]int, len(rows))
+	if gapCount > 0 && leftover > 0 {
+		for i, g := range gapIndex {
+			if g == 0 {
+				continue
+			}
+			extra[i] = g*leftover/gapCount - (g-1)*leftover/gapCount
+		}
 	}
 
 	out := []string{theme.TopRule(w, a.palette.Border)}
@@ -543,9 +569,8 @@ func (a *App) dashboard() string {
 			continue
 		}
 		out = append(out, theme.FrameLine(r.text, w, a.palette.Border))
-		if r.blankOK && leftover > 0 && i < len(rows)-1 {
+		for n := 0; n < extra[i]; n++ {
 			out = append(out, theme.FrameLine("", w, a.palette.Border))
-			leftover--
 		}
 	}
 	out = append(out, theme.BottomRule(w, a.palette.Border))
