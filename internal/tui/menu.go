@@ -5,6 +5,7 @@ import (
 
 	"github.com/MinimaxFlora/EasySB/internal/i18n"
 	"github.com/MinimaxFlora/EasySB/internal/icons"
+	"github.com/MinimaxFlora/EasySB/internal/state"
 )
 
 type actionFunc func(a *App) tea.Cmd
@@ -79,6 +80,7 @@ func buildNode() *menu {
 		title: tk("node_title"),
 		nodes: []*node{
 			iconLeaf("node-deploy", "node_deploy", "node_deploying", func(s icons.Set) string { return s.Rocket }, deployNode()),
+			{id: "node-protocols", label: tk("node_protocols"), desc: tk("node_select_protos"), icon: func(s icons.Set) string { return s.Service }, sub: buildProtocols()},
 			iconLeaf("node-params", "node_params", "param_ports", func(s icons.Set) string { return s.Tool }, func(a *App) tea.Cmd {
 				a.push(buildParams())
 				return nil
@@ -87,41 +89,56 @@ func buildNode() *menu {
 	}
 }
 
+// buildProtocols renders the protocol enable/disable list. Labels read the live
+// state so the checkbox reflects the latest toggle.
+func buildProtocols() *menu {
+	nodes := make([]*node, 0, len(state.Keys))
+	for _, key := range state.Keys {
+		key := key
+		nodes = append(nodes, &node{
+			id: "proto-" + key,
+			label: func(i18n.Lang) string {
+				mark := "[ ]"
+				if state.Load().Enabled[key] {
+					mark = "[x]"
+				}
+				return mark + " " + state.Labels[key]
+			},
+			desc:   tk("node_select_protos"),
+			action: toggleProtocol(key),
+		})
+	}
+	return &menu{id: "protocols", title: tk("node_protocols"), nodes: nodes}
+}
+
 func buildParams() *menu {
 	return &menu{
 		id:    "params",
 		title: tk("node_params"),
 		nodes: []*node{
-			leaf("param-uuid", "param_uuid", "param_uuid_prompt", stub("param_uuid")),
-			leaf("param-password", "param_password", "param_pw_prompt", stub("param_password")),
-			leaf("param-hop", "param_hop", "param_hop_prompt", stub("param_hop")),
+			leaf("param-uuid", "param_uuid", "param_uuid_prompt", editUUID()),
+			leaf("param-password", "param_password", "param_pw_prompt", editPassword()),
+			leaf("param-hop", "param_hop", "param_hop_prompt", editHop()),
 			{id: "param-ports", label: tk("param_ports"), desc: tk("param_port_prompt"), sub: buildPorts()},
 			{id: "param-sni", label: tk("param_sni"), desc: tk("param_sni_preset"), sub: buildSNI()},
-			leaf("param-privkey", "param_privkey", "param_install_core_first", stub("param_privkey")),
-			leaf("param-shortid", "param_shortid", "param_regen_shortid", stub("param_shortid")),
+			leaf("param-privkey", "param_privkey", "param_install_core_first", regenRealityKeys()),
+			leaf("param-shortid", "param_shortid", "param_regen_shortid", regenShortID()),
 		},
 	}
 }
 
 func buildPorts() *menu {
-	ports := []struct{ proto, label string }{
-		{"anytls", "AnyTLS"},
-		{"hysteria2", "Hysteria2"},
-		{"tuic", "TUIC v5"},
-		{"vless-reality", "VLESS-Vision-Reality"},
-		{"vmess-ws-tls", "VMess-WebSocket-TLS"},
-	}
-	nodes := make([]*node, 0, len(ports))
-	for _, p := range ports {
-		p := p
+	nodes := make([]*node, 0, len(state.Keys))
+	for _, key := range state.Keys {
+		key := key
 		nodes = append(nodes, &node{
-			id:    "port-" + p.proto,
-			label: func(i18n.Lang) string { return p.label },
-			desc:  tk("param_port_prompt"),
-			action: func(a *App) tea.Cmd {
-				a.setToast(a.lang.T("param_ports")+" · "+p.label+" · "+a.lang.T("action_todo"), true)
-				return nil
+			id: "port-" + key,
+			label: func(i18n.Lang) string {
+				port := state.Load().Ports[key]
+				return state.Labels[key] + " : " + port
 			},
+			desc:   tk("param_port_prompt"),
+			action: editPort(key),
 		})
 	}
 	return &menu{id: "ports", title: tk("param_ports"), nodes: nodes}
@@ -133,16 +150,13 @@ func buildSNI() *menu {
 	for _, preset := range presets {
 		preset := preset
 		nodes = append(nodes, &node{
-			id:    "sni-" + preset,
-			label: func(i18n.Lang) string { return preset },
-			desc:  tk("param_sni_preset"),
-			action: func(a *App) tea.Cmd {
-				a.setToast(a.lang.T("param_sni")+" = "+preset+" · "+a.lang.T("action_todo"), true)
-				return nil
-			},
+			id:     "sni-" + preset,
+			label:  func(i18n.Lang) string { return preset },
+			desc:   tk("param_sni_preset"),
+			action: setSNI(preset),
 		})
 	}
-	nodes = append(nodes, leaf("sni-custom", "param_sni_custom", "param_sni_prompt", stub("param_sni")))
+	nodes = append(nodes, leaf("sni-custom", "param_sni_custom", "param_sni_prompt", editSNI()))
 	return &menu{id: "sni", title: tk("param_sni"), nodes: nodes}
 }
 

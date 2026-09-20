@@ -29,6 +29,7 @@ type App struct {
 	toast         string
 	toastErr      bool
 	task          *progressModel
+	form          *formModel
 }
 
 func New(scriptVersion string, lang i18n.Lang) *App {
@@ -152,6 +153,38 @@ func (a *App) startTask(title string, fn taskFunc) tea.Cmd {
 	return p.Init()
 }
 
+// openForm shows a single-value text prompt over the dashboard.
+func (a *App) openForm(title, prompt, initial, hint string, submit formSubmit) {
+	f := newForm(title, prompt, initial, hint, submit)
+	f.resize(a.width)
+	a.form = f
+}
+
+func (a *App) handleFormKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	f := a.form
+	if f == nil {
+		return a, nil
+	}
+	switch strings.ToLower(msg.String()) {
+	case "ctrl+c":
+		return a, quit()
+	case "esc":
+		a.form = nil
+		return a, nil
+	case "enter":
+		if f.submit != nil {
+			if err := f.submit(a, f.input.Value()); err != nil {
+				f.err = err.Error()
+				return a, nil
+			}
+		}
+		a.form = nil
+		return a, collectStatus(a.scriptVersion)
+	default:
+		return a, f.update(msg)
+	}
+}
+
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -159,11 +192,24 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.task != nil {
 			a.task.resize(msg.Width, msg.Height)
 		}
+		if a.form != nil {
+			a.form.resize(msg.Width)
+		}
 		return a, nil
 	case statusMsg:
 		a.status = sysinfo.Status(msg)
 		a.ready = true
 		return a, nil
+	}
+
+	if a.form != nil {
+		if key, ok := msg.(tea.KeyPressMsg); ok {
+			return a.handleFormKey(key)
+		}
+		return a, a.form.update(msg)
+	}
+
+	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		return a.handleKey(msg)
 	case spinner.TickMsg:
@@ -235,13 +281,40 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 func (a *App) View() tea.View {
-	content := a.dashboard()
-	if a.task != nil {
+	var content string
+	switch {
+	case a.form != nil:
+		content = a.formScreen()
+	case a.task != nil:
 		content = a.task.View(a.width, a.height, a.palette, a.lang, a.iconSet)
+	default:
+		content = a.dashboard()
 	}
 	v := tea.NewView(content)
 	v.AltScreen = true
 	return v
+}
+
+func (a *App) formScreen() string {
+	w := a.width
+	if w <= 0 {
+		w = 96
+	}
+	h := a.height
+	if h <= 0 {
+		h = 32
+	}
+	out := strings.Split(a.form.View(w, a.palette, a.lang), "\n")
+	bodyHeight := h - 2
+	if bodyHeight < 4 {
+		bodyHeight = 4
+	}
+	for len(out) < bodyHeight {
+		out = append(out, "")
+	}
+	out = append(out, theme.Rule(w, a.palette.Border))
+	out = append(out, a.statusBar(w))
+	return strings.Join(out, "\n")
 }
 
 func (a *App) dashboard() string {
