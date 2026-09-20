@@ -31,10 +31,22 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        goarch: [amd64, arm64, armv7, '386', riscv64, s390x]
         include:
-          - goarch: armv7
+          # Go 使用 GOARCH=arm + GOARM=7 表示 armv7，资产名仍按终端习惯写作 armv7
+          # Go spells armv7 as GOARCH=arm with GOARM=7; the asset keeps the armv7 name.
+          - goarch: amd64
+            asset: amd64
+          - goarch: arm64
+            asset: arm64
+          - goarch: arm
             goarm: '7'
+            asset: armv7
+          - goarch: '386'
+            asset: '386'
+          - goarch: riscv64
+            asset: riscv64
+          - goarch: s390x
+            asset: s390x
     steps:
       - name: 检出仓库
         uses: actions/checkout@v7
@@ -52,7 +64,7 @@ jobs:
       - name: 单元测试
         run: go test ./...
 
-      - name: 交叉编译 linux/${{ matrix.goarch }}
+      - name: 交叉编译 linux/${{ matrix.asset }}
         env:
           GOOS: linux
           GOARCH: ${{ matrix.goarch }}
@@ -62,14 +74,14 @@ jobs:
           set -euo pipefail
           go build -trimpath \
             -ldflags "-s -w -X main.version=${{ steps.ver.outputs.version }}" \
-            -o "dist/easysb-linux-${{ matrix.goarch }}" ./cmd/easysb
-          file "dist/easysb-linux-${{ matrix.goarch }}"
+            -o "dist/easysb-linux-${{ matrix.asset }}" ./cmd/easysb
+          ls -lh "dist/easysb-linux-${{ matrix.asset }}"
 
       - name: 上传构建产物
         uses: actions/upload-artifact@v7
         with:
-          name: easysb-linux-${{ matrix.goarch }}
-          path: dist/easysb-linux-${{ matrix.goarch }}
+          name: easysb-linux-${{ matrix.asset }}
+          path: dist/easysb-linux-${{ matrix.asset }}
           if-no-files-found: error
 
   release:
