@@ -164,22 +164,28 @@ func TestLanguageToggle(t *testing.T) {
 	}
 }
 
-func TestRootMenuHasNoNavOrUninstall(t *testing.T) {
+func TestRootMenuHasNoNav(t *testing.T) {
 	a := newTestApp(t)
 	if a.hasNavRow() {
 		t.Fatalf("root menu should not show a navigation row")
 	}
-	if got := len(a.current().nodes); got != 6 {
-		t.Fatalf("root should have 6 entries, got %d", got)
+	if got := len(a.current().nodes); got != 7 {
+		t.Fatalf("root should have 7 entries, got %d", got)
 	}
+	var hasUninstall bool
 	for _, n := range a.current().nodes {
 		if n.id == "uninstall" {
-			t.Fatalf("uninstall should not be in the root menu")
+			hasUninstall = true
 		}
 	}
+	if !hasUninstall {
+		t.Fatalf("uninstall should be in the root menu")
+	}
 	view := a.View().Content
-	if !strings.Contains(view, i18n.Chinese.T("menu_script_update")) {
-		t.Fatalf("version update entry missing from root menu")
+	for _, want := range []string{i18n.Chinese.T("menu_script_update"), i18n.Chinese.T("menu_uninstall")} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("root menu missing %q:\n%s", want, view)
+		}
 	}
 	if strings.Contains(view, "[0]") {
 		t.Fatalf("root menu should not render a [0] row")

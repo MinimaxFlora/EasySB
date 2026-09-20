@@ -50,6 +50,7 @@ func buildRoot() *menu {
 			{id: "subscribe", label: tk("sub_title"), desc: tk("menu_subscribe"), icon: func(s icons.Set) string { return s.Link }, sub: buildSubscribe()},
 			{id: "service", label: tk("svc_title"), desc: tk("menu_service"), icon: func(s icons.Set) string { return s.Service }, sub: buildService()},
 			iconLeaf("script-update", "menu_script_update", "script_update", func(s icons.Set) string { return s.Refresh }, scriptUpdate()),
+			iconLeaf("uninstall", "menu_uninstall", "uninstall_confirm", func(s icons.Set) string { return s.Trash }, uninstallAction()),
 		},
 	}
 }
