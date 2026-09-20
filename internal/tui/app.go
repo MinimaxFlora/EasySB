@@ -350,9 +350,11 @@ func (a *App) formScreen() string {
 	return strings.Join(out, "\n")
 }
 
-// dashboard renders the dashboard inside a single box pinned to the top of the
-// screen, with the hint on the last row. The layout adapts to the terminal so
-// nothing overflows; optional sections drop first, then the menu scrolls.
+// dashboard renders the dashboard inside a main box pinned to the top of the
+// screen, with an optional hint box below it. The layout adapts to the terminal
+// so nothing overflows: optional cards drop first, then the menu scrolls. When
+// the terminal is too short for a second box, the hints fall back to the inline
+// bottom row.
 func (a *App) dashboard() string {
 	w := a.width
 	if w <= 0 {
@@ -373,8 +375,15 @@ func (a *App) dashboard() string {
 		inner = 16
 	}
 
-	// Budget for the box body: two borders, the hint line and one spare row.
-	budget := h - 4
+	// Two stacked boxes need 5 rows of chrome (2 + 3); below that the hints go
+	// inline on the final row.
+	useHintBox := h >= 12
+	var budget int
+	if useHintBox {
+		budget = h - 5
+	} else {
+		budget = h - 4
+	}
 	if budget < 5 {
 		budget = 5
 	}
@@ -385,23 +394,38 @@ func (a *App) dashboard() string {
 	rule := theme.Rule(inner, a.palette.Border)
 	status := a.statusSummary(inner)
 
-	// Always present: title, author, menu separator, menu title, plus at least
-	// one menu row and the navigation row when the menu is nested.
 	navRows := 0
 	if a.hasNavRow() {
 		navRows = 1
 	}
-	used := 4
-	showQuote := used+1+navRows+1 <= budget
-	if showQuote {
-		used++
+
+	// Greedy section budget. base covers title, author, the rule before the menu
+	// and the menu title; one extra row is reserved for at least one menu entry.
+	base := 4
+	avail := budget - base - navRows - 1
+	if a.toast != "" {
+		avail--
 	}
-	statusCost := len(status) + 1
-	showStatus := used+statusCost+navRows+1 <= budget
-	if showStatus {
-		used += statusCost
+	if avail < 0 {
+		avail = 0
 	}
-	rowsAvail := budget - used - navRows
+	statusCost := 1 + len(status)
+	deviceCost := 3
+	nodeCost := 3
+
+	take := func(cost int) bool {
+		if cost > avail {
+			return false
+		}
+		avail -= cost
+		return true
+	}
+	// Priority order: live status first, then the cards, then the quote.
+	showStatus := take(statusCost)
+	showDevice := take(deviceCost)
+	showNode := take(nodeCost)
+	showQuote := take(1)
+	rowsAvail := 1 + avail
 	if rowsAvail < 1 {
 		rowsAvail = 1
 	}
@@ -416,20 +440,30 @@ func (a *App) dashboard() string {
 	if showQuote {
 		body = append(body, quote)
 	}
+	if showDevice {
+		body = append(body, a.subPanel(a.lang.T("panel_device"), a.deviceLines(inner), inner)...)
+	}
 	if showStatus {
 		body = append(body, rule)
 		body = append(body, status...)
 	}
+	if showNode {
+		body = append(body, a.subPanel(a.lang.T("panel_node"), a.nodeLines(inner), inner)...)
+	}
 	body = append(body, rule, menuTitle)
 	body = append(body, items...)
 	if a.hasNavRow() {
-		body = append(body, a.rowLine(a.onNavRow(), "[0] "+a.navLabel(), inner))
+		body = append(body, a.rowLine(a.onNavRow(), a.iconSet.Arrow+" "+a.navLabel(), inner))
 	}
 
 	box := theme.Box("EasySB", strings.Join(body, "\n"), w, a.palette.Border, a.palette.Primary)
 	out := strings.Split(box, "\n")
 	if a.toast != "" {
 		out = append(out, " "+a.renderToast(w))
+	}
+	if useHintBox {
+		out = append(out, a.hintBox(w)...)
+		return strings.Join(out, "\n")
 	}
 	// Fullscreen: pad so the hint sits on the last row, leaving the rest of the
 	// screen blank instead of letting old shell output show through.
@@ -467,9 +501,18 @@ func (a *App) menuViewport(limit, inner int) ([]string, int) {
 	}
 	rows := make([]string, 0, end-top)
 	for i := top; i < end; i++ {
-		rows = append(rows, a.rowLine(i == a.index, fmt.Sprintf("[%d] %s", i+1, nodes[i].label(a.lang)), inner))
+		rows = append(rows, a.rowLine(i == a.index, a.nodeLabel(nodes[i]), inner))
 	}
 	return rows, n - len(rows)
+}
+
+// nodeLabel prefixes a menu entry with its icon, falling back to a bullet for
+// entries that have no dedicated glyph.
+func (a *App) nodeLabel(n *node) string {
+	if n.icon != nil {
+		return n.icon(a.iconSet) + " " + n.label(a.lang)
+	}
+	return a.iconSet.Bullet + " " + n.label(a.lang)
 }
 
 func (a *App) rowLine(selected bool, label string, inner int) string {

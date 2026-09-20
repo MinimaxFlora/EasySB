@@ -2,7 +2,6 @@ package tui
 
 import (
 	"errors"
-	"fmt"
 	"strings"
 	"testing"
 
@@ -63,7 +62,7 @@ func TestMenuViewportKeepsCursorVisible(t *testing.T) {
 	for i := range a.current().nodes {
 		a.index = i
 		frame := a.dashboard()
-		if !strings.Contains(frame, fmt.Sprintf("[%d]", i+1)) {
+		if !strings.Contains(frame, a.current().nodes[i].label(i18n.Chinese)) {
 			t.Fatalf("frame at index %d hides the selected row:\n%s", i, frame)
 		}
 	}
@@ -179,7 +178,7 @@ func TestRootMenuHasNoNavOrUninstall(t *testing.T) {
 		}
 	}
 	view := a.View().Content
-	if !strings.Contains(view, "[6] 版本更新") {
+	if !strings.Contains(view, i18n.Chinese.T("menu_script_update")) {
 		t.Fatalf("version update entry missing from root menu")
 	}
 	if strings.Contains(view, "[0]") {
@@ -203,7 +202,7 @@ func TestKernelMenuEntries(t *testing.T) {
 		t.Fatalf("kernel menu should show a navigation row")
 	}
 	view := a.View().Content
-	for _, label := range []string{"安装正式版内核", "安装测试版内核", "切换内核", "更新内核（仅更新当前通道）", "[0] 返回上一级"} {
+	for _, label := range []string{"安装正式版内核", "安装测试版内核", "切换内核", "更新内核（仅更新当前通道）", i18n.Chinese.T("nav_back")} {
 		if !strings.Contains(view, label) {
 			t.Fatalf("kernel menu view missing %q:\n%s", label, view)
 		}
@@ -223,8 +222,8 @@ func TestNumberedMenuAndDigitSelection(t *testing.T) {
 	if !a.View().AltScreen {
 		t.Fatalf("dashboard should render fullscreen so the screen is cleared")
 	}
-	if !strings.Contains(a.View().Content, "[5] 服务管理") {
-		t.Fatalf("service entry should be numbered [5]")
+	if !strings.Contains(a.View().Content, i18n.Chinese.T("svc_title")) {
+		t.Fatalf("service entry should render its label")
 	}
 	m, _ := a.Update(press('5'))
 	a = m.(*App)
@@ -285,6 +284,23 @@ func TestFormValidationKeepsOpen(t *testing.T) {
 	a = m.(*App)
 	if a.form != nil {
 		t.Fatal("esc should close the form")
+	}
+}
+
+func TestDashboardPanelsAndIcons(t *testing.T) {
+	a := newTestApp(t)
+	view := a.View().Content
+	for _, want := range []string{
+		i18n.Chinese.T("panel_device"),
+		i18n.Chinese.T("panel_node"),
+		i18n.Chinese.T("panel_hints"),
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("view missing panel %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "[1]") {
+		t.Fatalf("menu should use icons instead of bracketed numbers:\n%s", view)
 	}
 }
 

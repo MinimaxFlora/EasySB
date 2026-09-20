@@ -4,9 +4,12 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"regexp"
+	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -41,6 +44,12 @@ type Status struct {
 	Ports         []PortInfo
 	Deployed      bool
 	StateFound    bool
+
+	Hostname string
+	OS       string
+	Arch     string
+	Kernel   string
+	Memory   string
 }
 
 type PortInfo struct {
@@ -66,6 +75,8 @@ func Collect(scriptVersion string) Status {
 	st.CoreVersion, st.CoreChannel = coreVersion()
 	st.Service = serviceState("is-active")
 	st.Autostart = serviceState("is-enabled")
+
+	collectDevice(&st)
 
 	state := readState()
 	st.StateFound = len(state) > 0
@@ -101,6 +112,82 @@ func Collect(scriptVersion string) Status {
 
 func portKey(proto string) string {
 	return "PORT_" + strings.ToUpper(proto)
+}
+
+// collectDevice fills the host description shown on the dashboard: hostname,
+// distribution name, CPU architecture, kernel release and total memory.
+func collectDevice(st *Status) {
+	if h, err := os.Hostname(); err == nil {
+		st.Hostname = strings.TrimSpace(h)
+	}
+	st.OS = osName()
+	st.Arch = runtime.GOARCH
+	st.Kernel = kernelRelease()
+	st.Memory = totalMemory()
+}
+
+func osName() string {
+	if v := osReleaseValue("PRETTY_NAME"); v != "" {
+		return v
+	}
+	if v := osReleaseValue("NAME"); v != "" {
+		return v
+	}
+	return ""
+}
+
+func osReleaseValue(key string) string {
+	data, err := os.ReadFile("/etc/os-release")
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		k, v, ok := strings.Cut(line, "=")
+		if !ok || strings.TrimSpace(k) != key {
+			continue
+		}
+		return strings.Trim(strings.TrimSpace(v), `"'`)
+	}
+	return ""
+}
+
+func kernelRelease() string {
+	if data, err := os.ReadFile("/proc/sys/kernel/osrelease"); err == nil {
+		if v := strings.TrimSpace(string(data)); v != "" {
+			return v
+		}
+	}
+	if out, err := run(2*time.Second, "uname", "-r"); err == nil {
+		return strings.TrimSpace(out)
+	}
+	return ""
+}
+
+func totalMemory() string {
+	data, err := os.ReadFile("/proc/meminfo")
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if !strings.HasPrefix(line, "MemTotal:") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			return ""
+		}
+		kb, err := strconv.ParseFloat(fields[1], 64)
+		if err != nil || kb <= 0 {
+			return ""
+		}
+		gb := kb / 1024 / 1024
+		if gb < 1 {
+			return fmt.Sprintf("%.0f MB", kb/1024)
+		}
+		return fmt.Sprintf("%.1f GB", gb)
+	}
+	return ""
 }
 
 func coreVersion() (string, string) {
