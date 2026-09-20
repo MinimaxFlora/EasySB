@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -38,8 +39,9 @@ func newTestApp(t *testing.T) *App {
 
 func TestDashboardFitsTerminal(t *testing.T) {
 	// The inline renderer cannot erase lines that scrolled off the top, so the
-	// boxed dashboard must never be taller than the terminal.
-	for _, h := range []int{16, 18, 20, 24, 30, 40} {
+	// boxed dashboard must never be taller than the terminal. This exercises the
+	// size where the menu has to scroll itself.
+	for _, h := range []int{9, 10, 12, 14, 15, 16, 18, 20, 24, 30, 40, 60} {
 		a := New("test", i18n.Chinese)
 		a.width, a.height = 100, h
 		a.sized = true
@@ -48,6 +50,21 @@ func TestDashboardFitsTerminal(t *testing.T) {
 		lines := strings.Count(a.dashboard(), "\n") + 1
 		if lines > h {
 			t.Fatalf("height %d: dashboard drew %d lines", h, lines)
+		}
+	}
+}
+
+func TestMenuViewportKeepsCursorVisible(t *testing.T) {
+	a := New("test", i18n.Chinese)
+	a.width, a.height = 100, 10
+	a.sized = true
+	a.status = sysinfo.Collect("test")
+	a.ready = true
+	for i := range a.current().nodes {
+		a.index = i
+		frame := a.dashboard()
+		if !strings.Contains(frame, fmt.Sprintf("[%d]", i+1)) {
+			t.Fatalf("frame at index %d hides the selected row:\n%s", i, frame)
 		}
 	}
 }

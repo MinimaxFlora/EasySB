@@ -336,8 +336,10 @@ func (a *App) formScreen() string {
 	return strings.Join(out, "\n")
 }
 
-// dashboard renders the whole dashboard inside a single box that always fits
-// the terminal, so the inline renderer never needs to scroll.
+// dashboard renders the whole dashboard inside a single box whose height is
+// derived from the terminal. The inline renderer cannot erase lines that have
+// scrolled off the top, so the frame must never be taller than the terminal:
+// optional sections are dropped first, then the menu scrolls in a viewport.
 func (a *App) dashboard() string {
 	w := a.width
 	if w <= 0 {
@@ -346,13 +348,22 @@ func (a *App) dashboard() string {
 	if w > 100 {
 		w = 100
 	}
+	if w < 24 {
+		w = 24
+	}
 	h := a.height
 	if h <= 0 {
-		h = 30
+		h = 24
 	}
 	inner := w - 4
 	if inner < 16 {
 		inner = 16
+	}
+
+	// Budget for the box body: two borders, the hint line and one spare row.
+	budget := h - 4
+	if budget < 5 {
+		budget = 5
 	}
 
 	title := a.headerTitle(inner)
@@ -360,36 +371,41 @@ func (a *App) dashboard() string {
 	quote := a.headerQuote(inner)
 	rule := theme.Rule(inner, a.palette.Border)
 	status := a.statusSummary(inner)
+
+	// Always present: title, author, menu separator, menu title, nav row, plus
+	// at least one menu row.
+	used := 4
+	showQuote := used+1 <= budget-2
+	if showQuote {
+		used++
+	}
+	statusCost := len(status) + 1
+	showStatus := used+statusCost <= budget-2
+	if showStatus {
+		used += statusCost
+	}
+	rowsAvail := budget - used - 1
+	if rowsAvail < 1 {
+		rowsAvail = 1
+	}
+
+	items, hidden := a.menuViewport(rowsAvail, inner)
 	menuTitle := " " + a.palette.Bold(a.palette.Primary, a.current().title(a.lang))
-	rows := a.menuLines(inner)
-
-	assemble := func(withQuote, withStatus bool) []string {
-		var body []string
-		body = append(body, title, author)
-		if withQuote {
-			body = append(body, quote)
-		}
-		if withStatus {
-			body = append(body, rule)
-			body = append(body, status...)
-		}
-		body = append(body, rule, menuTitle)
-		body = append(body, rows...)
-		return body
+	if hidden > 0 {
+		menuTitle += a.palette.Dim(fmt.Sprintf("  (+%d)", hidden))
 	}
 
-	// Budget: terminal height minus box borders (2) and the hint line (1).
-	budget := h - 3
-	if a.toast != "" {
-		budget--
+	body := []string{title, author}
+	if showQuote {
+		body = append(body, quote)
 	}
-	body := assemble(true, true)
-	if len(body) > budget {
-		body = assemble(false, true)
+	if showStatus {
+		body = append(body, rule)
+		body = append(body, status...)
 	}
-	if len(body) > budget {
-		body = assemble(false, false)
-	}
+	body = append(body, rule, menuTitle)
+	body = append(body, items...)
+	body = append(body, a.rowLine(a.onNavRow(), "[0] "+a.navLabel(), inner))
 
 	box := theme.Box("EasySB", strings.Join(body, "\n"), w, a.palette.Border, a.palette.Primary)
 	out := strings.Split(box, "\n")
@@ -400,13 +416,36 @@ func (a *App) dashboard() string {
 	return strings.Join(out, "\n")
 }
 
-func (a *App) menuLines(inner int) []string {
-	var rows []string
-	for i, n := range a.current().nodes {
-		rows = append(rows, a.rowLine(i == a.index, fmt.Sprintf("[%d] %s", i+1, n.label(a.lang)), inner))
+// menuViewport renders at most limit menu rows, keeping the cursor visible, and
+// reports how many items are currently out of view.
+func (a *App) menuViewport(limit, inner int) ([]string, int) {
+	nodes := a.current().nodes
+	n := len(nodes)
+	if n == 0 {
+		return nil, 0
 	}
-	rows = append(rows, a.rowLine(a.onNavRow(), "[0] "+a.navLabel(), inner))
-	return rows
+	top := 0
+	if n > limit {
+		top = a.index - limit/2
+		if a.onNavRow() {
+			top = n - limit
+		}
+		if top < 0 {
+			top = 0
+		}
+		if top > n-limit {
+			top = n - limit
+		}
+	}
+	end := top + limit
+	if end > n {
+		end = n
+	}
+	rows := make([]string, 0, end-top)
+	for i := top; i < end; i++ {
+		rows = append(rows, a.rowLine(i == a.index, fmt.Sprintf("[%d] %s", i+1, nodes[i].label(a.lang)), inner))
+	}
+	return rows, n - len(rows)
 }
 
 func (a *App) rowLine(selected bool, label string, inner int) string {
