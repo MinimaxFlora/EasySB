@@ -11,6 +11,7 @@
 - 订阅支持多客户端：新增 mihomo / Clash Meta 完整配置（`mihomo.yaml`）与 v2rayN 分享链接文档（`v2ray.txt`），nginx 分别以 `/singbox/<uuid>`、`/mihomo/<uuid>`、`/v2ray/<uuid>` 端点提供，旧 `/subscribe` 路径保留。
 - 订阅二维码按客户端分别生成导入链接：sing-box 使用 `sing-box://import-remote-profile?url=`，mihomo 使用 `clash://install-config?url=`，v2rayN 使用纯订阅地址。
 - 新增 `templates/config/mihomo.yaml` 可读样例，与内嵌模板 `internal/subscribe/mihomo.yaml` 保持同步。
+- mihomo 配置对齐完整桌面方案：新增 `external-controller`（`0.0.0.0:9090`）、`secret`、`external-ui`、`external-ui-url`（Zashboard）、`unified-delay`，补全 fake-ip DNS 与 `fake-ip-filter`，策略组改为 `负载均衡` / `自动选择` / `🌍选择代理节点`，规则新增 `GEOIP,LAN,DIRECT` 与 `GEOSITE,CN,DIRECT`。
 
 ### 修复
 

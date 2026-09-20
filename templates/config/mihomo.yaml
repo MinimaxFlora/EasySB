@@ -3,25 +3,48 @@
 # This is sample output of internal/subscribe/mihomo.yaml after rendering; keep
 # it in sync with the embedded template. The live file is generated per node.
 
-mixed-port: 7890
-allow-lan: false
-bind-address: "*"
+port: 7890
+allow-lan: true
 mode: rule
 log-level: info
-ipv6: false
-external-controller: 127.0.0.1:9090
+unified-delay: true
+external-controller: 0.0.0.0:9090
+secret: "1234567890"
+external-ui: ui
+external-ui-url: "https://gh-proxy.com/https://github.com/Zephyruso/zashboard/archive/refs/heads/gh-pages.zip"
 
 dns:
   enable: true
-  ipv6: false
-  enhanced-mode: fake-ip
-  fake-ip-range: 198.18.0.1/16
+  listen: "0.0.0.0:1053"
+  ipv6: true
+  prefer-h3: false
+  respect-rules: true
+  use-system-hosts: false
+  cache-algorithm: "arc"
+  enhanced-mode: "fake-ip"
+  fake-ip-range: "198.18.0.1/16"
+  fake-ip-filter:
+    - "+.lan"
+    - "+.local"
+    - "+.msftconnecttest.com"
+    - "+.msftncsi.com"
+    - "localhost.ptlogin2.qq.com"
+    - "localhost.sec.qq.com"
+    - "+.in-addr.arpa"
+    - "+.ip6.arpa"
+    - "time.*.com"
+    - "time.*.gov"
+    - "pool.ntp.org"
+    - "localhost.work.weixin.qq.com"
+  default-nameserver:
+    - "223.5.5.5"
+    - "119.29.29.29"
   nameserver:
-    - 223.5.5.5
-    - 119.29.29.29
-  fallback:
-    - https://1.1.1.1/dns-query
-    - https://8.8.8.8/dns-query
+    - "https://1.1.1.1/dns-query"
+    - "https://8.8.8.8/dns-query"
+  proxy-server-nameserver:
+    - "https://223.5.5.5/dns-query"
+    - "https://doh.pub/dns-query"
 
 proxies:
   - name: "EasySB-AnyTLS"
@@ -29,9 +52,17 @@ proxies:
     server: "YOUR_SERVER"
     port: 8000
     password: "YOUR_PASSWORD"
-    sni: "YOUR_SERVER"
-    skip-cert-verify: false
+    client-fingerprint: chrome
     udp: true
+    idle-session-check-interval: 30
+    idle-session-timeout: 30
+    min-idle-session: 5
+    sni: "YOUR_SERVER"
+    alpn:
+      - h3
+      - h2
+      - http/1.1
+    skip-cert-verify: false
   - name: "EasySB-Hysteria2"
     type: hysteria2
     server: "YOUR_SERVER"
@@ -39,20 +70,25 @@ proxies:
     ports: "2080-3000"
     password: "YOUR_PASSWORD"
     sni: "YOUR_SERVER"
-    skip-cert-verify: false
     alpn:
       - h3
+    up: "20 Mbps"
+    down: "100 Mbps"
+    hop-interval: 30
+    fast-open: true
+    skip-cert-verify: false
   - name: "EasySB-TUIC"
     type: tuic
     server: "YOUR_SERVER"
     port: 8002
     uuid: "YOUR_UUID"
     password: "YOUR_PASSWORD"
-    congestion-controller: bbr
-    udp-relay-mode: native
     sni: "YOUR_SERVER"
     alpn:
       - h3
+    reduce-rtt: false
+    udp-relay-mode: native
+    congestion-controller: bbr
     skip-cert-verify: false
   - name: "EasySB-VMess-WS-TLS"
     type: vmess
@@ -65,6 +101,7 @@ proxies:
     tls: true
     skip-cert-verify: false
     servername: "YOUR_SERVER"
+    client-fingerprint: chrome
     network: ws
     ws-opts:
       path: /vmess
@@ -86,18 +123,20 @@ proxies:
       short-id: "YOUR_REALITY_SHORT_ID"
 
 proxy-groups:
-  - name: proxy
-    type: select
+  - name: 负载均衡
+    type: load-balance
+    url: https://www.gstatic.com/generate_204
+    interval: 300
+    strategy: round-robin
     proxies:
-      - auto
       - "EasySB-AnyTLS"
       - "EasySB-Hysteria2"
       - "EasySB-TUIC"
       - "EasySB-VMess-WS-TLS"
       - "EasySB-VLESS-Reality"
-  - name: auto
+  - name: 自动选择
     type: url-test
-    url: http://www.gstatic.com/generate_204
+    url: https://www.gstatic.com/generate_204
     interval: 300
     tolerance: 50
     proxies:
@@ -106,7 +145,20 @@ proxy-groups:
       - "EasySB-TUIC"
       - "EasySB-VMess-WS-TLS"
       - "EasySB-VLESS-Reality"
+  - name: 🌍选择代理节点
+    type: select
+    proxies:
+      - 负载均衡
+      - 自动选择
+      - DIRECT
+      - "EasySB-AnyTLS"
+      - "EasySB-Hysteria2"
+      - "EasySB-TUIC"
+      - "EasySB-VMess-WS-TLS"
+      - "EasySB-VLESS-Reality"
 
 rules:
+  - GEOIP,LAN,DIRECT
+  - GEOSITE,CN,DIRECT
   - GEOIP,CN,DIRECT
-  - MATCH,proxy
+  - MATCH,🌍选择代理节点

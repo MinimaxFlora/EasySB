@@ -18,14 +18,25 @@ func TestGenerateMihomo(t *testing.T) {
 	}
 	body := string(data)
 	for _, want := range []string{
-		"mixed-port: 7890",
+		"port: 7890",
+		"external-controller: 0.0.0.0:9090",
+		`secret: "1234567890"`,
+		"external-ui: ui",
+		"external-ui-url:",
+		"unified-delay: true",
 		"proxy-groups:",
+		"type: load-balance",
+		"🌍选择代理节点",
 		"type: hysteria2",
 		"type: vmess",
 		"type: vless",
+		"hop-interval: 30",
+		`up: "20 Mbps"`,
+		"fast-open: true",
 		"reality-opts:",
 		`"apple.com"`,
-		"GEOIP,CN,DIRECT",
+		"GEOSITE,CN,DIRECT",
+		"MATCH,🌍选择代理节点",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("mihomo config missing %q:\n%s", want, body)
@@ -33,6 +44,33 @@ func TestGenerateMihomo(t *testing.T) {
 	}
 	if strings.Contains(body, "type: tuic") || strings.Contains(body, "type: anytls") {
 		t.Fatalf("disabled protocols leaked into mihomo config:\n%s", body)
+	}
+}
+
+func TestGenerateMihomoAnyTLS(t *testing.T) {
+	cfg := testConfig()
+	for _, tag := range []string{
+		state.ProtoHysteria2,
+		state.ProtoTUIC,
+		state.ProtoVLESSReality,
+		state.ProtoVMessWSTLS,
+	} {
+		cfg.Enabled[tag] = false
+	}
+	data, err := GenerateMihomo(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(data)
+	for _, want := range []string{
+		"type: anytls",
+		"idle-session-check-interval: 30",
+		"idle-session-timeout: 30",
+		"min-idle-session: 5",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("anytls config missing %q:\n%s", want, body)
+		}
 	}
 }
 

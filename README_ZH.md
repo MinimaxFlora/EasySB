@@ -208,6 +208,8 @@ sing-box check -c templates/vless-vision-reality/config_server.json
 
 UUID 即访问 token，请将订阅地址视为机密。sing-box 端点会包装为 `sing-box://import-remote-profile?url=...`，mihomo 端点包装为 `clash://install-config?url=...`，可扫码一键导入。sing-box 直接监听 WebSocket，nginx 只负责静态文件，不做反向代理。
 
+mihomo 配置对齐完整桌面方案：`external-controller` 监听 `0.0.0.0:9090` 并带 `secret`，通过 `external-ui-url` 加载 Zashboard 面板，DNS 使用 fake-ip 与 `fake-ip-filter`，策略组包含 `load-balance` / `url-test` / `select`，分流规则包含 `GEOSITE` / `GEOIP`。请仅在局域网内可信设备上导入。
+
 ---
 
 ## 防火墙与端口跳跃

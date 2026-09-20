@@ -204,6 +204,8 @@ It is also hosted by nginx as a lightweight static site on port `8443`. The lega
 
 The UUID acts as the access token, so treat the URLs as secrets. The sing-box endpoint is wrapped as `sing-box://import-remote-profile?url=...` and mihomo as `clash://install-config?url=...` for one-scan import. sing-box listens for WebSocket directly; nginx only serves static files and never reverse-proxies.
 
+The mihomo profile mirrors a full desktop setup: `external-controller` on `0.0.0.0:9090` with `secret`, the Zashboard web UI via `external-ui-url`, fake-ip DNS with `fake-ip-filter`, `load-balance` / `url-test` / `select` proxy groups, and `GEOSITE` / `GEOIP` rules. Import it only on machines you trust on your LAN.
+
 ---
 
 ## Firewall and Port Hopping
