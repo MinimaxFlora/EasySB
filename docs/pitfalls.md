@@ -51,6 +51,16 @@ Traps already hit in this repository. Each entry names the symptom and the fix.
 - **Comments are invalid JSON.** `templates/` files are JSONC for humans. Strip
   comments before handing anything to `sing-box check`.
 
+## nginx site
+
+- **`;` does not separate directives without whitespace.** Emitting
+  `default_type text/yaml; charset=utf-8;` makes nginx parse `charset=utf-8` as
+  the directive name and abort with `unknown directive "charset=utf-8"`. Quote
+  the whole value instead: `default_type "text/yaml; charset=utf-8";`.
+- **Surface the `[emerg]` line.** The last line of `nginx -t` output only says
+  the test failed; report the first `[emerg]`/`[error]` line
+  (`nginx.errorLine`) so the real cause is visible.
+
 ## State and templates
 
 - **Two subscription templates.** Runtime uses the embedded

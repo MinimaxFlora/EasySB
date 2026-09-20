@@ -198,9 +198,12 @@ func clientLocations(cfg state.Config) string {
 func contentType(client subscribe.Client) string {
 	switch client {
 	case subscribe.ClientMihomo:
-		return "text/yaml; charset=utf-8"
+		// The value is quoted because nginx does not split on ";" here: an
+		// unquoted `text/yaml; charset=utf-8` becomes the bogus directive
+		// `charset=utf-8`.
+		return `"text/yaml; charset=utf-8"`
 	case subscribe.ClientV2Ray:
-		return "text/plain; charset=utf-8"
+		return `"text/plain; charset=utf-8"`
 	default:
 		return "application/json"
 	}
@@ -228,9 +231,20 @@ func Test() error {
 	cmd.Env = append(os.Environ(), "LC_ALL=C")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return errors.New("nginx -t: " + lastLine(string(out)))
+		return errors.New("nginx -t: " + errorLine(string(out)))
 	}
 	return nil
+}
+
+// errorLine returns the most useful line from `nginx -t` output. The final line
+// only says the test failed, so prefer the first [emerg]/[error] line.
+func errorLine(s string) string {
+	for _, line := range strings.Split(s, "\n") {
+		if strings.Contains(line, "[emerg]") || strings.Contains(line, "[error]") {
+			return strings.TrimSpace(line)
+		}
+	}
+	return lastLine(s)
 }
 
 // Do performs a lifecycle action on the nginx service.

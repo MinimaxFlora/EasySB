@@ -59,7 +59,8 @@ func TestRenderSiteClientLocations(t *testing.T) {
 		"location = /v2ray/" + cfg.UUID,
 		"mihomo.yaml",
 		"v2ray.txt",
-		"text/yaml",
+		`default_type "text/yaml; charset=utf-8";`,
+		`default_type "text/plain; charset=utf-8";`,
 	} {
 		if !strings.Contains(conf, want) {
 			t.Fatalf("site missing %q:\n%s", want, conf)
