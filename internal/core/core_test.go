@@ -6,10 +6,15 @@ import (
 	"compress/gzip"
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/MinimaxFlora/EasySB/internal/cert"
+	"github.com/MinimaxFlora/EasySB/internal/config"
+	"github.com/MinimaxFlora/EasySB/internal/state"
 )
 
 // TestFetchReleasesLive hits the real GitHub API. It is opt-in so the default
@@ -61,6 +66,84 @@ func TestInstallLive(t *testing.T) {
 	}
 	if !strings.Contains(out, rels.Stable.Version) {
 		t.Fatalf("version output %q missing %s", out, rels.Stable.Version)
+	}
+}
+
+// TestGeneratedConfigValidLive downloads the core, generates a certificate and
+// checks that config.Build output passes `sing-box check`. Opt-in via EASYSB_LIVE=1.
+func TestGeneratedConfigValidLive(t *testing.T) {
+	if os.Getenv("EASYSB_LIVE") == "" {
+		t.Skip("set EASYSB_LIVE=1 to download a release")
+	}
+	if _, err := exec.LookPath("openssl"); err != nil {
+		t.Skip("openssl not available")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	rels, err := FetchReleases(ctx)
+	if err != nil || rels.Stable.Version == "" {
+		t.Fatalf("FetchReleases: %v %+v", err, rels)
+	}
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "sing-box")
+	tmp := filepath.Join(dir, "core.tgz")
+	if err := Download(ctx, rels.Stable.URL, tmp); err != nil {
+		t.Fatalf("Download: %v", err)
+	}
+	if err := ExtractBinary(tmp, bin); err != nil {
+		t.Fatalf("ExtractBinary: %v", err)
+	}
+
+	uuidOut, err := run(ctx, bin, "generate", "uuid")
+	if err != nil {
+		t.Fatalf("generate uuid: %v", err)
+	}
+	keyOut, err := run(ctx, bin, "generate", "reality-keypair")
+	if err != nil {
+		t.Fatalf("generate reality-keypair: %v", err)
+	}
+	priv := ""
+	for _, line := range strings.Split(keyOut, "\n") {
+		if strings.HasPrefix(line, "PrivateKey:") {
+			priv = strings.TrimSpace(strings.TrimPrefix(line, "PrivateKey:"))
+		}
+	}
+	if priv == "" {
+		t.Fatalf("no private key in %q", keyOut)
+	}
+
+	certPath := filepath.Join(dir, "fullchain.cer")
+	keyPath := filepath.Join(dir, "private.key")
+	if err := cert.GenerateSelfSigned(certPath, keyPath, "easysb.local"); err != nil {
+		t.Fatalf("GenerateSelfSigned: %v", err)
+	}
+
+	params := config.Params{
+		Enabled:       map[string]bool{},
+		Ports:         map[string]string{},
+		Password:      "test-password",
+		UUID:          strings.TrimSpace(uuidOut),
+		RealitySNI:    "apple.com",
+		RealityPriv:   priv,
+		RealitySID:    "abcd1234",
+		CertFullchain: certPath,
+		CertKey:       keyPath,
+	}
+	for _, k := range state.Keys {
+		params.Enabled[k] = true
+	}
+	data, err := config.Build(params)
+	if err != nil {
+		t.Fatalf("config.Build: %v", err)
+	}
+	cfgPath := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(cfgPath, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if out, err := run(ctx, bin, "check", "-c", cfgPath); err != nil {
+		t.Fatalf("sing-box check failed: %v\n%s\n%s", err, out, data)
 	}
 }
 

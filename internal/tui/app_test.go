@@ -126,13 +126,16 @@ func TestLanguageToggle(t *testing.T) {
 
 func TestActionableStubSetsToast(t *testing.T) {
 	a := newTestApp(t)
-	m, _ := a.Update(press(tea.KeyDown))
-	a = m.(*App)
-	m, _ = a.Update(press(tea.KeyEnter))
-	a = m.(*App)
-	m, _ = a.Update(press(tea.KeyEnter))
+	for i := 0; i < 5; i++ {
+		m, _ := a.Update(press(tea.KeyDown))
+		a = m.(*App)
+	}
+	if got := a.selected().id; got != "script-update" {
+		t.Fatalf("expected script-update selected, got %s", got)
+	}
+	m, _ := a.Update(press(tea.KeyEnter))
 	a = m.(*App)
 	if a.toast == "" {
-		t.Fatalf("expected a toast after deploy stub")
+		t.Fatalf("expected a toast after stub action")
 	}
 }

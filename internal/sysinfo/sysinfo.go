@@ -17,6 +17,15 @@ const (
 	StateFile   = WorkDir + "/easysb.conf"
 	CoreBin     = WorkDir + "/sing-box"
 	ServiceName = "sing-box"
+
+	CertDir        = WorkDir + "/cert"
+	SelfSignedCert = CertDir + "/fullchain.cer"
+	SelfSignedKey  = CertDir + "/private.key"
+	SubscribeDir   = WorkDir + "/subscribe"
+	LogFile        = WorkDir + "/easysb.log"
+
+	SystemdUnit = "/etc/systemd/system/sing-box.service"
+	OpenRCUnit  = "/etc/init.d/sing-box"
 )
 
 type Status struct {

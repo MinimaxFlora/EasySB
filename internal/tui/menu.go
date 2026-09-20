@@ -78,7 +78,7 @@ func buildNode() *menu {
 		id:    "node",
 		title: tk("node_title"),
 		nodes: []*node{
-			iconLeaf("node-deploy", "node_deploy", "node_deploying", func(s icons.Set) string { return s.Rocket }, stub("node_deploying")),
+			iconLeaf("node-deploy", "node_deploy", "node_deploying", func(s icons.Set) string { return s.Rocket }, deployNode()),
 			iconLeaf("node-params", "node_params", "param_ports", func(s icons.Set) string { return s.Tool }, func(a *App) tea.Cmd {
 				a.push(buildParams())
 				return nil

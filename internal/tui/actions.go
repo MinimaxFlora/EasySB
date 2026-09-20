@@ -9,7 +9,12 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/MinimaxFlora/EasySB/internal/cert"
+	"github.com/MinimaxFlora/EasySB/internal/config"
 	"github.com/MinimaxFlora/EasySB/internal/core"
+	"github.com/MinimaxFlora/EasySB/internal/netutil"
+	"github.com/MinimaxFlora/EasySB/internal/secret"
+	"github.com/MinimaxFlora/EasySB/internal/service"
 	"github.com/MinimaxFlora/EasySB/internal/state"
 	"github.com/MinimaxFlora/EasySB/internal/subscribe"
 	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
@@ -161,6 +166,105 @@ func showShareLinks() actionFunc {
 			for _, line := range subscribe.ShareLinks(cfg) {
 				log(line)
 			}
+			return nil
+		})
+	}
+}
+
+// deployNode generates config.json, installs the service unit and starts the
+// node, auto-filling any missing credentials.
+func deployNode() actionFunc {
+	return func(a *App) tea.Cmd {
+		lang := a.lang
+		return a.startTask(lang.T("node_deploying"), func(ctx context.Context, log func(string)) error {
+			if !core.Installed() {
+				return errors.New(lang.T("node_need_core"))
+			}
+			cfg := state.Load()
+			if !cfg.AnyEnabled() {
+				return errors.New(lang.T("node_all_disabled"))
+			}
+
+			if cfg.UUID == "" {
+				cfg.UUID = core.GenerateUUID(ctx)
+				log(lang.T("param_uuid_gen") + ": " + cfg.UUID)
+			}
+			if cfg.Password == "" {
+				cfg.Password = secret.Password()
+				log(lang.T("param_pw_gen"))
+			}
+			if cfg.Enabled[state.ProtoVLESSReality] {
+				if cfg.RealityPriv == "" || cfg.RealityPub == "" {
+					priv, pub, err := core.RealityKeypair(ctx)
+					if err != nil {
+						return err
+					}
+					cfg.RealityPriv, cfg.RealityPub = priv, pub
+					log(lang.T("param_key_gen"))
+				}
+				if cfg.RealitySID == "" {
+					cfg.RealitySID = secret.ShortID()
+				}
+			}
+
+			if cfg.Domain == "" && cfg.CertDomain != "" {
+				cfg.Domain = cfg.CertDomain
+			}
+			certPair, err := cert.ResolveActive(cfg.Domain)
+			if err != nil {
+				return err
+			}
+			if certPair.SelfSigned && cfg.Domain == "" {
+				log(lang.T("node_need_domain"))
+				log("→ self-signed placeholder certificate")
+			}
+
+			if cfg.ServerIP == "" && cfg.Domain == "" {
+				if ip, err := netutil.PublicIP(ctx); err == nil {
+					cfg.ServerIP = ip
+					log("server ip: " + ip)
+				}
+			}
+
+			params := config.ParamsFromState(cfg)
+			params.CertFullchain = certPair.Fullchain
+			params.CertKey = certPair.Key
+			data, err := config.Build(params)
+			if err != nil {
+				return err
+			}
+			if err := os.MkdirAll(sysinfo.WorkDir, 0o755); err != nil {
+				return err
+			}
+			if err := os.WriteFile(sysinfo.ConfigJSON, data, 0o644); err != nil {
+				return err
+			}
+			log("write " + sysinfo.ConfigJSON)
+
+			if !core.ConfigCheck(ctx, sysinfo.ConfigJSON) {
+				return errors.New(lang.T("node_config_fail"))
+			}
+			log(lang.T("node_config_ok"))
+
+			if err := cfg.Save(); err != nil {
+				return err
+			}
+			if err := service.WriteUnit(); err != nil {
+				return err
+			}
+			log("write " + service.UnitPath())
+			if err := service.Do(ctx, "enable"); err != nil {
+				log("enable: " + err.Error())
+			}
+			if err := service.Do(ctx, "restart"); err != nil {
+				return err
+			}
+
+			cfg.NodeDeployed = true
+			if err := cfg.Save(); err != nil {
+				return err
+			}
+			log(lang.T("node_deploy_done"))
 			return nil
 		})
 	}

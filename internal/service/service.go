@@ -1,0 +1,161 @@
+// Package service installs and controls the sing-box system service, supporting
+// both systemd and OpenRC like the legacy shell implementation.
+package service
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"strings"
+	"time"
+
+	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
+)
+
+// ProjectHome is referenced in the generated unit for documentation.
+const ProjectHome = "https://github.com/MinimaxFlora/EasySB"
+
+// Manager identifies the init system in use.
+type Manager string
+
+const (
+	Systemd Manager = "systemd"
+	OpenRC  Manager = "openrc"
+	Unknown Manager = "unknown"
+)
+
+// Detect reports which init system is available.
+func Detect() Manager {
+	if _, err := os.Stat("/run/systemd/system"); err == nil {
+		return Systemd
+	}
+	if _, err := exec.LookPath("systemctl"); err == nil {
+		return Systemd
+	}
+	if _, err := exec.LookPath("rc-service"); err == nil {
+		return OpenRC
+	}
+	return Unknown
+}
+
+// UnitPath returns where the service unit should live.
+func UnitPath() string {
+	if Detect() == OpenRC {
+		return sysinfo.OpenRCUnit
+	}
+	return sysinfo.SystemdUnit
+}
+
+// WriteUnit writes the service definition for the current manager.
+func WriteUnit() error {
+	path := UnitPath()
+	if Detect() == OpenRC {
+		unit := fmt.Sprintf(`#!/sbin/openrc-run
+name="sing-box"
+description="sing-box service (EasySB)"
+command="%s"
+command_args="run -c %s"
+command_background=true
+pidfile="/run/${RC_SVCNAME}.pid"
+output_log="%s"
+error_log="%s"
+`, sysinfo.CoreBin, sysinfo.ConfigJSON, sysinfo.LogFile, sysinfo.LogFile)
+		if err := os.WriteFile(path, []byte(unit), 0o755); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	unit := fmt.Sprintf(`[Unit]
+Description=sing-box service (EasySB)
+Documentation=%s
+After=network.target nss-lookup.target
+
+[Service]
+Type=simple
+ExecStart=%s run -c %s
+Restart=on-failure
+RestartSec=3
+LimitNOFILE=infinity
+
+[Install]
+WantedBy=multi-user.target
+`, ProjectHome, sysinfo.CoreBin, sysinfo.ConfigJSON)
+	if err := os.WriteFile(path, []byte(unit), 0o644); err != nil {
+		return err
+	}
+	return DaemonReload()
+}
+
+// RemoveUnit deletes the service definition for the current manager.
+func RemoveUnit() error {
+	if err := os.Remove(UnitPath()); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if Detect() == Systemd {
+		return DaemonReload()
+	}
+	return nil
+}
+
+// DaemonReload refreshes the systemd unit cache.
+func DaemonReload() error {
+	if Detect() != Systemd {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "systemctl", "daemon-reload")
+	cmd.Env = append(os.Environ(), "LC_ALL=C")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return wrap("daemon-reload", out, err)
+	}
+	return nil
+}
+
+// Do performs a lifecycle action: start, stop, restart, enable or disable.
+func Do(ctx context.Context, action string) error {
+	var name string
+	var args []string
+	if Detect() == OpenRC {
+		name = "rc-service"
+		args = []string{sysinfo.ServiceName, action}
+		if action == "enable" {
+			name, args = "rc-update", []string{"add", sysinfo.ServiceName, "default"}
+		} else if action == "disable" {
+			name, args = "rc-update", []string{"del", sysinfo.ServiceName, "default"}
+		}
+	} else {
+		name = "systemctl"
+		args = []string{action, sysinfo.ServiceName}
+	}
+
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Env = append(os.Environ(), "LC_ALL=C")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return wrap(action, out, err)
+	}
+	return nil
+}
+
+// Active reports whether the sing-box service is currently running.
+func Active(ctx context.Context) bool {
+	if Detect() == OpenRC {
+		cmd := exec.CommandContext(ctx, "rc-service", sysinfo.ServiceName, "status")
+		return cmd.Run() == nil
+	}
+	cmd := exec.CommandContext(ctx, "systemctl", "is-active", "--quiet", sysinfo.ServiceName)
+	return cmd.Run() == nil
+}
+
+func wrap(action string, out []byte, err error) error {
+	msg := strings.TrimSpace(string(out))
+	if msg == "" {
+		msg = err.Error()
+	}
+	return errors.New(action + " " + sysinfo.ServiceName + ": " + msg)
+}
