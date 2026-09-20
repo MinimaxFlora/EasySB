@@ -38,6 +38,9 @@ var table = []entry{
 	{"banner_quote", "一言", "Quote"},
 
 	{"ver_script", "脚本版本", "Script version"},
+	{"ver_easysb", "EasySB 版本", "EasySB version"},
+	{"ver_core", "sing-box 内核", "sing-box core"},
+	{"ver_runtime", "运行状态", "Runtime"},
 	{"ver_local_core", "本地内核", "Local core"},
 	{"ver_stable", "最新正式版", "Latest stable"},
 	{"ver_alpha", "最新 alpha", "Latest alpha"},
@@ -48,6 +51,7 @@ var table = []entry{
 	{"ver_offline", "无法连接 GitHub，跳过远端版本检查", "Cannot reach GitHub, skip remote version check"},
 	{"ver_channel_stable", "正式版", "stable"},
 	{"ver_channel_alpha", "alpha", "alpha"},
+	{"ver_channel_test", "测试版", "test"},
 
 	{"menu_main", "主菜单", "Main menu"},
 	{"menu_kernel", "内核管理（sing-box 正式版 / alpha）", "Core (sing-box stable / alpha)"},
@@ -219,7 +223,8 @@ var table = []entry{
 	{"device_os", "系统", "OS"},
 	{"device_arch", "架构", "Arch"},
 	{"device_kernel", "内核", "Kernel"},
-	{"device_memory", "内存", "Memory"},
+	{"device_timezone", "时区", "Timezone"},
+	{"device_public_ip", "公网 IP", "Public IP"},
 	{"state_running", "运行中", "running"},
 	{"state_stopped", "已停止", "stopped"},
 	{"state_unknown", "未知", "unknown"},

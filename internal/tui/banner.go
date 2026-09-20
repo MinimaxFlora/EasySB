@@ -1,29 +1,52 @@
 package tui
 
 import (
-	"charm.land/lipgloss/v2"
-
 	"github.com/MinimaxFlora/EasySB/internal/theme"
 )
 
-// headerTitle renders the product name, version and tagline.
-func (a *App) headerTitle(w int) string {
-	versionTag := "v" + a.scriptVersion
-	tagline := theme.Truncate(a.lang.T("banner_tagline"), maxInt(4, w-lipgloss.Width(versionTag)-12))
-	return " " + a.palette.Bold(a.palette.Primary, "EasySB") + " " +
-		a.palette.Colored(a.palette.Accent, versionTag) + "  " + a.palette.Dim(tagline)
+// headerTagline renders the enlarged product tagline shown as the first line of
+// the dashboard body.
+func (a *App) headerTagline(w int) string {
+	text := theme.Truncate(a.lang.T("banner_tagline"), maxInt(8, w-4))
+	return "  " + a.palette.Bold(a.palette.Primary, text)
 }
 
 // headerAuthor renders the author and project line.
 func (a *App) headerAuthor() string {
-	return " " + a.palette.Label(a.lang.T("banner_author")) + " " + a.palette.Value("MinimaxFlora") +
+	return "  " + a.palette.Label(a.lang.T("banner_author")) + " " + a.palette.Value("MinimaxFlora") +
 		a.palette.Dim("  ·  ") + a.palette.Label(a.lang.T("banner_project")) + " " +
 		a.palette.Value("github.com/MinimaxFlora/EasySB")
 }
 
+// versionLines renders the version block: the app version, the installed core
+// with its channel tag, and a compact runtime summary.
+func (a *App) versionLines(width int) []string {
+	core := a.lang.T("ver_not_installed")
+	tag := ""
+	if a.status.CoreVersion != "" {
+		core = a.status.CoreVersion
+		tag = "  " + a.channelTag()
+	}
+	label := func(key string) string {
+		return "  " + theme.Pad(a.palette.Label(a.lang.T(key)), 16)
+	}
+	line1 := label("ver_easysb") + a.palette.Value(a.scriptVersion)
+	line2 := label("ver_core") + a.palette.Value(core) + tag
+	line3 := label("ver_runtime") + a.runtimeStatus(width-18)
+	return []string{line1, line2, line3}
+}
+
+// channelTag renders a colored stable/test badge for the installed core.
+func (a *App) channelTag() string {
+	if a.status.CoreChannel == "alpha" {
+		return a.palette.Colored(a.palette.Warn, "["+a.lang.T("ver_channel_test")+"]")
+	}
+	return a.palette.Colored(a.palette.OK, "["+a.lang.T("ver_channel_stable")+"]")
+}
+
 // headerQuote renders the daily quote chosen when the app started.
 func (a *App) headerQuote(w int) string {
-	return " " + a.palette.Label(a.lang.T("banner_quote")) + " " +
+	return "  " + a.palette.Label(a.lang.T("banner_quote")) + " " +
 		a.palette.Value(theme.Truncate(a.quote, maxInt(8, w-12)))
 }
 

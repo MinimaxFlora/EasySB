@@ -46,9 +46,13 @@ func TestDashboardFitsTerminal(t *testing.T) {
 		a.sized = true
 		a.status = sysinfo.Collect("test")
 		a.ready = true
-		lines := strings.Count(a.dashboard(), "\n") + 1
-		if lines > h {
+		if lines := strings.Count(a.dashboard(), "\n") + 1; lines > h {
 			t.Fatalf("height %d: dashboard drew %d lines", h, lines)
+		}
+		// The node card is taller than the device card, so exercise it too.
+		a.push(buildNode())
+		if lines := strings.Count(a.dashboard(), "\n") + 1; lines > h {
+			t.Fatalf("height %d: node dashboard drew %d lines", h, lines)
 		}
 	}
 }
@@ -298,7 +302,6 @@ func TestDashboardPanelsAndIcons(t *testing.T) {
 	view := a.View().Content
 	for _, want := range []string{
 		i18n.Chinese.T("panel_device"),
-		i18n.Chinese.T("panel_node"),
 		i18n.Chinese.T("panel_hints"),
 	} {
 		if !strings.Contains(view, want) {
@@ -307,6 +310,16 @@ func TestDashboardPanelsAndIcons(t *testing.T) {
 	}
 	if strings.Contains(view, "[1]") {
 		t.Fatalf("menu should use icons instead of bracketed numbers:\n%s", view)
+	}
+
+	// The node card lives inside node management instead of the main menu.
+	a.push(buildNode())
+	nodeView := a.View().Content
+	if !strings.Contains(nodeView, i18n.Chinese.T("panel_node")) {
+		t.Fatalf("node menu missing the node card:\n%s", nodeView)
+	}
+	if strings.Contains(nodeView, i18n.Chinese.T("panel_device")) {
+		t.Fatalf("node menu should not show the device card:\n%s", nodeView)
 	}
 }
 

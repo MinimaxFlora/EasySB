@@ -4,12 +4,10 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 	"os/exec"
 	"regexp"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -49,7 +47,8 @@ type Status struct {
 	OS       string
 	Arch     string
 	Kernel   string
-	Memory   string
+	Timezone string
+	PublicIP string
 }
 
 type PortInfo struct {
@@ -87,6 +86,7 @@ func Collect(scriptVersion string) Status {
 	st.UUID = state["UUID"]
 	st.Password = state["PASSWORD"]
 	st.Hop = state["HY2_HOP_RANGE"]
+	st.PublicIP = state["SERVER_IP"]
 
 	inbounds := readInbounds()
 	if len(inbounds) > 0 {
@@ -123,7 +123,7 @@ func collectDevice(st *Status) {
 	st.OS = osName()
 	st.Arch = runtime.GOARCH
 	st.Kernel = kernelRelease()
-	st.Memory = totalMemory()
+	st.Timezone = timezone()
 }
 
 func osName() string {
@@ -164,30 +164,21 @@ func kernelRelease() string {
 	return ""
 }
 
-func totalMemory() string {
-	data, err := os.ReadFile("/proc/meminfo")
-	if err != nil {
-		return ""
+func timezone() string {
+	if data, err := os.ReadFile("/etc/timezone"); err == nil {
+		if v := strings.TrimSpace(string(data)); v != "" {
+			return v
+		}
 	}
-	for _, line := range strings.Split(string(data), "\n") {
-		if !strings.HasPrefix(line, "MemTotal:") {
-			continue
+	if link, err := os.Readlink("/etc/localtime"); err == nil {
+		if i := strings.Index(link, "zoneinfo/"); i >= 0 {
+			return link[i+len("zoneinfo/"):]
 		}
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
-			return ""
-		}
-		kb, err := strconv.ParseFloat(fields[1], 64)
-		if err != nil || kb <= 0 {
-			return ""
-		}
-		gb := kb / 1024 / 1024
-		if gb < 1 {
-			return fmt.Sprintf("%.0f MB", kb/1024)
-		}
-		return fmt.Sprintf("%.1f GB", gb)
 	}
-	return ""
+	if name := time.Now().Format("MST"); name != "" {
+		return name
+	}
+	return "UTC"
 }
 
 func coreVersion() (string, string) {

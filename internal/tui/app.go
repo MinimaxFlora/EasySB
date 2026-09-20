@@ -1,8 +1,10 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
@@ -10,11 +12,14 @@ import (
 
 	"github.com/MinimaxFlora/EasySB/internal/i18n"
 	"github.com/MinimaxFlora/EasySB/internal/icons"
+	"github.com/MinimaxFlora/EasySB/internal/netutil"
 	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
 	"github.com/MinimaxFlora/EasySB/internal/theme"
 )
 
 type statusMsg sysinfo.Status
+
+type publicIPMsg string
 
 type App struct {
 	scriptVersion string
@@ -47,7 +52,7 @@ func New(scriptVersion string, lang i18n.Lang) *App {
 }
 
 func (a *App) Init() tea.Cmd {
-	return collectStatus(a.scriptVersion)
+	return tea.Batch(collectStatus(a.scriptVersion), fetchPublicIP())
 }
 
 func (a *App) Snapshot(width, height int) string {
@@ -64,11 +69,36 @@ func collectStatus(version string) tea.Cmd {
 	}
 }
 
+// fetchPublicIP probes the public IP in the background so the dashboard never
+// blocks on the network. The result only fills a gap left by the state file.
+func fetchPublicIP() tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		ip, err := netutil.PublicIP(ctx)
+		if err != nil {
+			return publicIPMsg("")
+		}
+		return publicIPMsg(ip)
+	}
+}
+
 func quit() tea.Cmd {
 	return func() tea.Msg { return tea.Quit() }
 }
 
 func (a *App) current() *menu { return a.stack[len(a.stack)-1] }
+
+// inNodeManagement reports whether the current screen lives under the node
+// management menu, where the node parameter card replaces the device card.
+func (a *App) inNodeManagement() bool {
+	for i := 1; i < len(a.stack); i++ {
+		if a.stack[i].id == "node" {
+			return true
+		}
+	}
+	return false
+}
 
 func (a *App) push(m *menu) {
 	a.stack = append(a.stack, m)
@@ -217,6 +247,11 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.status = sysinfo.Status(msg)
 		a.ready = true
 		return a, nil
+	case publicIPMsg:
+		if a.status.PublicIP == "" && msg != "" {
+			a.status.PublicIP = string(msg)
+		}
+		return a, nil
 	}
 
 	if a.form != nil {
@@ -303,7 +338,7 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		a.lang = a.lang.Toggle()
 		a.quote = a.lang.Hitokoto()
 	case "r":
-		return a, collectStatus(a.scriptVersion)
+		return a, tea.Batch(collectStatus(a.scriptVersion), fetchPublicIP())
 	}
 	return a, nil
 }
@@ -376,31 +411,40 @@ func (a *App) dashboard() string {
 	}
 
 	// Two stacked boxes need 5 rows of chrome (2 + 3); below that the hints go
-	// inline on the final row.
+	// inline on the final row, which leaves room for three more body rows.
 	useHintBox := h >= 12
 	var budget int
 	if useHintBox {
 		budget = h - 5
 	} else {
-		budget = h - 4
+		budget = h - 3
 	}
 	if budget < 5 {
 		budget = 5
 	}
 
-	title := a.headerTitle(inner)
+	tagline := a.headerTagline(inner)
 	author := a.headerAuthor()
-	quote := a.headerQuote(inner)
 	rule := theme.Rule(inner, a.palette.Border)
-	status := a.statusSummary(inner)
+
+	inNode := a.inNodeManagement()
+	var version []string
+	var info []string
+	if inNode {
+		info = a.nodeSection(inner)
+	} else {
+		version = a.versionLines(inner)
+		info = a.deviceSection(inner)
+	}
+	quote := a.headerQuote(inner)
 
 	navRows := 0
 	if a.hasNavRow() {
 		navRows = 1
 	}
 
-	// Greedy section budget. base covers title, author, the rule before the menu
-	// and the menu title; one extra row is reserved for at least one menu entry.
+	// Greedy section budget. base covers the tagline, author line, the rule
+	// before the menu and the menu title; one row is reserved for a menu entry.
 	base := 4
 	avail := budget - base - navRows - 1
 	if a.toast != "" {
@@ -409,9 +453,6 @@ func (a *App) dashboard() string {
 	if avail < 0 {
 		avail = 0
 	}
-	statusCost := 1 + len(status)
-	deviceCost := 3
-	nodeCost := 3
 
 	take := func(cost int) bool {
 		if cost > avail {
@@ -420,10 +461,10 @@ func (a *App) dashboard() string {
 		avail -= cost
 		return true
 	}
-	// Priority order: live status first, then the cards, then the quote.
-	showStatus := take(statusCost)
-	showDevice := take(deviceCost)
-	showNode := take(nodeCost)
+	// The version block is preceded by a separator rule, so it costs one extra
+	// row on top of its content lines.
+	showVersion := len(version) > 0 && take(len(version)+1)
+	showInfo := take(len(info))
 	showQuote := take(1)
 	rowsAvail := 1 + avail
 	if rowsAvail < 1 {
@@ -436,19 +477,16 @@ func (a *App) dashboard() string {
 		menuTitle += a.palette.Dim(fmt.Sprintf("  (+%d)", hidden))
 	}
 
-	body := []string{title, author}
+	body := []string{tagline, author}
+	if showVersion {
+		body = append(body, rule)
+		body = append(body, version...)
+	}
+	if showInfo {
+		body = append(body, info...)
+	}
 	if showQuote {
 		body = append(body, quote)
-	}
-	if showDevice {
-		body = append(body, a.subPanel(a.lang.T("panel_device"), a.deviceLines(inner), inner)...)
-	}
-	if showStatus {
-		body = append(body, rule)
-		body = append(body, status...)
-	}
-	if showNode {
-		body = append(body, a.subPanel(a.lang.T("panel_node"), a.nodeLines(inner), inner)...)
 	}
 	body = append(body, rule, menuTitle)
 	body = append(body, items...)
