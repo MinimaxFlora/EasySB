@@ -31,11 +31,7 @@ var table = []entry{
 	{"lang_cn", "简体中文", "简体中文"},
 	{"lang_en", "English", "English"},
 
-	{"banner_tagline", "使用 Go 编写的一键五合一 sing-box 脚本", "A one-click, five-in-one sing-box script written in Go"},
-	{"banner_author", "作者", "Author"},
-	{"banner_project", "项目", "Project"},
-	{"banner_blog", "博客", "Blog"},
-	{"banner_docs", "文档", "Docs"},
+	{"banner_tagline", "使用 Go 编写的一键五合一 sing-box 工具箱", "A one-click, five-in-one sing-box toolkit written in Go"},
 	{"banner_core", "内核", "Core"},
 	{"banner_quote", "一言", "Quote"},
 

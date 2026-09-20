@@ -437,6 +437,14 @@ func (a *App) dashboard() string {
 	used := 5 + navRows
 	menuRows := 1
 
+	// The wordmark is the brand anchor, so it claims space before the data
+	// sections and the extra menu rows.
+	var logo []string
+	if lines := a.logoLines(inner); lines != nil && used+len(lines) <= budget {
+		used += len(lines)
+		logo = lines
+	}
+
 	showOverview, showDevice, showNode := false, false, false
 	if inNode {
 		if used+9 <= budget {
@@ -453,6 +461,9 @@ func (a *App) dashboard() string {
 			showDevice = true
 		}
 	}
+	// Every menu entry reserves one row; the blank spacers between entries are
+	// filled from the leftover budget below, so the menu never loses an item to
+	// whitespace.
 	for menuRows < totalItems && used+1 <= budget {
 		used++
 		menuRows++
@@ -461,20 +472,12 @@ func (a *App) dashboard() string {
 	if showQuote {
 		used++
 	}
-	showContact := used+4 <= budget
-	if showContact {
-		used += 4
-	}
-	var logo []string
-	if lines := a.logoLines(inner); lines != nil && used+len(lines) <= budget {
-		used += len(lines)
-		logo = lines
-	}
 	leftover := budget - used
 
 	type row struct {
 		text    string
 		sep     bool
+		rule    bool
 		blankOK bool
 	}
 	var rows []row
@@ -487,18 +490,11 @@ func (a *App) dashboard() string {
 		}
 	}
 
-	for i, l := range logo {
-		addText(l, i == len(logo)-1)
+	for i := 0; i < len(logo); i++ {
+		addText(logo[i], i == len(logo)-1)
 	}
-	for i, l := range a.taglineLines(inner) {
-		addText(l, i == 1)
-	}
-	if showContact {
-		lines := a.contactLines()
-		for i, l := range lines {
-			addText(l, i == len(lines)-1)
-		}
-	}
+	addText(a.taglineLine(inner), true)
+	rows = append(rows, row{rule: true})
 	if showOverview {
 		addSection("panel_overview", a.overviewRows(inner))
 	}
@@ -516,7 +512,17 @@ func (a *App) dashboard() string {
 		menuTitle += a.palette.Dim(fmt.Sprintf("  (+%d)", hidden))
 	}
 	addText(menuTitle, true)
+	// Draw the breathing room only when every gap fits, so the spacing stays
+	// even instead of opening a single random hole in the list.
+	gaps := 0
+	if len(items) > 1 && leftover >= len(items)-1 {
+		gaps = len(items) - 1
+		leftover -= gaps
+	}
 	for i, l := range items {
+		if i > 0 && i <= gaps {
+			addText("", false)
+		}
 		addText(l, i == len(items)-1)
 	}
 	if a.hasNavRow() {
@@ -530,6 +536,10 @@ func (a *App) dashboard() string {
 	for i, r := range rows {
 		if r.sep {
 			out = append(out, theme.SectionRule(w, a.palette.Border))
+			continue
+		}
+		if r.rule {
+			out = append(out, theme.FrameRule(w, a.palette.Border))
 			continue
 		}
 		out = append(out, theme.FrameLine(r.text, w, a.palette.Border))
@@ -613,12 +623,17 @@ func (a *App) menuRow(selected bool, n *node, inner, labelCol int) string {
 	if a.current().id == "root" && n.desc != nil {
 		desc = n.desc(a.lang)
 	}
-	if desc == "" {
+
+	compact := func() string {
 		line := " " + marker + theme.Truncate(label, inner-3)
 		if selected {
 			return a.palette.Bold(a.palette.Primary, line)
 		}
 		return a.palette.Bold(a.palette.Text, line)
+	}
+
+	if desc == "" {
+		return compact()
 	}
 
 	gap := labelCol - lipgloss.Width(label)
@@ -627,7 +642,9 @@ func (a *App) menuRow(selected bool, n *node, inner, labelCol int) string {
 	}
 	descWidth := inner - 3 - lipgloss.Width(label) - gap
 	if descWidth < 4 {
-		descWidth = 4
+		// No room for a description next to this label; drop to the compact form
+		// so the row never spills past the panel border.
+		return compact()
 	}
 	line := " " + marker + label + strings.Repeat(" ", gap)
 	d := theme.Truncate(desc, descWidth)

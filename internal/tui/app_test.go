@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/MinimaxFlora/EasySB/internal/i18n"
 	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
@@ -75,7 +76,7 @@ func TestMenuViewportKeepsCursorVisible(t *testing.T) {
 func TestDashboardRendersStatus(t *testing.T) {
 	a := newTestApp(t)
 	v := a.View()
-	for _, want := range []string{"EasySB", "example.com", "1.15.0-alpha.6"} {
+	for _, want := range []string{i18n.Chinese.T("banner_tagline"), "example.com", "1.15.0-alpha.6"} {
 		if !strings.Contains(v.Content, want) {
 			t.Fatalf("view missing %q", want)
 		}
@@ -339,6 +340,25 @@ func TestDashboardShowsLogoAndMenuDescriptions(t *testing.T) {
 	}
 	if !strings.Contains(view, i18n.Chinese.T("panel_overview")) {
 		t.Fatalf("dashboard should show the overview section:\n%s", view)
+	}
+}
+
+func TestDashboardFitsNarrowWidths(t *testing.T) {
+	// Long English labels used to spill past the right border on small
+	// terminals because the two-column and menu rows never clamped the label.
+	for _, lang := range []i18n.Lang{i18n.Chinese, i18n.English} {
+		for _, w := range []int{24, 32, 40, 60, 80} {
+			a := New("test", lang)
+			a.width, a.height = w, 40
+			a.sized = true
+			a.status = sysinfo.Collect("test")
+			a.ready = true
+			for _, line := range strings.Split(a.dashboard(), "\n") {
+				if got := lipgloss.Width(line); got > w {
+					t.Fatalf("lang %s width %d: line is %d cells: %q", lang, w, got, line)
+				}
+			}
+		}
 	}
 }
 

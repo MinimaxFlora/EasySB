@@ -135,13 +135,6 @@ func Box(title, content string, width int, border color.Color, titleColor color.
 	return top + "\n" + body.String() + bottom
 }
 
-func Rule(width int, c color.Color) string {
-	if width < 1 {
-		return ""
-	}
-	return lipgloss.NewStyle().Foreground(c).Render(strings.Repeat("─", width))
-}
-
 // Center places s in the middle of a field of the given width, measuring styled
 // text with lipgloss so ANSI sequences do not skew the padding.
 func Center(s string, width int) string {
@@ -177,6 +170,14 @@ func SectionRule(width int, c color.Color) string {
 		return ""
 	}
 	return lipgloss.NewStyle().Foreground(c).Render("├" + strings.Repeat("─", width-2) + "┤")
+}
+
+// FrameRule draws a horizontal rule that joins the panel's two side borders.
+func FrameRule(width int, c color.Color) string {
+	if width < 2 {
+		return ""
+	}
+	return lipgloss.NewStyle().Foreground(c).Render("│" + strings.Repeat("─", width-2) + "│")
 }
 
 // FrameLine wraps one body row in the panel's side borders, padding it to the

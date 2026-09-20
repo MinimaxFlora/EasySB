@@ -134,6 +134,8 @@ func (a *App) styledTwoCols(width int, lLabel, lText string, lStyle func(string)
 	}
 	lValue := theme.Truncate(lText, maxInt(0, col-labelW-1))
 	rValue := theme.Truncate(rText, maxInt(0, width-4-col-labelW))
+	lLabel = theme.Truncate(lLabel, labelW)
+	rLabel = theme.Truncate(rLabel, labelW)
 	left := theme.Pad(a.palette.Label(theme.Pad(lLabel, labelW))+lStyle(lValue), col)
 	right := a.palette.Label(theme.Pad(rLabel, labelW)) + rStyle(rValue)
 	return "  " + left + "  " + right
