@@ -105,10 +105,20 @@ func WriteSite(cfg state.Config) error {
 	if err := os.MkdirAll(ConfDir(), 0o755); err != nil {
 		return err
 	}
+	previous, readErr := os.ReadFile(ConfPath())
+	hadPrevious := readErr == nil
 	if err := os.WriteFile(ConfPath(), []byte(body), 0o644); err != nil {
 		return err
 	}
 	if err := Test(); err != nil {
+		// Never leave an invalid fragment behind: it keeps every later
+		// `nginx -t` failing and freezes nginx on the previous config, so the
+		// newly published endpoints would silently keep returning 404.
+		if hadPrevious {
+			_ = os.WriteFile(ConfPath(), previous, 0o644)
+		} else {
+			_ = os.Remove(ConfPath())
+		}
 		return err
 	}
 	return Do("restart")
