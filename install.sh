@@ -257,18 +257,13 @@ _install_go_tarball() {
 # EasySB 二进制安装 / EasySB binary installation
 # ------------------------------------------------------------------------------
 download_binary() {
-  local base="https://github.com/${REPO}/releases/download/${RELEASE_TAG}/easysb-linux-${ARCH}"
-  local out="$1" proxy
+  local url="https://github.com/${REPO}/releases/download/${RELEASE_TAG}/easysb-linux-${ARCH}"
+  local out="$1"
   say "尝试下载预编译二进制" "Trying prebuilt binary"
-  # 依次尝试直连与 GitHub 反代，与 internal/core 的下载回退链保持一致
-  # Try direct then GitHub proxies, matching the fallback chain in internal/core
-  for proxy in '' 'https://ghfast.top/' 'https://gh-proxy.com/'; do
-    dim "${proxy}${base}"
-    if curl -fsSL -A 'EasySB-installer' --connect-timeout 15 -o "$out" "${proxy}${base}" 2>/dev/null && [ -s "$out" ]; then
-      return 0
-    fi
-  done
-  return 1
+  dim "$url"
+  curl -fsSL -A 'EasySB-installer' --connect-timeout 15 -o "$out" "$url" 2>/dev/null || return 1
+  [ -s "$out" ] || return 1
+  return 0
 }
 
 build_from_source() {

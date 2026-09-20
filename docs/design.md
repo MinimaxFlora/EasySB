@@ -50,8 +50,9 @@ screen, one border, and one accent per state (ok / warn / error). Spacing is
 explicit: dividers and menu items each get exactly one blank line, and the
 dashboard drops low-priority panels before it overflows a short terminal.
 
-## Fail soft on the network
+## Direct downloads, tolerant parsing
 
-Core downloads walk a proxy fallback chain (`""`, `ghfast.top`, `gh-proxy.com`)
-and release tag parsing tolerates a missing `v` prefix. A single network failure
-should degrade to the next mirror rather than abort the flow.
+Deployment targets are overseas hosts with direct GitHub access, so core and
+binary downloads go straight to `github.com` with no mirror prefix. Release tag
+parsing still tolerates a missing `v` prefix, because the `releases.atom` feed
+omits it.

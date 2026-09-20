@@ -34,9 +34,10 @@ Traps already hit in this repository. Each entry names the symptom and the fix.
   (`subscribe.ImportScheme`). This is what broke QR scanning before.
 - **`releases.atom` tags omit the `v` prefix.** `core.normalizeTag` re-adds it;
   do not compare raw tags.
-- **GitHub downloads can be blocked.** Core downloads walk the fallback chain
-  `["", "https://ghfast.top/", "https://gh-proxy.com/"]`. Add new mirrors to the
-  single list rather than special-casing callers.
+- **Downloads assume direct GitHub access.** Deployment targets are overseas,
+  so core and binary downloads go straight to `github.com`. Mirror prefixes were
+  removed on purpose; do not reintroduce them to work around a local network
+  problem.
 - **Comments are invalid JSON.** `templates/` files are JSONC for humans. Strip
   comments before handing anything to `sing-box check`.
 

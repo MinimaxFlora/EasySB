@@ -33,9 +33,6 @@ const (
 	Web = "https://github.com/" + Repo
 )
 
-// proxies are prefixed to GitHub URLs in order until one succeeds.
-var proxies = []string{"", "https://ghfast.top/", "https://gh-proxy.com/"}
-
 // Release describes one downloadable core build.
 type Release struct {
 	Version string
@@ -217,31 +214,22 @@ func fetchLatestTag(ctx context.Context) (string, error) {
 			return http.ErrUseLastResponse
 		},
 	}
-	var lastErr error
-	for _, p := range proxies {
-		req, err := http.NewRequestWithContext(ctx, http.MethodHead, p+"https://github.com/"+Repo+"/releases/latest", nil)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		req.Header.Set("User-Agent", "EasySB")
-		resp, err := client.Do(req)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		resp.Body.Close()
-		if loc := resp.Header.Get("Location"); loc != "" {
-			if tag := path.Base(loc); tag != "" && tag != "latest" {
-				return normalizeTag(tag), nil
-			}
-		}
-		lastErr = fmt.Errorf("no redirect from %s", p)
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, "https://github.com/"+Repo+"/releases/latest", nil)
+	if err != nil {
+		return "", err
 	}
-	if lastErr == nil {
-		lastErr = errors.New("no redirect")
+	req.Header.Set("User-Agent", "EasySB")
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
 	}
-	return "", lastErr
+	resp.Body.Close()
+	if loc := resp.Header.Get("Location"); loc != "" {
+		if tag := path.Base(loc); tag != "" && tag != "latest" {
+			return normalizeTag(tag), nil
+		}
+	}
+	return "", errors.New("no redirect from latest release")
 }
 
 var alphaTagRe = regexp.MustCompile(`<title>(v?[0-9][^<]*(?:alpha|beta|rc)[^<]*)</title>`)
@@ -267,22 +255,16 @@ func normalizeTag(tag string) string {
 	return "v" + tag
 }
 
-// fetch returns the body of a GitHub URL, trying each configured proxy prefix.
+// fetch returns the body of a GitHub URL.
 func fetch(ctx context.Context, url string) ([]byte, error) {
-	var lastErr error
-	for _, p := range proxies {
-		body, err := get(ctx, p+url)
-		if err == nil && len(body) > 0 {
-			return body, nil
-		}
-		if err != nil {
-			lastErr = err
-		}
+	body, err := get(ctx, url)
+	if err != nil {
+		return nil, err
 	}
-	if lastErr == nil {
-		lastErr = errors.New("empty response")
+	if len(body) == 0 {
+		return nil, errors.New("empty response")
 	}
-	return nil, lastErr
+	return body, nil
 }
 
 func get(ctx context.Context, url string) ([]byte, error) {
@@ -305,20 +287,8 @@ func get(ctx context.Context, url string) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 }
 
-// Download streams a URL to dest, trying each configured proxy prefix.
+// Download streams a URL to dest.
 func Download(ctx context.Context, url, dest string) error {
-	var lastErr error
-	for _, p := range proxies {
-		if err := downloadTo(ctx, p+url, dest); err == nil {
-			return nil
-		} else {
-			lastErr = err
-		}
-	}
-	return lastErr
-}
-
-func downloadTo(ctx context.Context, url, dest string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
