@@ -2,8 +2,8 @@
 # EasySB / sing-box 模板仓库忽略规则
 # ---------------------------------------------------------------------------
 
-# 构建产物：EasySB/dist/easysb.sh 由 build.sh 与 GitHub Actions 生成
-EasySB/dist/
+# 构建产物：legacy/EasySB/dist/easysb.sh 由 build.sh 与 GitHub Actions 生成
+legacy/EasySB/dist/
 
 # 本地 Agent 记忆与设计草稿（不对外发布）
 .monkeycode/

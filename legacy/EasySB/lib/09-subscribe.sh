@@ -151,9 +151,28 @@ subscription_url() {
   printf '%s://%s:%s%s' "$scheme" "$host" "${SUB_PORT:-$SUB_PORT_DEFAULT}" "${SUB_PATH:-$SUB_PATH_DEFAULT}"
 }
 
+# 订阅二维码载荷 / QR payload for the sing-box client
+# 直接编码裸订阅地址时 sing-box 客户端无法识别；必须使用 import-remote-profile
+# 深层链接，并对订阅地址做 URL 编码。
+# A bare subscription URL is not recognized by the sing-box client; encode the
+# import-remote-profile deep link with the subscription URL percent-encoded.
+qr_payload() {
+  local url="$1" enc
+  if have_cmd jq; then
+    enc="$(jq -rn --arg u "$url" '$u|@uri')"
+  elif have_cmd python3; then
+    enc="$(python3 -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.argv[1],safe=""))' "$url")"
+  else
+    enc="$url"
+  fi
+  printf 'sing-box://import-remote-profile?url=%s' "$enc"
+}
+
 print_qr() {
+  local url="$1" payload
+  payload="$(qr_payload "$url")"
   if have_cmd qrencode; then
-    qrencode -t ANSIUTF8 "$1"
+    qrencode -t ANSIUTF8 "$payload"
   else
     log_warn "$(text sub_no_qrencode)"
   fi

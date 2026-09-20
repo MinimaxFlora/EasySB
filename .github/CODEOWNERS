@@ -6,7 +6,7 @@
 * @MinimaxFlora
 
 # 脚本源码、构建与测试
-/EasySB/ @MinimaxFlora
+/legacy/EasySB/ @MinimaxFlora
 
 # 客户端订阅与全局代理模板
 /Templates/ @MinimaxFlora

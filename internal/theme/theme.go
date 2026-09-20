@@ -1,0 +1,143 @@
+package theme
+
+import (
+	"image/color"
+	"strings"
+
+	"charm.land/lipgloss/v2"
+)
+
+type Palette struct {
+	Primary color.Color
+	Accent  color.Color
+	OK      color.Color
+	Warn    color.Color
+	Err     color.Color
+	Text    color.Color
+	Muted   color.Color
+	Border  color.Color
+	SelBg   color.Color
+	SelFg   color.Color
+}
+
+func Dark() Palette {
+	return Palette{
+		Primary: lipgloss.Color("#22d3ee"),
+		Accent:  lipgloss.Color("#3b82f6"),
+		OK:      lipgloss.Color("#34d399"),
+		Warn:    lipgloss.Color("#fbbf24"),
+		Err:     lipgloss.Color("#f87171"),
+		Text:    lipgloss.Color("#e5e7eb"),
+		Muted:   lipgloss.Color("#7c8aa0"),
+		Border:  lipgloss.Color("#155e75"),
+		SelBg:   lipgloss.Color("#164e63"),
+		SelFg:   lipgloss.Color("#f0fdff"),
+	}
+}
+
+func (p Palette) Bold(c color.Color, s string) string {
+	return lipgloss.NewStyle().Bold(true).Foreground(c).Render(s)
+}
+
+func (p Palette) Colored(c color.Color, s string) string {
+	return lipgloss.NewStyle().Foreground(c).Render(s)
+}
+
+func (p Palette) Dim(s string) string {
+	return lipgloss.NewStyle().Foreground(p.Muted).Render(s)
+}
+
+func (p Palette) Label(s string) string {
+	return lipgloss.NewStyle().Foreground(p.Accent).Bold(true).Render(s)
+}
+
+func (p Palette) Value(s string) string {
+	return lipgloss.NewStyle().Foreground(p.Text).Render(s)
+}
+
+func (p Palette) Selected(s string) string {
+	return lipgloss.NewStyle().Bold(true).Foreground(p.SelFg).Background(p.SelBg).Padding(0, 1).Render(s)
+}
+
+func (p Palette) State(s string, ok bool, warn bool) string {
+	switch {
+	case warn:
+		return lipgloss.NewStyle().Bold(true).Foreground(p.Warn).Render(s)
+	case ok:
+		return lipgloss.NewStyle().Bold(true).Foreground(p.OK).Render(s)
+	default:
+		return lipgloss.NewStyle().Bold(true).Foreground(p.Err).Render(s)
+	}
+}
+
+func Truncate(s string, w int) string {
+	if w <= 0 {
+		return ""
+	}
+	if lipgloss.Width(s) <= w {
+		return s
+	}
+	var b strings.Builder
+	cur := 0
+	for _, r := range s {
+		rw := lipgloss.Width(string(r))
+		if cur+rw > w-1 {
+			break
+		}
+		b.WriteRune(r)
+		cur += rw
+	}
+	return b.String() + "…"
+}
+
+func Pad(s string, w int) string {
+	if w <= 0 {
+		return s
+	}
+	pad := w - lipgloss.Width(s)
+	if pad <= 0 {
+		return s
+	}
+	return s + strings.Repeat(" ", pad)
+}
+
+func Fit(s string, w int) string {
+	if w <= 0 {
+		return s
+	}
+	return Pad(Truncate(s, w), w)
+}
+
+func Box(title, content string, width int, border color.Color, titleColor color.Color) string {
+	if width < 8 {
+		width = 8
+	}
+	title = Truncate(title, width-6)
+	tw := lipgloss.Width(title)
+	fill := width - 5 - tw
+	if fill < 0 {
+		fill = 0
+	}
+	top := lipgloss.NewStyle().Foreground(border).Render("╭─ ") +
+		lipgloss.NewStyle().Bold(true).Foreground(titleColor).Render(title) +
+		lipgloss.NewStyle().Foreground(border).Render(" "+strings.Repeat("─", fill)+"╮")
+
+	inner := width - 4
+	lines := strings.Split(content, "\n")
+	var body strings.Builder
+	for _, ln := range lines {
+		body.WriteString(lipgloss.NewStyle().Foreground(border).Render("│ "))
+		body.WriteString(Pad(ln, inner))
+		body.WriteString(lipgloss.NewStyle().Foreground(border).Render(" │"))
+		body.WriteString("\n")
+	}
+	bottom := lipgloss.NewStyle().Foreground(border).Render("╰" + strings.Repeat("─", width-2) + "╯")
+	return top + "\n" + body.String() + bottom
+}
+
+func Rule(width int, c color.Color) string {
+	if width < 1 {
+		return ""
+	}
+	return lipgloss.NewStyle().Foreground(c).Render(strings.Repeat("─", width))
+}

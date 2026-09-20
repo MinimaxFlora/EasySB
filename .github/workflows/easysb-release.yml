@@ -1,7 +1,7 @@
 name: Build EasySB script
 
-# 源码：EasySB/lib/*.sh（按功能拆分的模块，带完整注释，便于阅读与维护）
-# 产物：EasySB/dist/easysb.sh（由 EasySB/build.sh 合成，仅在 Actions 运行器中生成）
+# 源码：legacy/EasySB/lib/*.sh（按功能拆分的模块，带完整注释，便于阅读与维护）
+# 产物：legacy/EasySB/dist/easysb.sh（由 legacy/EasySB/build.sh 合成，仅在 Actions 运行器中生成）
 # 发布：以固定 tag `easysb` 发布 release 资产 easysb.sh，供安装与 [sb] 快捷指令拉取
 
 on:
@@ -9,12 +9,12 @@ on:
     branches:
       - master
     paths:
-      - 'EasySB/lib/**'
-      - 'EasySB/build.sh'
-      - 'EasySB/config.conf'
+      - 'legacy/EasySB/lib/**'
+      - 'legacy/EasySB/build.sh'
+      - 'legacy/EasySB/config.conf'
       - '.github/workflows/easysb-release.yml'
-      - 'EasySB/VERSION'
-      - 'EasySB/tests/**'
+      - 'legacy/EasySB/VERSION'
+      - 'legacy/EasySB/tests/**'
   workflow_dispatch:
 
 permissions:
@@ -32,25 +32,25 @@ jobs:
       - name: 检出仓库
         uses: actions/checkout@v7
 
-      - name: 合成发行脚本 EasySB/dist/easysb.sh
+      - name: 合成发行脚本 legacy/EasySB/dist/easysb.sh
         run: |
           set -euo pipefail
-          bash EasySB/build.sh
-          [ -f "EasySB/dist/${SCRIPT_NAME}" ] || { echo "::error::未生成 EasySB/dist/${SCRIPT_NAME}"; exit 1; }
-          SCRIPT_VERSION="$(tr -d '[:space:]' < EasySB/VERSION)"
+          bash legacy/EasySB/build.sh
+          [ -f "legacy/EasySB/dist/${SCRIPT_NAME}" ] || { echo "::error::未生成 legacy/EasySB/dist/${SCRIPT_NAME}"; exit 1; }
+          SCRIPT_VERSION="$(tr -d '[:space:]' < legacy/EasySB/VERSION)"
           echo "SCRIPT_VERSION=${SCRIPT_VERSION}" >> "$GITHUB_ENV"
-          echo "已生成 EasySB/dist/${SCRIPT_NAME}（版本：${SCRIPT_VERSION}）"
+          echo "已生成 legacy/EasySB/dist/${SCRIPT_NAME}（版本：${SCRIPT_VERSION}）"
 
       - name: 运行测试
         run: |
           set -euo pipefail
-          bash EasySB/tests/run-tests.sh
+          bash legacy/EasySB/tests/run-tests.sh
 
       - name: 上传构建产物
         uses: actions/upload-artifact@v7
         with:
           name: easysb-script
-          path: EasySB/dist/easysb.sh
+          path: legacy/EasySB/dist/easysb.sh
           if-no-files-found: error
 
       - name: 发布到 Release
@@ -72,4 +72,4 @@ jobs:
             ```bash
             bash <(curl -fsSL https://github.com/MinimaxFlora/EasySB/releases/download/easysb/easysb.sh)
             ```
-          files: EasySB/dist/easysb.sh
+          files: legacy/EasySB/dist/easysb.sh

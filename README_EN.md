@@ -41,7 +41,8 @@
 
 EasySB is a 5-in-1 sing-box deployment script for Linux VPS. It brings protocol deployment, certificate issuance, core version management and subscription generation into one interactive menu.
 
-- **Script**: `EasySB/` is the source, composed into a single `easysb.sh` at runtime. After installation the `sb` shortcut opens the menu.
+- **Go (primary implementation)**: a root Go module built with bubbletea / bubbles / lipgloss, compiled into a single static binary exposed as `sb`.
+- **Script (archived)**: `legacy/EasySB/` keeps the original bash implementation, composed into a single `easysb.sh` at runtime.
 - **Templates**: `Templates/` and the five protocol directories ship readable JSONC samples. Use the templates on their own, or let the script deploy them.
 - **Core**: the sing-box binary comes from the official [SagerNet/sing-box](https://github.com/SagerNet/sing-box) releases. Stable and alpha builds can be installed, replaced or removed at any time.
 
@@ -57,7 +58,10 @@ EasySB is a 5-in-1 sing-box deployment script for Linux VPS. It brings protocol 
 
 ```text
 .
-├── EasySB/                       # One-click deployment script
+├── cmd/easysb/                   # Go entrypoint (TUI)
+├── internal/                     # Go packages: i18n / theme / icons / sysinfo / tui
+├── go.mod                        # Go module definition
+├── legacy/EasySB/                # Archived bash implementation
 │   ├── lib/                      # Source modules, order equals composition order (12)
 │   ├── tests/                    # Test suite (build / text / static / lint)
 │   ├── build.sh                  # Compose the single-file release and check syntax
@@ -77,7 +81,7 @@ EasySB is a 5-in-1 sing-box deployment script for Linux VPS. It brings protocol 
 └── .github/                      # CI workflows and community health files
 ```
 
-`EasySB/lib/` is split by responsibility; the file number is the composition order:
+`legacy/EasySB/lib/` is split by responsibility; the file number is the composition order:
 
 | Module | Responsibility |
 | :--- | :--- |
@@ -190,7 +194,7 @@ Files: server config `/etc/sing-box/config.json`, state `/etc/sing-box/easysb.co
 
 ## Non-interactive Install
 
-`EasySB/config.conf` is a KV template. Every variable is optional and falls back to a built-in default:
+`legacy/EasySB/config.conf` is a KV template. Every variable is optional and falls back to a built-in default:
 
 ```bash
 bash easysb.sh --config config.conf
@@ -277,23 +281,39 @@ The unit restores rules via `bash /etc/sing-box/easysb.sh --apply-firewall`. It 
 | Install | Downloads and verifies for the architecture, writes `/etc/sing-box/sing-box` |
 | Replace | Swaps the binary only, keeps `/etc/sing-box/config.json` |
 | Uninstall | Stops the service and removes the core |
-| Script release | `.github/workflows/easysb-release.yml` builds, tests and publishes `EasySB/dist/easysb.sh` under the fixed `easysb` tag |
+| Script release | `.github/workflows/easysb-release.yml` builds, tests and publishes `legacy/EasySB/dist/easysb.sh` under the fixed `easysb` tag |
 
 ---
 
 ## Developers: Build and Test
 
-`EasySB/lib/` is the single source; `dist/` is generated and not committed:
+Go implementation (primary):
+
+```bash
+# Build the binary
+go build -o easysb ./cmd/easysb
+
+# Run tests
+go test ./...
+
+# Render the dashboard once without interaction (preview / screenshot / debug)
+./easysb --render --width 100 --height 34
+
+# Switch language and icon mode
+./easysb --language E --icons off
+```
+
+`legacy/EasySB/lib/` is the archived script's single source; `dist/` is generated and not committed:
 
 ```bash
 # Compose the release script
-bash EasySB/build.sh
+bash legacy/EasySB/build.sh
 
 # Check only, write nothing
-bash EasySB/build.sh --check
+bash legacy/EasySB/build.sh --check
 
 # Run the full test suite
-bash EasySB/tests/run-tests.sh
+bash legacy/EasySB/tests/run-tests.sh
 ```
 
 ---

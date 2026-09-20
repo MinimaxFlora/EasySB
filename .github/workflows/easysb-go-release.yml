@@ -1,0 +1,106 @@
+name: Build EasySB Go binary
+
+# 源码：根目录 Go module（cmd/easysb、internal/**）
+# 产物：easysb-linux-<arch> 静态二进制，以固定 tag `easysb-go` 发布
+# 安装：bash install.sh（默认优先下载该 tag 下的二进制，失败时回退源码构建）
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'cmd/**'
+      - 'internal/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'VERSION'
+      - 'install.sh'
+      - '.github/workflows/easysb-go-release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  TZ: Asia/Shanghai
+  RELEASE_TAG: easysb-go
+
+jobs:
+  build:
+    runs-on: ubuntu-26.04
+    strategy:
+      fail-fast: false
+      matrix:
+        goarch: [amd64, arm64, armv7, '386', riscv64, s390x]
+        include:
+          - goarch: armv7
+            goarm: '7'
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v7
+
+      - name: 安装 Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: 读取版本
+        id: ver
+        run: echo "version=$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_OUTPUT"
+
+      - name: 单元测试
+        run: go test ./...
+
+      - name: 交叉编译 linux/${{ matrix.goarch }}
+        env:
+          GOOS: linux
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+          CGO_ENABLED: '0'
+        run: |
+          set -euo pipefail
+          go build -trimpath \
+            -ldflags "-s -w -X main.version=${{ steps.ver.outputs.version }}" \
+            -o "dist/easysb-linux-${{ matrix.goarch }}" ./cmd/easysb
+          file "dist/easysb-linux-${{ matrix.goarch }}"
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v7
+        with:
+          name: easysb-linux-${{ matrix.goarch }}
+          path: dist/easysb-linux-${{ matrix.goarch }}
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-26.04
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v7
+
+      - name: 下载全部产物
+        uses: actions/download-artifact@v7
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: 发布到 Release
+        uses: softprops/action-gh-release@v3
+        with:
+          token: ${{ github.token }}
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: EasySB Go (${{ github.sha }})
+          make_latest: false
+          body: |
+            > EasySB Go 版二进制 / EasySB Go binaries
+
+            - 项目地址 / Homepage: https://github.com/MinimaxFlora/EasySB
+            - 内核来源 / Core source: https://github.com/SagerNet/sing-box
+
+            安装 / Install:
+
+            ```bash
+            bash <(curl -fsSL https://raw.githubusercontent.com/MinimaxFlora/EasySB/master/install.sh)
+            ```
+          files: dist/easysb-linux-*

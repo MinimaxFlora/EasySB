@@ -41,8 +41,9 @@
 
 EasySB 是一个面向 Linux VPS 的 sing-box 五合一部署脚本，把协议部署、证书申请、内核版本管理、订阅生成统一到一套交互式菜单里。
 
-- **脚本**：`EasySB/` 是脚本源码，运行时合成单文件 `easysb.sh`，安装后可直接用 `sb` 呼出菜单。
-- **模板**：`Templates/` 与五个协议目录提供可直接阅读的 JSONC 配置样例，既可以只用模板，也可以交给脚本自动落地。
+- **Go 版（当前主实现）**：根目录 Go module，基于 bubbletea / bubbles / lipgloss 的深色仪表盘 TUI，编译为单一静态二进制并以 `sb` 呼出。
+- **脚本版（归档）**：`legacy/EasySB/` 保留原 bash 实现，运行时合成单文件 `easysb.sh`。
+- **模板**：`Templates/` 与五个协议目录提供可直接阅读的 JSONC 配置样例，既可以只用模板，也可以交给程序自动落地。
 - **内核**：sing-box 内核取自官方 [SagerNet/sing-box](https://github.com/SagerNet/sing-box) Releases，正式版与 alpha 内测版可随时切换、替换、卸载。
 
 - 项目地址：https://github.com/MinimaxFlora/EasySB
@@ -57,7 +58,10 @@ EasySB 是一个面向 Linux VPS 的 sing-box 五合一部署脚本，把协议�
 
 ```text
 .
-├── EasySB/                       # 一键部署脚本
+├── cmd/easysb/                   # Go 入口（TUI 主程序）
+├── internal/                     # Go 实现：i18n / theme / icons / sysinfo / tui
+├── go.mod                        # Go module 定义
+├── legacy/EasySB/                # 归档的 bash 版一键部署脚本
 │   ├── lib/                      # 源码模块，编号顺序即合成顺序（12 个）
 │   ├── tests/                    # 测试套件（构建 / 文案 / 静态 / lint）
 │   ├── build.sh                  # 模块合成单文件 + 语法校验
@@ -77,7 +81,7 @@ EasySB 是一个面向 Linux VPS 的 sing-box 五合一部署脚本，把协议�
 └── .github/                      # CI 工作流与社区健康文件
 ```
 
-`EasySB/lib/` 按功能拆分，文件编号即合成顺序：
+`legacy/EasySB/lib/` 按功能拆分，文件编号即合成顺序：
 
 | 模块 | 职责 |
 | :--- | :--- |
@@ -112,13 +116,19 @@ EasySB 是一个面向 Linux VPS 的 sing-box 五合一部署脚本，把协议�
 
 ## 快速开始
 
-首次安装（脚本会自动识别系统、补全依赖并引导你选择协议）：
+Go 版（当前主实现）一键安装：脚本会检测系统与架构，补全运行依赖，优先下载预编译二进制（回退源码构建），并在本地图形环境安装 Nerd Font：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/MinimaxFlora/EasySB/master/install.sh)
+```
+
+安装完成后以快捷指令 `sb` 启动深色仪表盘。归档的 bash 版仍可用以下方式安装（脚本会自动识别系统、补全依赖并引导你选择协议）：
 
 ```bash
 bash <(curl -fsSL https://github.com/MinimaxFlora/EasySB/releases/download/easysb/easysb.sh)
 ```
 
-安装完成后，再次运行只需输入快捷指令：
+再次运行只需输入快捷指令：
 
 ```bash
 sb
@@ -190,7 +200,7 @@ bash <(curl -fsSL https://github.com/MinimaxFlora/EasySB/releases/download/easys
 
 ## 无交互安装
 
-`EasySB/config.conf` 是 KV 配置模板，所有变量均可选，缺省时使用内置默认值：
+`legacy/EasySB/config.conf` 是 KV 配置模板，所有变量均可选，缺省时使用内置默认值：
 
 ```bash
 bash easysb.sh --config config.conf
@@ -277,23 +287,39 @@ NAT 规则重启即失效，因此脚本会生成开机恢复单元：
 | 安装 | 按架构下载并校验，写入 `/etc/sing-box/sing-box` |
 | 替换 | 只更换二进制，保留 `/etc/sing-box/config.json` |
 | 卸载 | 停止服务并移除内核 |
-| 脚本发行 | `.github/workflows/easysb-release.yml` 运行构建与测试，以固定 tag `easysb` 发布 `EasySB/dist/easysb.sh` |
+| 脚本发行 | `.github/workflows/easysb-release.yml` 运行构建与测试，以固定 tag `easysb` 发布 `legacy/EasySB/dist/easysb.sh` |
 
 ---
 
 ## 开发者：构建与测试
 
-`EasySB/lib/` 是唯一脚本源，`dist/` 由构建生成，不提交到仓库：
+Go 版（主实现）：
+
+```bash
+# 编译二进制
+go build -o easysb ./cmd/easysb
+
+# 运行测试
+go test ./...
+
+# 无交互渲染一次仪表盘（用于预览 / 截图 / 排错）
+./easysb --render --width 100 --height 34
+
+# 切换语言与图标模式
+./easysb --language E --icons off
+```
+
+`legacy/EasySB/lib/` 是归档脚本的唯一源，`dist/` 由构建生成，不提交到仓库：
 
 ```bash
 # 合成发行脚本
-bash EasySB/build.sh
+bash legacy/EasySB/build.sh
 
 # 只做校验，不写文件
-bash EasySB/build.sh --check
+bash legacy/EasySB/build.sh --check
 
 # 运行全部测试
-bash EasySB/tests/run-tests.sh
+bash legacy/EasySB/tests/run-tests.sh
 ```
 
 ---
