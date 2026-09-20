@@ -304,7 +304,7 @@ func TestDashboardPanelsAndIcons(t *testing.T) {
 	a := newTestApp(t)
 	// Uniform spacing needs a little more room than the old packed layout, so
 	// use a terminal tall enough to show the device card and the hint box.
-	a.height = 44
+	a.height = 46
 	view := a.View().Content
 	for _, want := range []string{
 		i18n.Chinese.T("panel_device"),
@@ -331,7 +331,7 @@ func TestDashboardPanelsAndIcons(t *testing.T) {
 
 func TestDashboardShowsLogoAndMenuDescriptions(t *testing.T) {
 	a := New("test", i18n.Chinese)
-	a.width, a.height = 100, 40
+	a.width, a.height = 100, 46
 	a.sized = true
 	a.status = sysinfo.Collect("test")
 	a.ready = true

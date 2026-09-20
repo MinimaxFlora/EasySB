@@ -448,7 +448,7 @@ func (a *App) dashboard() string {
 				n++ // section divider
 			}
 			firstSection = false
-			n += 1 + rows // title + rows
+			n += 2 + rows // title + blank + rows
 		}
 		if l.node {
 			section(len(nodeLines))
@@ -576,7 +576,7 @@ func (a *App) dashboard() string {
 	rows = append(rows, row{rule: true})
 
 	// The tagline rule already closes the header, so the first section skips its
-	// divider; every later section gets one blank line and a full-width rule.
+	// divider; every section keeps one blank line under its title.
 	firstSection := true
 	section := func(titleKey string, lines []string) {
 		blank()
@@ -585,6 +585,7 @@ func (a *App) dashboard() string {
 		}
 		firstSection = false
 		add(a.sectionTitle(titleKey))
+		blank()
 		for _, line := range lines {
 			add(line)
 		}
@@ -603,7 +604,8 @@ func (a *App) dashboard() string {
 	blank()
 	divider()
 	menuTitle := "  " + a.palette.Bold(a.palette.Primary, a.current().title(a.lang))
-	items, hidden := a.menuViewport(l.items, inner, a.menuLabelColumn())
+	descCol := a.menuDescColumn(inner, a.menuLabelColumn())
+	items, hidden := a.menuViewport(l.items, inner, descCol)
 	if hidden > 0 {
 		menuTitle += a.palette.Dim(fmt.Sprintf("  (+%d)", hidden))
 	}
@@ -655,6 +657,15 @@ func (a *App) dashboard() string {
 	leftover := budget - len(rows)
 	if leftover < 0 {
 		leftover = 0
+	}
+	// Cap the spare rows so a tall terminal never opens a big gap before the
+	// quote; the remaining space simply stays below the panel.
+	spare := 2
+	if l.quote {
+		spare = 1
+	}
+	if leftover > spare {
+		leftover = spare
 	}
 
 	out := []string{theme.TopRule(w, a.palette.Border)}
@@ -709,9 +720,36 @@ func (a *App) menuLabelColumn() int {
 	return width + 3
 }
 
+// menuDescColumn returns the column where the root menu descriptions start.
+// The label column stays pinned to the left; the description block is centered
+// in the panel so the free space is balanced on both sides of it.
+func (a *App) menuDescColumn(inner, labelCol int) int {
+	min := labelCol + 3
+	if a.current().id != "root" {
+		return min
+	}
+	maxDesc := 0
+	for _, n := range a.current().nodes {
+		if n.desc == nil {
+			continue
+		}
+		if w := lipgloss.Width(n.desc(a.lang)); w > maxDesc {
+			maxDesc = w
+		}
+	}
+	if maxDesc == 0 {
+		return min
+	}
+	col := (inner - maxDesc) / 2
+	if col < min {
+		col = min
+	}
+	return col
+}
+
 // menuViewport renders at most limit menu rows, keeping the cursor visible, and
 // reports how many items are currently out of view.
-func (a *App) menuViewport(limit, inner, labelCol int) ([]string, int) {
+func (a *App) menuViewport(limit, inner, descCol int) ([]string, int) {
 	nodes := a.current().nodes
 	n := len(nodes)
 	if n == 0 {
@@ -736,14 +774,14 @@ func (a *App) menuViewport(limit, inner, labelCol int) ([]string, int) {
 	}
 	rows := make([]string, 0, end-top)
 	for i := top; i < end; i++ {
-		rows = append(rows, a.menuRow(i == a.index, nodes[i], inner, labelCol))
+		rows = append(rows, a.menuRow(i == a.index, nodes[i], inner, descCol))
 	}
 	return rows, n - len(rows)
 }
 
 // menuRow renders one menu entry. The main menu pads its labels into a column
 // and follows them with a short one-line description; submenus stay compact.
-func (a *App) menuRow(selected bool, n *node, inner, labelCol int) string {
+func (a *App) menuRow(selected bool, n *node, inner, descCol int) string {
 	marker := "  "
 	if selected {
 		marker = "▌ "
@@ -767,7 +805,7 @@ func (a *App) menuRow(selected bool, n *node, inner, labelCol int) string {
 		return compact()
 	}
 
-	gap := labelCol - lipgloss.Width(label)
+	gap := descCol - 3 - lipgloss.Width(label)
 	if gap < 2 {
 		gap = 2
 	}
