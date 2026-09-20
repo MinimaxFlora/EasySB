@@ -91,25 +91,31 @@ func (a *App) move(d int) {
 }
 
 // itemCount is the number of selectable rows: menu nodes plus the trailing
-// navigation row ("back" / "exit").
+// navigation row ("back") when the current menu is not the root.
 func (a *App) itemCount() int {
 	n := len(a.current().nodes)
 	if n == 0 {
 		return 1
 	}
-	return n + 1
+	if a.hasNavRow() {
+		return n + 1
+	}
+	return n
+}
+
+// hasNavRow reports whether the current menu shows the trailing navigation
+// row. The root menu has none: quit with Q/Esc.
+func (a *App) hasNavRow() bool {
+	return len(a.stack) > 1
 }
 
 // onNavRow reports whether the cursor sits on the trailing navigation row.
 func (a *App) onNavRow() bool {
-	return a.index >= len(a.current().nodes)
+	return a.hasNavRow() && a.index >= len(a.current().nodes)
 }
 
 // navLabel is the label of the trailing navigation row.
 func (a *App) navLabel() string {
-	if len(a.stack) <= 1 {
-		return a.lang.T("exit")
-	}
 	return a.lang.T("nav_back")
 }
 
@@ -279,9 +285,11 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		a.move(1)
 	case "0", "1", "2", "3", "4", "5", "6", "7", "8", "9":
 		// Shell-style numeric selection: pick the row, Enter runs it. 0 targets
-		// the trailing navigation row (back / exit).
+		// the trailing navigation row, which only exists in submenus.
 		if key == "0" {
-			a.index = len(a.current().nodes)
+			if a.hasNavRow() {
+				a.index = len(a.current().nodes)
+			}
 		} else if n := int(key[0] - '0'); n <= len(a.current().nodes) {
 			a.index = n - 1
 		}
@@ -372,19 +380,23 @@ func (a *App) dashboard() string {
 	rule := theme.Rule(inner, a.palette.Border)
 	status := a.statusSummary(inner)
 
-	// Always present: title, author, menu separator, menu title, nav row, plus
-	// at least one menu row.
+	// Always present: title, author, menu separator, menu title, plus at least
+	// one menu row and the navigation row when the menu is nested.
+	navRows := 0
+	if a.hasNavRow() {
+		navRows = 1
+	}
 	used := 4
-	showQuote := used+1 <= budget-2
+	showQuote := used+1+navRows+1 <= budget
 	if showQuote {
 		used++
 	}
 	statusCost := len(status) + 1
-	showStatus := used+statusCost <= budget-2
+	showStatus := used+statusCost+navRows+1 <= budget
 	if showStatus {
 		used += statusCost
 	}
-	rowsAvail := budget - used - 1
+	rowsAvail := budget - used - navRows
 	if rowsAvail < 1 {
 		rowsAvail = 1
 	}
@@ -405,7 +417,9 @@ func (a *App) dashboard() string {
 	}
 	body = append(body, rule, menuTitle)
 	body = append(body, items...)
-	body = append(body, a.rowLine(a.onNavRow(), "[0] "+a.navLabel(), inner))
+	if a.hasNavRow() {
+		body = append(body, a.rowLine(a.onNavRow(), "[0] "+a.navLabel(), inner))
+	}
 
 	box := theme.Box("EasySB", strings.Join(body, "\n"), w, a.palette.Border, a.palette.Primary)
 	out := strings.Split(box, "\n")

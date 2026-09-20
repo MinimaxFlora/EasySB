@@ -50,7 +50,6 @@ func buildRoot() *menu {
 			{id: "subscribe", label: tk("sub_title"), desc: tk("menu_subscribe"), icon: func(s icons.Set) string { return s.Link }, sub: buildSubscribe()},
 			{id: "service", label: tk("svc_title"), desc: tk("menu_service"), icon: func(s icons.Set) string { return s.Service }, sub: buildService()},
 			iconLeaf("script-update", "menu_script_update", "script_update", func(s icons.Set) string { return s.Refresh }, scriptUpdate()),
-			iconLeaf("uninstall", "menu_uninstall", "uninstall_title", func(s icons.Set) string { return s.Trash }, uninstallAction()),
 		},
 	}
 }
@@ -60,9 +59,10 @@ func buildKernel() *menu {
 		id:    "kernel",
 		title: tk("kernel_title"),
 		nodes: []*node{
-			leaf("kernel-stable", "kernel_stable", "kernel_source", kernelAction("stable")),
-			leaf("kernel-alpha", "kernel_alpha", "kernel_source", kernelAction("alpha")),
-			leaf("kernel-update", "kernel_update", "kernel_source", kernelAction("current")),
+			leaf("kernel-install-stable", "kernel_install_stable", "kernel_source", kernelAction("install-stable")),
+			leaf("kernel-install-alpha", "kernel_install_alpha", "kernel_source", kernelAction("install-alpha")),
+			leaf("kernel-switch", "kernel_switch", "kernel_switch_hint", kernelAction("switch")),
+			leaf("kernel-update", "kernel_update", "kernel_source", kernelAction("update")),
 		},
 	}
 }

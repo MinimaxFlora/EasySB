@@ -165,22 +165,56 @@ func TestLanguageToggle(t *testing.T) {
 	}
 }
 
-func TestUninstallOpensConfirm(t *testing.T) {
+func TestRootMenuHasNoNavOrUninstall(t *testing.T) {
 	a := newTestApp(t)
-	if got := a.current().nodes[len(a.current().nodes)-1].id; got != "uninstall" {
-		t.Fatalf("expected uninstall to be the last root entry, got %s", got)
+	if a.hasNavRow() {
+		t.Fatalf("root menu should not show a navigation row")
 	}
-	for i := 0; i < 6; i++ {
-		m, _ := a.Update(press(tea.KeyDown))
-		a = m.(*App)
+	if got := len(a.current().nodes); got != 6 {
+		t.Fatalf("root should have 6 entries, got %d", got)
 	}
-	if got := a.selected().id; got != "uninstall" {
-		t.Fatalf("expected uninstall selected, got %s", got)
+	for _, n := range a.current().nodes {
+		if n.id == "uninstall" {
+			t.Fatalf("uninstall should not be in the root menu")
+		}
 	}
-	m, _ := a.Update(press(tea.KeyEnter))
+	view := a.View().Content
+	if !strings.Contains(view, "[6] 版本更新") {
+		t.Fatalf("version update entry missing from root menu")
+	}
+	if strings.Contains(view, "[0]") {
+		t.Fatalf("root menu should not render a [0] row")
+	}
+}
+
+func TestKernelMenuEntries(t *testing.T) {
+	a := newTestApp(t)
+	a.push(buildKernel())
+	want := []string{"kernel-install-stable", "kernel-install-alpha", "kernel-switch", "kernel-update"}
+	if got := len(a.current().nodes); got != len(want) {
+		t.Fatalf("kernel menu has %d entries, want %d", got, len(want))
+	}
+	for i, id := range want {
+		if got := a.current().nodes[i].id; got != id {
+			t.Fatalf("kernel entry %d = %s, want %s", i, got, id)
+		}
+	}
+	if !a.hasNavRow() {
+		t.Fatalf("kernel menu should show a navigation row")
+	}
+	view := a.View().Content
+	for _, label := range []string{"安装正式版内核", "安装测试版内核", "切换内核", "更新内核（仅更新当前通道）", "[0] 返回上一级"} {
+		if !strings.Contains(view, label) {
+			t.Fatalf("kernel menu view missing %q:\n%s", label, view)
+		}
+	}
+	m, _ := a.Update(press('0'))
 	a = m.(*App)
-	if a.form == nil {
-		t.Fatalf("expected a confirmation form for uninstall")
+	if !a.onNavRow() {
+		t.Fatalf("digit 0 should select the navigation row in a submenu")
+	}
+	if a.current().id != "kernel" {
+		t.Fatalf("expected kernel submenu, got %s", a.current().id)
 	}
 }
 
@@ -197,6 +231,8 @@ func TestNumberedMenuAndDigitSelection(t *testing.T) {
 	if got := a.selected().id; got != "service" {
 		t.Fatalf("digit 5 should select service, got %s", got)
 	}
+	m, _ = a.Update(press(tea.KeyEnter))
+	a = m.(*App)
 	m, _ = a.Update(press('0'))
 	a = m.(*App)
 	if !a.onNavRow() {

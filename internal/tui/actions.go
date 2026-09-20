@@ -49,21 +49,46 @@ func serviceAction(verb string) actionFunc {
 	}
 }
 
-// kernelAction installs, switches or updates the sing-box core. The channel
-// argument is "stable", "alpha" or "current" (update the installed channel).
-func kernelAction(channel string) actionFunc {
+// kernelAction installs, switches or updates the sing-box core.
+//
+//	mode = "install-stable" | "install-alpha": install that channel
+//	mode = "switch":                          toggle stable <-> alpha
+//	mode = "update":                          update the installed channel
+func kernelAction(mode string) actionFunc {
 	return func(a *App) tea.Cmd {
 		lang := a.lang
 		return a.startTask(lang.T("kernel_installing"), func(ctx context.Context, log func(string)) error {
 			cfg := state.Load()
-			target := channel
-			if channel == "current" {
-				if !core.Installed() {
-					return errors.New(lang.T("svc_not_installed"))
+			installed := core.Installed()
+			current := core.InstalledChannel(cfg.CoreChannel)
+
+			var target string
+			switch mode {
+			case "install-stable":
+				target = "stable"
+			case "install-alpha":
+				target = "alpha"
+			case "switch":
+				if !installed {
+					return errors.New(lang.T("kernel_need_install"))
 				}
-				target = core.InstalledChannel(cfg.CoreChannel)
-			} else if core.Installed() && core.InstalledChannel(cfg.CoreChannel) == channel {
-				log(lang.T("kernel_already") + ": " + lang.T(channelKey(channel)))
+				if current == "alpha" {
+					target = "stable"
+				} else {
+					target = "alpha"
+				}
+				log(lang.T("kernel_switching") + ": " + lang.T(channelKey(current)) + " → " + lang.T(channelKey(target)))
+			case "update":
+				if !installed {
+					return errors.New(lang.T("kernel_need_install"))
+				}
+				target = current
+			default:
+				target = mode
+			}
+
+			if mode != "update" && installed && current == target {
+				log(lang.T("kernel_already") + ": " + lang.T(channelKey(target)))
 				return nil
 			}
 
@@ -79,7 +104,7 @@ func kernelAction(channel string) actionFunc {
 				return errors.New(lang.T("kernel_no_version"))
 			}
 
-			if core.Installed() {
+			if installed {
 				log("$ systemctl stop " + sysinfo.ServiceName)
 				runCmd(ctx, "systemctl", "stop", sysinfo.ServiceName)
 			}
@@ -99,7 +124,7 @@ func kernelAction(channel string) actionFunc {
 				log("$ systemctl start " + sysinfo.ServiceName)
 				runCmd(ctx, "systemctl", "start", sysinfo.ServiceName)
 			}
-			if channel == "current" {
+			if mode == "update" {
 				log(lang.T("kernel_updated") + ": " + version)
 			} else {
 				log(lang.T("kernel_installed") + ": " + lang.T(channelKey(target)) + " " + version)
