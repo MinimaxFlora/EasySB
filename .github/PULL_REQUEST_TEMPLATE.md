@@ -22,9 +22,9 @@
 
 - [ ] `go build ./...` 通过
 - [ ] `go test ./...` 全部通过
-- [ ] 改动了内核地址、常量或模板时，已同步更新 `Templates/` 下的对应文件
+- [ ] 改动了内核地址、常量或模板时，已同步更新 `templates/` 下的对应文件
 - [ ] 改动了界面文案时，`internal/i18n/table.go` 的中英文条目已同时补齐
-- [ ] 改动了功能或选项时，已更新 `README.md` 与 `CHANGELOG.md`
+- [ ] 改动了功能或选项时，已更新 `README.md` 与 `README_ZH.md`、`CHANGELOG.md`
 - [ ] 未提交 `dist/` 等构建产物
 - [ ] 未提交任何密钥、UUID、证书私钥、域名或订阅 token
 

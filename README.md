@@ -1,207 +1,205 @@
 <div align="center">
 
-<img src="assets/easysb-banner-zh.webp" alt="EasySB" width="950">
+<img src="assets/easysb-banner-en.webp" alt="EasySB" width="950">
 
-**sing-box 五合一部署脚本 · 配置模板开箱可读 · 内核版本一键管理**
+**5-in-1 sing-box deployment script · readable config templates · one-click core management**
 
 [![sing-box](https://img.shields.io/badge/sing--box-%E2%89%A5%201.12.0-3B82F6?style=for-the-badge&logo=go&logoColor=white)](https://sing-box.sagernet.org/)
 ![License](https://img.shields.io/badge/License-GPL--3.0-22C55E?style=for-the-badge)
-[![Protocols](https://img.shields.io/badge/Protocols-5-8B5CF6?style=for-the-badge)](#easysb-支持协议)
-[![Platform](https://img.shields.io/badge/Platform-Linux-F59E0B?style=for-the-badge)](#快速开始)
+[![Protocols](https://img.shields.io/badge/Protocols-5-8B5CF6?style=for-the-badge)](#supported-protocols)
+[![Platform](https://img.shields.io/badge/Platform-Linux-F59E0B?style=for-the-badge)](#quick-start)
 
-**简体中文** | [English](README_EN.md)
+[简体中文](README_ZH.md) | **English**
 
-<sub>AnyTLS · Hysteria2 · TUIC v5 · VMess + WebSocket + TLS · VLESS + Vision + Reality · 证书 · 订阅 · 端口跳跃</sub>
+<sub>AnyTLS · Hysteria2 · TUIC v5 · VMess + WebSocket + TLS · VLESS + Vision + Reality · Certificates · Subscription · Port hopping</sub>
 
 </div>
 
 ---
 
-## 目录
+## Table of Contents
 
-- [项目简介](#项目简介)
-- [仓库结构](#仓库结构)
-- [支持的协议](#支持的协议)
-- [快速开始](#快速开始)
-- [EasySB 能力](#easysb-能力)
-- [交互菜单](#交互菜单)
-- [命令参数](#命令参数)
-- [无交互安装](#无交互安装)
-- [配置模板](#配置模板)
-- [订阅](#订阅)
-- [防火墙与端口跳跃](#防火墙与端口跳跃)
-- [内核管理](#内核管理)
-- [开发者：构建与测试](#开发者构建与测试)
-- [安全须知](#安全须知)
-- [开源协议](#开源协议)
-
----
-
-## 项目简介
-
-EasySB 是一个面向 Linux VPS 的 sing-box 五合一部署脚本，把协议部署、证书申请、内核版本管理、订阅生成统一到一套交互式菜单里。
-
-- **Go 版（当前主实现）**：根目录 Go module，基于 bubbletea / bubbles / lipgloss 的深色仪表盘 TUI，编译为单一静态二进制并以 `sb` 呼出。
-- **模板**：`Templates/` 存放五个协议的 JSONC 配置样例与订阅模板，既可以只用模板，也可以交给程序自动落地。
-- **内核**：sing-box 内核取自官方 [SagerNet/sing-box](https://github.com/SagerNet/sing-box) Releases，正式版与 alpha 内测版可随时切换、替换、卸载。
-
-- 项目地址：https://github.com/MinimaxFlora/EasySB
-- 内核来源：https://github.com/SagerNet/sing-box
-- 变更记录：[CHANGELOG.md](CHANGELOG.md)
-- 贡献指南：[CONTRIBUTING.md](CONTRIBUTING.md)
-- 安全策略：[SECURITY.md](SECURITY.md)
+- [Introduction](#introduction)
+- [Repository Layout](#repository-layout)
+- [Supported Protocols](#supported-protocols)
+- [Quick Start](#quick-start)
+- [Capabilities](#capabilities)
+- [Interactive Menu](#interactive-menu)
+- [Command Line](#command-line)
+- [Non-interactive Install](#non-interactive-install)
+- [Config Templates](#config-templates)
+- [Subscription](#subscription)
+- [Firewall and Port Hopping](#firewall-and-port-hopping)
+- [Core Management](#core-management)
+- [Developers: Build and Test](#developers-build-and-test)
+- [Security Notes](#security-notes)
+- [License](#license)
 
 ---
 
-## 仓库结构
+## Introduction
+
+EasySB is a 5-in-1 sing-box deployment script for Linux VPS. It brings protocol deployment, certificate issuance, core version management and subscription generation into one interactive menu.
+
+- **Go (primary implementation)**: a root Go module built with bubbletea / bubbles / lipgloss, compiled into a single static binary exposed as `sb`.
+- **Templates**: `templates/` ships readable JSONC samples for the five protocols plus the subscription template. Use them on their own, or let the tool deploy them.
+- **Core**: the sing-box binary comes from the official [SagerNet/sing-box](https://github.com/SagerNet/sing-box) releases. Stable and alpha builds can be installed, replaced or removed at any time.
+
+- Homepage: https://github.com/MinimaxFlora/EasySB
+- Core source: https://github.com/SagerNet/sing-box
+- Changelog: [CHANGELOG.md](CHANGELOG.md)
+- Contributing: [CONTRIBUTING.md](CONTRIBUTING.md)
+- Security: [SECURITY.md](SECURITY.md)
+
+---
+
+## Repository Layout
 
 ```text
 .
-├── main.go                       # Go 入口（TUI 主程序）
-├── install.sh                    # 一键安装脚本（依赖 / 二进制 / Nerd Font）
-├── internal/                     # Go 实现：i18n / theme / icons / sysinfo / state / subscribe / tui
-├── go.mod                        # Go module 定义
-├── Templates/                    # 订阅与协议配置模板
-│   ├── Config/
-│   │   └── tun-fakeip.json       # TUN 全局代理 + FakeIP 模板
-│   ├── AnyTLS/                   # AnyTLS 协议客户端 / 服务端样例
-│   ├── Hysteria2/                # Hysteria2 协议客户端 / 服务端样例
-│   ├── Tuic/                     # TUIC 协议客户端 / 服务端样例
-│   ├── VMess-WebSocket-TLS/      # VMess + WebSocket + TLS 样例
-│   └── VLESS-Vision-Reality/     # VLESS + Vision + Reality 样例
-└── .github/                      # CI 工作流与社区健康文件
+├── main.go                       # Go entrypoint (TUI)
+├── install.sh                    # One-click installer (deps / binary / Nerd Font)
+├── AGENTS.md                     # Guide for AI agents and contributors
+├── internal/                     # Go packages: i18n / theme / icons / sysinfo / state / subscribe / tui
+├── go.mod                        # Go module definition
+├── templates/                    # Subscription and protocol config templates
+│   ├── config/
+│   │   └── tun-fakeip.json       # TUN global proxy + FakeIP template
+│   ├── anytls/                   # AnyTLS client / server samples
+│   ├── hysteria2/                # Hysteria2 client / server samples
+│   ├── tuic/                     # TUIC client / server samples
+│   ├── vmess-websocket-tls/      # VMess + WebSocket + TLS samples
+│   └── vless-vision-reality/     # VLESS + Vision + Reality samples
+├── docs/                         # Engineering docs for agents and contributors
+└── .github/                      # CI workflows and community health files
 ```
 
-`Templates/` 下的协议样例为可直接阅读的 JSONC，去注释后即可作为 sing-box 服务端 / 客户端配置使用。
-
 ---
 
-## 支持的协议
+## Supported Protocols
 
-| 协议 | 承载 | 默认端口 | 特点 |
+| Protocol | Transport | Default port | Highlights |
 | :--- | :--- | :--- | :--- |
-| AnyTLS | TCP + TLS | 8000 | Padding Scheme 多阶段填充，对抗流量指纹 |
-| Hysteria2 | QUIC / UDP | 8001 | 弱网与高丢包场景表现优秀，支持端口跳跃 |
-| TUIC v5 | QUIC / UDP | 8002 | 0-RTT 握手，`native` UDP 转发，低延迟 |
-| VLESS + Vision + Reality | TCP | 8003 | 免证书伪装，默认偷用 `apple.com`，抗主动探测 |
-| VMess + WebSocket + TLS | WS over TLS | 8004 | 可穿 CDN 与反向代理，基于标准 TLS |
+| AnyTLS | TCP + TLS | 8000 | Multi-stage Padding Scheme against traffic fingerprinting |
+| Hysteria2 | QUIC / UDP | 8001 | Excellent on lossy networks, supports port hopping |
+| TUIC v5 | QUIC / UDP | 8002 | 0-RTT handshake, `native` UDP relay, low latency |
+| VLESS + Vision + Reality | TCP | 8003 | Certificate-free disguise, borrows `apple.com` by default |
+| VMess + WebSocket + TLS | WS over TLS | 8004 | CDN and reverse-proxy friendly, standard TLS |
 
-端口在安装时逐一询问：回车取默认值，输入 `r` 随机，输入数字手动指定；与其他协议冲突时会提示重新设置。除 VLESS + Reality 外的协议都需要一个已解析到本机的域名与有效证书。
+Ports are prompted one by one: Enter takes the default, `r` picks a random port, a number sets it manually. Conflicts with another protocol are rejected and re-prompted. Every protocol except VLESS + Reality requires a domain that already resolves to this host plus a valid certificate.
 
 ---
 
-## 快速开始
+## Quick Start
 
-Go 版（当前主实现）一键安装：脚本会检测系统与架构，补全运行依赖，优先下载预编译二进制（回退源码构建），并在本地图形环境安装 Nerd Font：
+One-click install (detects the system and architecture, fills in runtime dependencies, prefers a prebuilt binary with a source-build fallback, and installs a Nerd Font in local graphical environments):
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/MinimaxFlora/EasySB/master/install.sh)
 ```
 
-安装完成后以快捷指令 `sb` 启动深色仪表盘。
-
-再次运行只需输入快捷指令：
+After installation, the shortcut opens the dark dashboard:
 
 ```bash
 sb
 ```
 
-预设语言后进入菜单：
+Preset the language before entering the menu:
 
 ```bash
-# 简体中文
+# Simplified Chinese
 sb --language C
 
 # English
 sb --language E
 ```
 
-支持 Debian / Ubuntu（systemd）与 Alpine（OpenRC）；需要 root 权限运行。
+Supports Debian / Ubuntu (systemd) and Alpine (OpenRC); run as root.
 
 ---
 
-## EasySB 能力
+## Capabilities
 
-| 能力 | 说明 |
+| Capability | Description |
 | :--- | :--- |
-| 五协议部署 | 五协议共享一个 UUID 与一个密码，安装时统一生成，端口逐一编排 |
-| 内核版本管理 | 正式版 stable 与 alpha 内测版随时安装、替换、卸载，替换保留现有配置 |
-| 版本面板 | 菜单顶部常驻脚本版本、本地内核、正式版与 alpha 版，并标注可更新状态 |
-| 证书管理 | acme.sh `--standalone` 申请与续期，支持列表、切换激活、删除，自动处理 80 / 443 占用 |
-| 订阅生成 | 渲染 `Templates/Config/tun-fakeip.json`，输出订阅文件、二维码与分享链接，nginx 静态托管 |
-| 端口跳跃 | Hysteria2 默认 `2080:3000`，自动下发 iptables / nftables DNAT，并生成开机恢复单元 |
-| 服务管理 | 启动、停止、重启、查看状态与开机自启 |
-| 脚本自更新 | 从本仓库拉取最新脚本，校验通过后替换 |
-| 中英双语 | 启动首屏选择语言，全流程界面一致 |
+| 5-in-1 deployment | One shared UUID and password, generated at install; ports allocated one by one |
+| Core management | Install, replace or remove stable and alpha builds; replace keeps the existing config |
+| Version panel | Script version, local core, stable and alpha versions on top of the menu with update markers |
+| Certificates | acme.sh `--standalone` issue and renew, list, switch active, remove; handles 80 / 443 occupancy |
+| Subscription | Renders `templates/config/tun-fakeip.json`, outputs files, QR codes and share links, hosted by nginx |
+| Port hopping | Hysteria2 defaults to `2080:3000`, auto-applies iptables / nftables DNAT and a boot restore unit |
+| Service control | Start, stop, restart, status and enable-on-boot |
+| Self-update | Pulls the latest script from this repository and replaces it after validation |
+| Bilingual | Language picked on first screen, consistent Chinese and English throughout |
 
 ---
 
-## 交互菜单
+## Interactive Menu
 
 ```text
-[1] 安装 / 切换 sing-box 内核（正式版 / alpha）
-[2] 卸载 sing-box 内核
-[3] 替换 sing-box 内核（保留配置）
-[4] 域名证书管理（acme.sh）
-[5] 订阅管理（sing-box / 分享链接 / 二维码）
-[6] 协议参数配置（端口 / 密码 / UUID）
-[7] 服务管理（启动 / 停止 / 重启 / 状态）
-[8] 查看版本与更新
-[9] 完全卸载 EasySB
-[0] 退出脚本
+[1] Install / switch sing-box core (stable / alpha)
+[2] Uninstall sing-box core
+[3] Replace sing-box core (keep config)
+[4] Certificate management (acme.sh)
+[5] Subscription management (sing-box / share links / QR)
+[6] Protocol parameters (ports / password / UUID)
+[7] Service management (start / stop / restart / status)
+[8] Versions and updates
+[9] Fully uninstall EasySB
+[0] Exit
 ```
 
-对应文件：服务端配置 `/etc/sing-box/config.json`，状态 `/etc/sing-box/easysb.conf`，快捷指令 `/usr/bin/sb`。
+Files: server config `/etc/sing-box/config.json`, state `/etc/sing-box/easysb.conf`, shortcut `/usr/bin/sb`.
 
 ---
 
-## 命令参数
+## Command Line
 
-| 参数 | 说明 |
+| Flag | Description |
 | :--- | :--- |
-| `--language C\|E` | 预设界面语言后进入菜单 |
-| `--icons on\|off` | 覆盖 Nerd Font 图标检测结果 |
-| `--apply-firewall` | 仅恢复端口跳跃规则，供开机单元调用 |
-| `--render --width N --height N` | 渲染一次仪表盘后退出（调试用） |
-| `--version` | 显示版本与构建短哈希 |
-| `--help` | 显示用法 |
+| `--language C\|E` | Preset the UI language, then open the menu |
+| `--icons on\|off` | Override the Nerd Font icon detection result |
+| `--apply-firewall` | Restore port-hopping rules only, used by the boot unit |
+| `--render --width N --height N` | Render the dashboard once and exit (debug) |
+| `--version` | Print the version and build hash |
+| `--help` | Print usage |
 
 ---
 
-## 配置模板
+## Config Templates
 
-| 目录 | 协议 | 承载层 | 伪装 / 加密 | 关键能力 |
+| Directory | Protocol | Transport | Disguise / encryption | Highlights |
 | :--- | :--- | :--- | :--- | :--- |
-| `Templates/AnyTLS/` | AnyTLS | TCP | 证书 TLS | Padding Scheme 多阶段填充 |
-| `Templates/Hysteria2/` | Hysteria 2 | QUIC / UDP | TLS（ALPN `h3`） | 端口跳跃、弱网表现优秀 |
-| `Templates/Tuic/` | TUIC | QUIC / UDP | TLS（ALPN `h3`） | 0-RTT 握手、`native` UDP 转发 |
-| `Templates/VMess-WebSocket-TLS/` | VMess | WebSocket over TLS | 证书 TLS | 可穿 CDN、Early Data |
-| `Templates/VLESS-Vision-Reality/` | VLESS + Vision | TCP | REALITY（免证书） | `xtls-rprx-vision`、抗主动探测 |
-| `Templates/Config/tun-fakeip.json` | TUN + FakeIP | 系统全局 | — | 规则分流、DNS 拆分、URLTest 自动测速 |
+| `templates/anytls/` | AnyTLS | TCP | TLS | Multi-stage Padding Scheme |
+| `templates/hysteria2/` | Hysteria 2 | QUIC / UDP | TLS (ALPN `h3`) | Port hopping, strong on lossy links |
+| `templates/tuic/` | TUIC | QUIC / UDP | TLS (ALPN `h3`) | 0-RTT handshake, `native` UDP relay |
+| `templates/vmess-websocket-tls/` | VMess | WebSocket over TLS | TLS | CDN friendly, Early Data |
+| `templates/vless-vision-reality/` | VLESS + Vision | TCP | REALITY (no cert) | `xtls-rprx-vision`, active-probing resistant |
+| `templates/config/tun-fakeip.json` | TUN + FakeIP | System-wide | — | Rule routing, DNS split, URLTest |
 
-模板中的 UUID、密码、REALITY 私钥与证书路径全部是示例值，部署前必须替换，且服务端与客户端保持一致。可先用内核校验语法：
+UUIDs, passwords, REALITY private keys and certificate paths in the templates are samples. Replace them before deployment and keep server and client in sync. Validate syntax with the core:
 
 ```bash
-sing-box check -c Templates/VLESS-Vision-Reality/config_server.json
+sing-box check -c templates/vless-vision-reality/config_server.json
 ```
 
 ---
 
-## 订阅
+## Subscription
 
-订阅基于 `Templates/Config/tun-fakeip.json` 渲染，生成后通过三种方式交付：
+The subscription is rendered from `templates/config/tun-fakeip.json` and delivered in three ways:
 
-1. 本地订阅文件，位于 `/etc/sing-box/subscribe/`。
-2. 终端二维码，安装 `qrencode` 后可直接扫码导入。
-3. 五类分享链接，覆盖主流客户端。
+1. A local file under `/etc/sing-box/subscribe/`.
+2. A terminal QR code, scannable once `qrencode` is installed.
+3. Five share-link schemes covering mainstream clients.
 
-同时由 nginx 以轻量静态站点形式托管，默认端口 `8443`、路径 `/subscribe`，即 `https://域名:8443/subscribe`。sing-box 直接监听 WebSocket，nginx 只负责静态文件，不做反向代理。
+It is also hosted by nginx as a lightweight static site on port `8443` at path `/subscribe`, that is `https://domain:8443/subscribe`. sing-box listens for WebSocket directly; nginx only serves static files and never reverse-proxies.
 
 ---
 
-## 防火墙与端口跳跃
+## Firewall and Port Hopping
 
-Hysteria2 端口跳跃使用标准 NAT 规则，对 UDP 端口区间做 DNAT：
+Hysteria2 port hopping applies standard NAT rules to a UDP port range:
 
 ```bash
 # iptables
@@ -213,87 +211,87 @@ nft 'add chain ip nat prerouting { type nat hook prerouting priority dstnat; }'
 nft add rule ip nat prerouting udp dport 2080-3000 redirect to :8001
 ```
 
-NAT 规则重启即失效，因此脚本会生成开机恢复单元：
+NAT rules do not survive a reboot, so the script creates a boot restore unit:
 
-- systemd：`easysb-firewall.service`（oneshot，早于 `sing-box.service`）。
-- OpenRC：`/etc/init.d/easysb-firewall`。
+- systemd: `easysb-firewall.service` (oneshot, starts before `sing-box.service`).
+- OpenRC: `/etc/init.d/easysb-firewall`.
 
-单元通过 `easysb --apply-firewall` 恢复规则，不使用 Hysteria2 端口跳跃时不会创建该单元。
+The unit restores rules via `easysb --apply-firewall`. It is not created when Hysteria2 port hopping is disabled.
 
 ---
 
-## 内核管理
+## Core Management
 
-| 环节 | 说明 |
+| Item | Description |
 | :--- | :--- |
-| 内核来源 | 官方 `SagerNet/sing-box` Releases，脚本直接下载官方资产 |
-| 正式版 | 官方 latest release |
-| 内测版 | 官方 prerelease |
-| 安装 | 按架构下载并校验，写入 `/etc/sing-box/sing-box` |
-| 替换 | 只更换二进制，保留 `/etc/sing-box/config.json` |
-| 卸载 | 停止服务并移除内核 |
-| 程序发行 | `.github/workflows/easysb-go-release.yml` 交叉编译各平台二进制，以 tag `v<VERSION>`（当前 `v3.0.0`）发布 |
+| Core source | Official `SagerNet/sing-box` releases; the tool downloads official assets directly |
+| Stable | Official latest release |
+| Alpha | Official prerelease |
+| Install | Downloads and verifies for the architecture, writes `/etc/sing-box/sing-box` |
+| Replace | Swaps the binary only, keeps `/etc/sing-box/config.json` |
+| Uninstall | Stops the service and removes the core |
+| Release | `.github/workflows/easysb-go-release.yml` cross-compiles every platform binary and publishes them under the `v<VERSION>` tag (currently `v3.0.0`) |
 
 ---
 
-## 开发者：构建与测试
+## Developers: Build and Test
 
-Go 版（主实现，需要 Go 1.27.1，`go.mod` 已声明 `go 1.27.1`，启用 `GOTOOLCHAIN=auto` 时会自动获取该工具链）：
+Go implementation (primary, requires Go 1.27.1; `go.mod` declares `go 1.27.1`, and `GOTOOLCHAIN=auto` fetches that toolchain automatically):
 
 ```bash
-# 编译二进制
+# Build the binary
 go build -o easysb .
 
-# 运行测试
+# Run tests
 go test ./...
 
-# 无交互渲染一次仪表盘（用于预览 / 截图 / 排错）
+# Render the dashboard once without interaction (preview / screenshot / debug)
 ./easysb --render --width 100 --height 34
 
-# 切换语言与图标模式
+# Switch language and icon mode
 ./easysb --language E --icons off
 ```
 
-`internal/tui/` 是 TUI 主界面与交互逻辑，`internal/` 下其余包各自负责内核、证书、服务、订阅、防火墙等模块：
+`internal/tui/` holds the TUI shell and interaction logic; the other packages under `internal/` cover the core, certificate, service, subscription and firewall modules:
 
 ```bash
-# 编译二进制
+# Build the binary
 go build -o easysb .
 
-# 运行测试
+# Run tests
 go test ./...
 
-# 无交互渲染一次仪表盘（用于预览 / 截图 / 排错）
+# Render the dashboard once without interaction (preview / screenshot / debug)
 ./easysb --render --width 100 --height 34
 
-# 切换语言与图标模式
+# Switch language and icon mode
 ./easysb --language E --icons off
 ```
 
 ---
 
-## 安全须知
+## Security Notes
 
-> 仓库中的 UUID、密码、REALITY 私钥、证书路径等全部为示例值，直接用于生产环境等同于无防护。
+> UUIDs, passwords, REALITY private keys and certificate paths in this repository are samples. Using them in production is equivalent to having no protection.
 
-- 部署前务必重新生成全部密钥与 UUID，并保证服务端与客户端严格一致。
-- REALITY 私钥仅存于服务端，切勿提交至任何公开仓库。
-- 证书类协议请使用真实域名与有效证书，并将证书文件权限收紧至 `600`。
-- 请遵守所在地区的法律法规，仅在合法授权的网络环境中使用本项目。
+- Regenerate every key and UUID before deployment, and keep server and client strictly in sync.
+- A REALITY private key belongs on the server only. Never commit it to a public repository.
+- Use a real domain and a valid certificate for certificate-based protocols, and tighten certificate file permissions to `600`.
+- Follow local laws and use this project only in network environments you are authorized to operate.
 
-发现安全问题请按 [SECURITY.md](SECURITY.md) 中的方式私下报告，不要直接开公开 Issue。
+Report security issues privately as described in [SECURITY.md](SECURITY.md) instead of opening a public issue.
 
 ---
 
-## 开源协议
+## License
 
-本项目遵循 **GPL-3.0**，完整协议文本见 [LICENSE](LICENSE)。
+This project is licensed under **GPL-3.0**. See [LICENSE](LICENSE) for the full text.
 
-Copyright (C) 2026 MinimaxFlora。分发与二次修改需继续遵循 GPL-3.0。
+Copyright (C) 2026 MinimaxFlora. Redistribution and modification must continue to follow GPL-3.0.
 
 <div align="center">
 
-**Built for sing-box · 五合一部署，菜单直达。**
+**Built for sing-box · 5-in-1 deployment, straight from the menu.**
 
 GPL-3.0 License © [MinimaxFlora](https://github.com/MinimaxFlora)
 

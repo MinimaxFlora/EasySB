@@ -4,6 +4,14 @@
 
 程序的版本号与构建提交在编译期注入，内核版本独立于程序版本，由官方 `SagerNet/sing-box` Releases 提供。
 
+## [Unreleased]
+
+### 变更
+
+- 目录名统一小写：`Templates/` → `templates/`，子目录改为 `anytls`、`hysteria2`、`tuic`、`vmess-websocket-tls`、`vless-vision-reality`、`config`。
+- README 主文档改为英文 `README.md`，中文版迁移到 `README_ZH.md`。
+- 新增 `docs/` 面向其他 Agent 与协作者的工程文档，并在根目录提供 `AGENTS.md` 索引。
+
 ## [v3.0.0] - 2026-09-20
 
 ### 新增

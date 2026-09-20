@@ -6,7 +6,7 @@
 * @MinimaxFlora
 
 # 客户端订阅与全局代理模板
-/Templates/ @MinimaxFlora
+/templates/ @MinimaxFlora
 
 # CI 工作流与社区健康文件
 /.github/ @MinimaxFlora
@@ -14,4 +14,7 @@
 # 仓库级协议与文档
 /LICENSE @MinimaxFlora
 /README.md @MinimaxFlora
-/README_EN.md @MinimaxFlora
+/README_ZH.md @MinimaxFlora
+
+# 面向其他 Agent 的工程文档
+/docs/ @MinimaxFlora
