@@ -5,6 +5,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 
+	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
 	"github.com/MinimaxFlora/EasySB/internal/theme"
 )
 
@@ -44,7 +45,22 @@ func (a *App) statusSummary(width int) []string {
 		a.lang.T("status_core") + " " + core + sep +
 		a.lang.T("status_domain") + " " + domain + sep +
 		a.lang.T("status_node") + " " + node
+	if ports := enabledPorts(s.Ports); ports != "" {
+		plain += sep + a.lang.T("status_ports") + " " + ports
+	}
 	return []string{" " + a.palette.Value(theme.Truncate(plain, width-1))}
+}
+
+// enabledPorts joins the listening ports of enabled protocols for the status
+// board.
+func enabledPorts(ports []sysinfo.PortInfo) string {
+	var out []string
+	for _, p := range ports {
+		if p.Enabled && p.Port != "" {
+			out = append(out, p.Port)
+		}
+	}
+	return strings.Join(out, " ")
 }
 
 func wrapText(s string, width int) []string {

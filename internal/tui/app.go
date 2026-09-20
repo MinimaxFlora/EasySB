@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 
 	"charm.land/bubbles/v2/spinner"
@@ -271,6 +272,14 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		a.move(-1)
 	case "down", "j":
 		a.move(1)
+	case "0", "1", "2", "3", "4", "5", "6", "7", "8", "9":
+		// Shell-style numeric selection: pick the row, Enter runs it. 0 targets
+		// the trailing navigation row (back / exit).
+		if key == "0" {
+			a.index = len(a.current().nodes)
+		} else if n := int(key[0] - '0'); n <= len(a.current().nodes) {
+			a.index = n - 1
+		}
 	case "left":
 		if len(a.stack) > 1 {
 			a.pop()
@@ -296,7 +305,9 @@ func (a *App) View() tea.View {
 		content = a.dashboard()
 	}
 	v := tea.NewView(content)
-	v.AltScreen = true
+	// The menu draws inline like the shell script; only long-running tasks take
+	// over the screen so their live log can scroll comfortably.
+	v.AltScreen = a.task != nil
 	return v
 }
 
@@ -305,19 +316,8 @@ func (a *App) formScreen() string {
 	if w <= 0 {
 		w = 96
 	}
-	h := a.height
-	if h <= 0 {
-		h = 32
-	}
 	out := strings.Split(a.form.View(w, a.palette, a.lang), "\n")
-	bodyHeight := h - 2
-	if bodyHeight < 4 {
-		bodyHeight = 4
-	}
-	for len(out) < bodyHeight {
-		out = append(out, "")
-	}
-	out = append(out, theme.Rule(w, a.palette.Border))
+	out = append(out, "")
 	out = append(out, a.statusBar(w))
 	return strings.Join(out, "\n")
 }
@@ -327,12 +327,10 @@ func (a *App) dashboard() string {
 	if w <= 0 {
 		w = 96
 	}
-	h := a.height
-	if h <= 0 {
-		h = 32
-	}
 
-	out := a.headerLines(w)
+	out := a.renderHeader(w)
+	out = append(out, a.statusSummary(w)...)
+	out = append(out, theme.Rule(w, a.palette.Border))
 	out = append(out, "")
 	out = append(out, " "+a.palette.Bold(a.palette.Primary, a.current().title(a.lang)))
 	out = append(out, a.menuLines(w)...)
@@ -340,23 +338,11 @@ func (a *App) dashboard() string {
 		out = append(out, "")
 		out = append(out, desc...)
 	}
-
-	// 菜单始终自左上角向下排列，仅在内容不足时向下补白，让底部状态栏贴底。
-	// The menu flows top-left; pad only so the bottom bar stays anchored.
-	bodyHeight := h - 3
-	if bodyHeight < 4 {
-		bodyHeight = 4
-	}
-	for len(out) < bodyHeight {
-		out = append(out, "")
-	}
-
 	if a.toast != "" {
-		out = append(out, a.renderToast(w))
-	} else {
 		out = append(out, "")
+		out = append(out, a.renderToast(w))
 	}
-	out = append(out, theme.Rule(w, a.palette.Border))
+	out = append(out, "")
 	out = append(out, a.statusBar(w))
 	return strings.Join(out, "\n")
 }
@@ -368,9 +354,9 @@ func (a *App) menuLines(w int) []string {
 	}
 	var rows []string
 	for i, n := range a.current().nodes {
-		rows = append(rows, a.rowLine(i == a.index, n.label(a.lang), inner))
+		rows = append(rows, a.rowLine(i == a.index, fmt.Sprintf("[%d] %s", i+1, n.label(a.lang)), inner))
 	}
-	rows = append(rows, a.rowLine(a.onNavRow(), a.navLabel(), inner))
+	rows = append(rows, a.rowLine(a.onNavRow(), "[0] "+a.navLabel(), inner))
 	return rows
 }
 
@@ -400,19 +386,6 @@ func (a *App) descLines(w int) []string {
 		out = append(out, "   "+a.palette.Dim(line))
 	}
 	return out
-}
-
-func (a *App) headerLines(w int) []string {
-	bannerWidth := w
-	if bannerWidth > 72 {
-		bannerWidth = 72
-	}
-	lines := strings.Split(a.renderBanner(bannerWidth), "\n")
-	lines = append(lines, "")
-	lines = append(lines, a.renderVersions(w)...)
-	lines = append(lines, "")
-	lines = append(lines, a.statusSummary(w)...)
-	return lines
 }
 
 func (a *App) renderToast(w int) string {

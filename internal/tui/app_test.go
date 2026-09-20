@@ -151,6 +151,26 @@ func TestUninstallOpensConfirm(t *testing.T) {
 	}
 }
 
+func TestNumberedMenuAndDigitSelection(t *testing.T) {
+	a := newTestApp(t)
+	if a.View().AltScreen {
+		t.Fatalf("dashboard should render inline, not fullscreen")
+	}
+	if !strings.Contains(a.View().Content, "[5] 服务管理") {
+		t.Fatalf("service entry should be numbered [5]")
+	}
+	m, _ := a.Update(press('5'))
+	a = m.(*App)
+	if got := a.selected().id; got != "service" {
+		t.Fatalf("digit 5 should select service, got %s", got)
+	}
+	m, _ = a.Update(press('0'))
+	a = m.(*App)
+	if !a.onNavRow() {
+		t.Fatalf("digit 0 should select the navigation row")
+	}
+}
+
 func TestFormSubmit(t *testing.T) {
 	a := newTestApp(t)
 	var got string
