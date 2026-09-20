@@ -28,6 +28,16 @@ assert_no_grep "无上游内核下载地址" 'SagerNet/sing-box/releases/downloa
 assert_grep "保留参考项目声明" 'github\.com/fscarmen/sing-box' "$DIST_SCRIPT"
 assert_grep "保留 EasySB 项目地址" 'github\.com/MinimaxFlora/EasySB' "$DIST_SCRIPT"
 
+# 订阅模板取自本仓库 Templates/，守护进程内核只使用正式版
+assert_grep "订阅模板指向本仓库" '^SUBSCRIBE_TEMPLATE="\$\{PROJECT_RAW\}/Templates"$' "$DIST_SCRIPT"
+assert_grep "订阅模板 config.yaml" 'SUBSCRIBE_TEMPLATE}/config\.yaml' "$DIST_SCRIPT"
+assert_grep "订阅模板 config-rule.yaml" 'SUBSCRIBE_TEMPLATE}/config-rule\.yaml' "$DIST_SCRIPT"
+assert_grep "订阅模板 config.json" 'SUBSCRIBE_TEMPLATE}/config\.json' "$DIST_SCRIPT"
+assert_no_grep "无上游订阅模板地址" 'fscarmen/client_template/main/(clash|clash2|sing-box)' "$DIST_SCRIPT"
+assert_no_grep "内核兜底版本非预发布" "^DEFAULT_NEWEST_VERSION='[0-9.]+-(alpha|beta|rc)" "$DIST_SCRIPT"
+assert_grep "内核版本过滤预发布标签" "grep -E '\^\[0-9\]\+" "$DIST_SCRIPT"
+assert_grep "保留 clash2 订阅生成" 'WORK_DIR}/subscribe/clash2' "$DIST_SCRIPT"
+
 # 12 个协议全部保留
 assert_eq "协议数量" \
   "$(grep -m1 '^PROTOCOL_LIST=' "$DIST_SCRIPT" | grep -oE '"[^"]+"' | wc -l)" "12"

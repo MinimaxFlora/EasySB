@@ -165,21 +165,21 @@ export_list() {
 
   # 后台生成 clash 订阅配置文件
   {
-    # 模板1: 使用 proxy providers
-    cat ${TEMP_DIR}/clash | sed "s#NODE_NAME#${NODE_NAME_CONFIRM}#g; s#PROXY_PROVIDERS_URL#$SUBSCRIBE_ADDRESS/${UUID_CONFIRM}/proxies#" > ${WORK_DIR}/subscribe/clash
+    # 模板1 config.yaml: 使用 proxy providers
+    cat ${TEMP_DIR}/config.yaml | sed "s#NODE_NAME#${NODE_NAME_CONFIRM}#g; s#PROXY_PROVIDERS_URL#$SUBSCRIBE_ADDRESS/${UUID_CONFIRM}/proxies#" > ${WORK_DIR}/subscribe/clash
 
-    # 模板2: 不使用 proxy providers
+    # 模板2 config-rule.yaml: 不使用 proxy providers，内嵌节点与规则
     CLASH2_PORT=("$PORT_XTLS_REALITY" "$PORT_HYSTERIA2" "$PORT_TUIC" "$PORT_SHADOWTLS" "$PORT_SHADOWSOCKS" "$PORT_TROJAN" "$PORT_VMESS_WS" "$PORT_VLESS_WS" "$PORT_GRPC_REALITY" "$PORT_ANYTLS")
     CLASH2_PROXY_INSERT=("$CLASH_XTLS_REALITY" "$CLASH_HYSTERIA2" "$CLASH_TUIC" "$CLASH_SHADOWTLS" "$CLASH_SHADOWSOCKS" "$CLASH_TROJAN" "$CLASH_VMESS_WS" "$CLASH_VLESS_WS" "$CLASH_GRPC_REALITY" "$CLASH_ANYTLS")
     CLASH2_PROXY_GROUPS_INSERT=("- ${NODE_NAME[11]} ${NODE_TAG[0]}" "- ${NODE_NAME[12]} ${NODE_TAG[1]}" "- ${NODE_NAME[13]} ${NODE_TAG[2]}" "- ${NODE_NAME[14]} ${NODE_TAG[3]}" "- ${NODE_NAME[15]} ${NODE_TAG[4]}" "- ${NODE_NAME[16]} ${NODE_TAG[5]}" "- ${NODE_NAME[17]} ${NODE_TAG[6]}" "- ${NODE_NAME[18]} ${NODE_TAG[7]}" "- ${NODE_NAME[20]} ${NODE_TAG[9]}" "- ${NODE_NAME[21]} ${NODE_TAG[10]}")
 
-    CLASH2_YAML=$(cat ${TEMP_DIR}/clash2)
+    CLASH2_YAML=$(cat ${TEMP_DIR}/config-rule.yaml)
     for x in ${!CLASH2_PORT[@]}; do
       [[ ${CLASH2_PORT[x]} =~ [0-9]+ ]] && { CLASH2_YAML=$(sed "/proxy-groups:/i\  ${CLASH2_PROXY_INSERT[x]}" <<< "$CLASH2_YAML"); CLASH2_YAML=$(sed -E "/- name: (♻️ 自动选择|📲 电报消息|💬 OpenAi|📹 油管视频|🎥 奈飞视频|📺 巴哈姆特|📺 哔哩哔哩|🌍 国外媒体|🌏 国内媒体|📢 谷歌FCM|Ⓜ️ 微软Bing|Ⓜ️ 微软云盘|Ⓜ️ 微软服务|🍎 苹果服务|🎮 游戏平台|🎶 网易音乐|🎯 全球直连)|^rules:$/i\      ${CLASH2_PROXY_GROUPS_INSERT[x]}" <<< "$CLASH2_YAML"); }
     done
     echo "$CLASH2_YAML" > ${WORK_DIR}/subscribe/clash2
 
-    rm -f ${TEMP_DIR}/clash{,2}
+    rm -f ${TEMP_DIR}/config.yaml ${TEMP_DIR}/config-rule.yaml
   } &>/dev/null
 
   # 生成 ShadowRocket 订阅配置文件
@@ -590,9 +590,9 @@ naive+quic://${UUID[22]}:${UUID[22]}@${SERVER_IP_1}:${PORT_NAIVE}?congestion_con
 
   {
     # 生成 sing-box SFM SFA SFI 订阅文件
-    [ ! -s "$TEMP_DIR/sing-box-template" ] && wget --no-check-certificate --continue --tries=2 --timeout=10 -qO "$TEMP_DIR/sing-box-template" "${GH_PROXY}${SUBSCRIBE_TEMPLATE}/sing-box" 2>/dev/null
-    cat $TEMP_DIR/sing-box-template | sed "s#\"<OUTBOUND_REPLACE>\",#$OUTBOUND_REPLACE#; s#\"<NODE_REPLACE>\"#${NODE_REPLACE%,}#g" | ${WORK_DIR}/jq > ${WORK_DIR}/subscribe/sing-box
-    rm -f $TEMP_DIR/sing-box-template
+    [ ! -s "$TEMP_DIR/config.json" ] && wget --no-check-certificate --continue --tries=2 --timeout=10 -qO "$TEMP_DIR/config.json" "${GH_PROXY}${SUBSCRIBE_TEMPLATE}/config.json" 2>/dev/null
+    cat $TEMP_DIR/config.json | sed "s#\"<OUTBOUND_REPLACE>\",#$OUTBOUND_REPLACE#; s#\"<NODE_REPLACE>\"#${NODE_REPLACE%,}#g" | ${WORK_DIR}/jq > ${WORK_DIR}/subscribe/sing-box
+    rm -f $TEMP_DIR/config.json
   } &>/dev/null
 
   # 生成二维码 url 文件
@@ -760,4 +760,3 @@ EOF
   ln -sf ${WORK_DIR}/sb.sh /usr/bin/sb
   [ -s /usr/bin/sb ] && info "\n $(text 71) "
 }
-

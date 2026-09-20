@@ -49,6 +49,11 @@ EasySB/
 │   ├── 17-menu.sh            # 交互菜单
 │   └── 18-entry.sh           # 脚本入口（必须最后）
 ├── tests/                # 测试套件
+├── Templates/            # 客户端订阅模板
+│   ├── config.yaml       # Clash / Mihomo（proxy-providers 形式）
+│   ├── config-rule.yaml  # Clash / Mihomo（内嵌节点与规则）
+│   ├── config.json       # sing-box SFM / SFA / SFI
+│   └── tun-fakeip.json   # TUN fake-ip 配置模板
 ├── build.sh              # 模块合成 + 语法校验
 ├── config.conf           # 无交互安装配置模板
 ├── force_version         # 内核强制版本文件

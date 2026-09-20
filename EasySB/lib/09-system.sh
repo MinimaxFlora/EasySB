@@ -105,11 +105,11 @@ check_install() {
     fi
   fi
 
-  # 并发下载订阅模板 (clash, clash2, sing-box-template)，在新安装和更换协议时会用到
+  # 并发下载订阅模板 (config.yaml, config-rule.yaml, config.json)，在新安装和更换协议时会用到
   {
-    wget --no-check-certificate --continue --tries=2 --timeout=10 -qO $TEMP_DIR/clash ${GH_PROXY}${SUBSCRIBE_TEMPLATE}/clash 2>/dev/null &
-    wget --no-check-certificate --continue --tries=2 --timeout=10 -qO $TEMP_DIR/clash2 ${GH_PROXY}${SUBSCRIBE_TEMPLATE}/clash2 2>/dev/null &
-    wget --no-check-certificate --continue --tries=2 --timeout=10 -qO $TEMP_DIR/sing-box-template ${GH_PROXY}${SUBSCRIBE_TEMPLATE}/sing-box 2>/dev/null &
+    wget --no-check-certificate --continue --tries=2 --timeout=10 -qO $TEMP_DIR/config.yaml ${GH_PROXY}${SUBSCRIBE_TEMPLATE}/config.yaml 2>/dev/null &
+    wget --no-check-certificate --continue --tries=2 --timeout=10 -qO $TEMP_DIR/config-rule.yaml ${GH_PROXY}${SUBSCRIBE_TEMPLATE}/config-rule.yaml 2>/dev/null &
+    wget --no-check-certificate --continue --tries=2 --timeout=10 -qO $TEMP_DIR/config.json ${GH_PROXY}${SUBSCRIBE_TEMPLATE}/config.json 2>/dev/null &
     wait
   } &
 
@@ -376,8 +376,8 @@ get_sing_box_version() {
     # 先判断 github api 返回 http 状态码是否为 200，有时候 IP 会被限制，导致获取不到最新版本
     local API_RESPONSE=$(wget --no-check-certificate --server-response --tries=2 --timeout=3 -qO- "${GH_PROXY}${PROJECT_SING_BOX_API}" 2>&1 | grep -E '^[ ]+HTTP/|tag_name')
     if grep -q 'HTTP.* 200' <<< "$API_RESPONSE"; then
-      # 只接受形如 x.y.z 的语义化版本标签，忽略脚本自身等非版本标签（如 easysb）
-      local VERSION_LATEST=$(awk -F '["v-]' '/tag_name/{print $5}' <<< "$API_RESPONSE" | grep -E '^[0-9]' | sort -Vr | sed -n '1p')
+      # 只接受纯 x.y.z 正式版标签：排除 easysb 等非版本标签，同时排除 alpha / beta / rc 预发布版本
+      local VERSION_LATEST=$(awk -F '["v-]' '/tag_name/{print $5}' <<< "$API_RESPONSE" | grep -E '^[0-9]+(\.[0-9]+)+$' | sort -Vr | sed -n '1p')
       local RESULT_VERSION=$(awk -F '["v]' -v var="tag_name.*$VERSION_LATEST" '$0 ~ var {print $5; exit}' <<< "$API_RESPONSE")
     else
       local RESULT_VERSION="$DEFAULT_NEWEST_VERSION"
@@ -385,4 +385,3 @@ get_sing_box_version() {
   fi
   echo "$RESULT_VERSION"
 }
-

@@ -61,11 +61,15 @@ PROTOCOL_LIST=("XTLS + reality" "hysteria2" "tuic" "ShadowTLS" "shadowsocks" "tr
 NODE_TAG=("xtls-reality" "hysteria2" "tuic" "ShadowTLS" "shadowsocks" "trojan" "vmess-ws" "vless-ws-tls" "h2-reality" "grpc-reality" "anytls" "naive")
 CONSECUTIVE_PORTS=${#PROTOCOL_LIST[@]}
 CDN_DOMAIN=("skk.moe" "ip.sb" "time.is" "cfip.xxxxxxxx.tk" "bestcf.top" "cdn.2020111.xyz" "xn--b6gac.eu.org" "cf.090227.xyz")
-# 客户端订阅模板（clash / clash2 / sing-box）来源，供订阅生成使用
-SUBSCRIBE_TEMPLATE="https://raw.githubusercontent.com/fscarmen/client_template/main"
+# 客户端订阅模板来源，取自本仓库 Templates/ 目录，供订阅生成使用
+#   config.yaml      -> Clash / Mihomo 订阅（proxy-providers 形式）
+#   config-rule.yaml -> Clash / Mihomo 订阅（内嵌规则与节点的自包含形式）
+#   config.json      -> sing-box SFM / SFA / SFI 订阅
+SUBSCRIBE_TEMPLATE="${PROJECT_RAW}/Templates"
 # 运行次数统计接口：留空表示不上报；填写自建统计服务地址即可启用统计功能
 STATISTICS_API=''
-DEFAULT_NEWEST_VERSION='1.15.0-alpha.6'
+# 仅在 GitHub API 不可达时使用的兜底内核版本，取本仓库已编译发布的正式版
+DEFAULT_NEWEST_VERSION='1.14.1'
 FINGER_PRINT='chrome'
 STEP_NUM=0      # 当前步骤编号（安装流程中动态递增）
 TOTAL_STEPS=''  # 总步骤数（协议确定后动态计算）
@@ -80,4 +84,3 @@ trap cleanup_temp EXIT
 trap 'cleanup_temp; printf "\n"; exit 1' INT QUIT TERM
 
 mkdir -p "$TEMP_DIR"
-

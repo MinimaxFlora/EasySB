@@ -91,6 +91,7 @@
 | Nginx 伪装站点与订阅站点 | `lib/11-firewall.sh`、`lib/14-export.sh` |
 | 节点导出、分享链接、二维码 | `lib/14-export.sh` |
 | 多客户端订阅（Base64 / 链接 / sing-box / Mihomo） | `lib/14-export.sh` |
+| 订阅模板来源（`Templates/config.yaml`、`config-rule.yaml`、`config.json`） | `lib/09-system.sh`、`lib/14-export.sh` |
 | WARP 账户注册与更换 | `lib/08-warp.sh` |
 | Hysteria2 Realm 与 WARP 打洞 | `lib/08-warp.sh` |
 | 端口跳跃与 NAT 规则 | `lib/10-ports.sh` |
@@ -109,6 +110,20 @@
 | 内核来源 | `SagerNet/sing-box` Releases | 本仓库 Releases（由 `build-release.yml` 编译） |
 | 强制版本文件 | 上游仓库 | `EasySB/force_version` |
 | 运行次数统计 | 上游统计接口 | 默认关闭，可由 `STATISTICS_API` 接入自建服务 |
+| 订阅模板来源 | `fscarmen/client_template` | 本仓库 `Templates/` |
+| 内核版本策略 | 兜底版本可为 alpha 预发布版 | 仅使用正式版，兜底为 `1.14.1` |
 | 源码组织 | 单文件 | `EasySB/lib/` 19 个模块 + `build.sh` 合成 |
 | 校验方式 | 无 | `EasySB/tests/` 五类测试 + CI |
 | 协议与选项 | 12 协议 | 保持一致 |
+
+## 订阅模板
+
+订阅生成所需的模板全部取自本仓库 `Templates/`：
+
+| 模板文件 | 用途 | 占位符 |
+| :--- | :--- | :--- |
+| `Templates/config.yaml` | Clash / Mihomo 订阅（`proxy-providers` 形式） | `NODE_NAME`、`PROXY_PROVIDERS_URL` |
+| `Templates/config-rule.yaml` | Clash / Mihomo 订阅（内嵌节点与规则的自包含形式） | 无，由脚本按 `proxy-groups:` / `rules:` 锚点插入 |
+| `Templates/config.json` | sing-box SFM / SFA / SFI 订阅 | `<OUTBOUND_REPLACE>`、`<NODE_REPLACE>` |
+
+对应订阅地址：`/clash`、`/clash2`、`/sing-box`，客户端自动识别入口为 `/auto` 与 `/auto2`。
