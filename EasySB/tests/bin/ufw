@@ -1,8 +1,0 @@
-#!/usr/bin/env bash
-# ufw stub —— 记录调用；status 打印 $ESB_STUB_UFW_STATUS（默认 inactive）；拒绝 `ufw disable`（INTERFACES §0.3 禁止关闭防火墙）
-printf '%s\t%s\n' "${0##*/}" "$*" >>"${ESB_TEST_WORK:-/dev/null}/stubs.log" 2>/dev/null || true
-case "${1:-}" in
-  disable) printf 'ufw stub: 拒绝 "ufw disable"（违反 INTERFACES §0.3：禁止关闭防火墙）\n' >&2; exit 1 ;;
-  status)  printf 'Status: %s\n' "${ESB_STUB_UFW_STATUS:-inactive}"; exit 0 ;;
-  enable|allow|deny|delete|reload|--force|*) exit 0 ;;
-esac

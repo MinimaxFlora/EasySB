@@ -1,7 +1,0 @@
-# 开发/测试产物，不入库
-tools/bin/*.exe
-tools/bin/jq
-tools/bin/shellcheck
-tests/.work*/
-dist/*.tmp.*
-*.tmp.*
