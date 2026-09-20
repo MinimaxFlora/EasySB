@@ -1,7 +1,7 @@
-name: Build EasySB Go binary
+name: Build EasySB Go release
 
 # 源码：根目录 Go module（main.go、internal/**）
-# 产物：easysb-linux-<arch> 静态二进制，以固定 tag `easysb-go` 发布
+# 产物：easysb-linux-<arch> 静态二进制，以 tag `v<VERSION>` 发布
 # 安装：bash install.sh（默认优先下载该 tag 下的二进制，失败时回退源码构建）
 
 on:
@@ -29,7 +29,6 @@ concurrency:
 
 env:
   TZ: Asia/Shanghai
-  RELEASE_TAG: easysb-go
 
 jobs:
   build:
@@ -103,15 +102,19 @@ jobs:
           path: dist
           merge-multiple: true
 
+      - name: 读取版本
+        id: ver
+        run: echo "version=$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_OUTPUT"
+
       - name: 发布到 Release
         uses: softprops/action-gh-release@v3
         with:
           token: ${{ github.token }}
-          tag_name: ${{ env.RELEASE_TAG }}
-          name: EasySB Go (${{ github.sha }})
+          tag_name: v${{ steps.ver.outputs.version }}
+          name: EasySB Go v${{ steps.ver.outputs.version }}
           make_latest: false
           body: |
-            > EasySB Go 版二进制 / EasySB Go binaries
+            > EasySB Go v${{ steps.ver.outputs.version }} 二进制 / binaries
 
             - 项目地址 / Homepage: https://github.com/MinimaxFlora/EasySB
             - 内核来源 / Core source: https://github.com/SagerNet/sing-box

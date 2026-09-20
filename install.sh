@@ -19,9 +19,9 @@
 
 set -euo pipefail
 
-VERSION='3.0.0-dev'
+VERSION='3.0.0'
 REPO='MinimaxFlora/EasySB'
-RELEASE_TAG='easysb-go'
+RELEASE_TAG="v${VERSION}"
 PREFIX="${PREFIX:-/usr/local}"
 BIN_NAME='easysb'
 FONT_NAME='JetBrainsMono'

@@ -12,7 +12,7 @@
 - 目录重组：五个协议样例与订阅模板统一归入 `Templates/`，订阅模板移至 `Templates/Config/tun-fakeip.json`；内核管理改为安装 stable / 安装 alpha / 通道切换 / 更新当前通道。
 - 命令参数改为 Go flag：`--language`、`--icons`、`--apply-firewall`、`--render`、`--version`、`--help`。
 - 仪表盘改为多卡片布局：新增设备信息、节点信息卡片，按键提示独立成框，菜单项以图标展示。
-- 发行流程改为 `.github/workflows/easysb-go-release.yml` 交叉编译多平台二进制，以固定 tag `easysb-go` 发布，并在 `--version` 中输出构建短哈希以便核验。
+- 发行流程改为 `.github/workflows/easysb-go-release.yml` 交叉编译多平台二进制，以版本 tag `v3.0.0` 发布，并在 `--version` 中输出构建短哈希以便核验。
 
 ### 变更
 

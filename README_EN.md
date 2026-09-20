@@ -228,7 +228,7 @@ The unit restores rules via `easysb --apply-firewall`. It is not created when Hy
 | Install | Downloads and verifies for the architecture, writes `/etc/sing-box/sing-box` |
 | Replace | Swaps the binary only, keeps `/etc/sing-box/config.json` |
 | Uninstall | Stops the service and removes the core |
-| Release | `.github/workflows/easysb-go-release.yml` cross-compiles every platform binary and publishes them under the fixed `easysb-go` tag |
+| Release | `.github/workflows/easysb-go-release.yml` cross-compiles every platform binary and publishes them under the `v<VERSION>` tag (currently `v3.0.0`) |
 
 ---
 

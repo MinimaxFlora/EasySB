@@ -1,4 +1,4 @@
-// Package update self-updates the EasySB binary from the easysb-go GitHub
+// Package update self-updates the EasySB binary from the v<version> GitHub
 // release, mirroring the legacy script's self-update flow.
 package update
 
@@ -17,8 +17,10 @@ import (
 // Repo is the EasySB repository that publishes the binaries.
 const Repo = "MinimaxFlora/EasySB"
 
-// ReleaseTag is the fixed release tag holding the Go binaries.
-const ReleaseTag = "easysb-go"
+// ReleaseTag maps an EasySB version to its GitHub release tag.
+func ReleaseTag(version string) string {
+	return "v" + strings.TrimPrefix(strings.TrimSpace(version), "v")
+}
 
 // versionURL points at the raw VERSION file on the default branch.
 const versionURL = "https://raw.githubusercontent.com/" + Repo + "/master/VERSION"
@@ -42,13 +44,14 @@ func AssetName(goarch string) (string, bool) {
 	return "", false
 }
 
-// AssetURL returns the download URL for the current architecture.
-func AssetURL() (string, error) {
+// AssetURL returns the download URL for an EasySB version and the current
+// architecture.
+func AssetURL(version string) (string, error) {
 	asset, ok := AssetName(runtime.GOARCH)
 	if !ok {
 		return "", errors.New("unsupported architecture: " + runtime.GOARCH)
 	}
-	return "https://github.com/" + Repo + "/releases/download/" + ReleaseTag + "/easysb-linux-" + asset, nil
+	return "https://github.com/" + Repo + "/releases/download/" + ReleaseTag(version) + "/easysb-linux-" + asset, nil
 }
 
 // RemoteVersion downloads the published VERSION file.
@@ -86,7 +89,14 @@ func Apply(ctx context.Context, current string, log func(string)) (bool, string,
 		}
 	}
 
-	url, err := AssetURL()
+	target := remote
+	if target == "" {
+		target = current
+	}
+	if target == "" {
+		return false, remote, errors.New("missing version for release tag")
+	}
+	url, err := AssetURL(target)
 	if err != nil {
 		return false, remote, err
 	}

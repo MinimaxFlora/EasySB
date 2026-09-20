@@ -232,7 +232,7 @@ NAT 规则重启即失效，因此脚本会生成开机恢复单元：
 | 安装 | 按架构下载并校验，写入 `/etc/sing-box/sing-box` |
 | 替换 | 只更换二进制，保留 `/etc/sing-box/config.json` |
 | 卸载 | 停止服务并移除内核 |
-| 程序发行 | `.github/workflows/easysb-go-release.yml` 交叉编译各平台二进制，以固定 tag `easysb-go` 发布 |
+| 程序发行 | `.github/workflows/easysb-go-release.yml` 交叉编译各平台二进制，以 tag `v<VERSION>`（当前 `v3.0.0`）发布 |
 
 ---
 
