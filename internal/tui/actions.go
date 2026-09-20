@@ -12,6 +12,7 @@ import (
 	"github.com/MinimaxFlora/EasySB/internal/cert"
 	"github.com/MinimaxFlora/EasySB/internal/config"
 	"github.com/MinimaxFlora/EasySB/internal/core"
+	"github.com/MinimaxFlora/EasySB/internal/firewall"
 	"github.com/MinimaxFlora/EasySB/internal/netutil"
 	"github.com/MinimaxFlora/EasySB/internal/secret"
 	"github.com/MinimaxFlora/EasySB/internal/service"
@@ -274,6 +275,13 @@ func deployNode() actionFunc {
 			if err := cfg.Save(); err != nil {
 				return err
 			}
+
+			if err := firewall.Apply(ctx, cfg, log); err != nil {
+				log("firewall: " + err.Error())
+			} else if err := firewall.WriteUnit(cfg); err == nil {
+				_ = firewall.UnitAction(ctx, "enable")
+			}
+
 			log(lang.T("node_deploy_done"))
 			return nil
 		})

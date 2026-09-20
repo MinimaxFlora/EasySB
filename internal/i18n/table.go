@@ -179,6 +179,7 @@ var table = []entry{
 	{"script_updating", "正在更新脚本", "Updating script"},
 	{"script_uptodate", "脚本已是最新版本", "Script is up to date"},
 	{"script_updated", "脚本更新完成", "Script updated"},
+	{"script_restart_hint", "请退出并重新运行 sb 以使用新版本", "Quit and run sb again to use the new build"},
 	{"script_failed", "脚本更新失败", "Script update failed"},
 	{"script_backup_ok", "配置备份已保存", "Config backup saved"},
 	{"shortcut_created", "快捷命令已创建（sb）", "Shortcut created (sb)"},
@@ -189,13 +190,14 @@ var table = []entry{
 	{"uninstall_keep_certs", "acme 证书已保留", "acme certificates kept"},
 
 	{"fw_configuring", "正在配置防火墙", "Configuring firewall"},
+	{"fw_apply", "配置防火墙", "Configure firewall"},
+	{"fw_remove", "移除端口跳跃规则", "Remove port-hopping rules"},
 	{"fw_added", "端口跳跃转发规则已添加", "Port-hopping DNAT rules added"},
 	{"fw_removed", "端口跳跃转发规则已移除", "Port-hopping DNAT rules removed"},
 	{"fw_none", "未检测到防火墙，跳过", "No firewall detected, skipped"},
 	{"port_random", "已随机生成端口", "Random port generated"},
 	{"port_invalid", "端口无效或超出范围", "Invalid or out-of-range port"},
 	{"port_conflict", "该端口已被其他协议占用", "Port already used by another protocol"},
-	{"port_conflict", "端口与其它协议冲突", "Port conflicts with another protocol"},
 	{"port_occupied", "端口已被占用", "Port already in use"},
 
 	{"status_overview", "实时状态概览", "Live status overview"},

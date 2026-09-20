@@ -39,13 +39,6 @@ func iconLeaf(id, labelKey, descKey string, ic func(icons.Set) string, fn action
 	return n
 }
 
-func stub(messageKey string) actionFunc {
-	return func(a *App) tea.Cmd {
-		a.setToast(a.lang.T(messageKey)+" · "+a.lang.T("action_todo"), true)
-		return nil
-	}
-}
-
 func buildRoot() *menu {
 	return &menu{
 		id:    "root",
@@ -56,8 +49,8 @@ func buildRoot() *menu {
 			{id: "domain", label: tk("domain_title"), desc: tk("menu_domain"), icon: func(s icons.Set) string { return s.Globe }, sub: buildDomain()},
 			{id: "subscribe", label: tk("sub_title"), desc: tk("menu_subscribe"), icon: func(s icons.Set) string { return s.Link }, sub: buildSubscribe()},
 			{id: "service", label: tk("svc_title"), desc: tk("menu_service"), icon: func(s icons.Set) string { return s.Service }, sub: buildService()},
-			iconLeaf("script-update", "menu_script_update", "script_update", func(s icons.Set) string { return s.Refresh }, stub("script_update")),
-			iconLeaf("uninstall", "menu_uninstall", "uninstall_title", func(s icons.Set) string { return s.Trash }, stub("uninstall_title")),
+			iconLeaf("script-update", "menu_script_update", "script_update", func(s icons.Set) string { return s.Refresh }, scriptUpdate()),
+			iconLeaf("uninstall", "menu_uninstall", "uninstall_title", func(s icons.Set) string { return s.Trash }, uninstallAction()),
 		},
 	}
 }
@@ -178,7 +171,7 @@ func buildSubscribe() *menu {
 		id:    "subscribe",
 		title: tk("sub_title"),
 		nodes: []*node{
-			leaf("sub-regen", "sub_regen", "sub_generated", stub("sub_regen")),
+			leaf("sub-regen", "sub_regen", "sub_generated", regenerateSubscription()),
 			leaf("sub-url", "sub_url", "sub_need_domain", showSubscriptionURL()),
 			leaf("sub-qr", "sub_qr", "sub_no_qrencode", showSubscriptionQR()),
 			leaf("sub-links", "sub_links", "sub_need_deploy", showShareLinks()),
@@ -197,6 +190,8 @@ func buildService() *menu {
 			leaf("svc-status", "svc_status", "svc_title", serviceAction("status")),
 			leaf("svc-enable", "svc_enable", "svc_enabled", serviceAction("enable")),
 			leaf("svc-disable", "svc_disable", "svc_disabled", serviceAction("disable")),
+			leaf("svc-fw-apply", "fw_apply", "fw_added", firewallApply()),
+			leaf("svc-fw-remove", "fw_remove", "fw_removed", firewallRemove()),
 		},
 	}
 }
