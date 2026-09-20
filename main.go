@@ -16,7 +16,20 @@ import (
 	"github.com/MinimaxFlora/EasySB/internal/tui"
 )
 
-var version = "3.0.0-dev"
+var (
+	version = "3.0.0-dev"
+	commit  = ""
+)
+
+// versionLine is the human-facing build string, including the short commit when
+// the build stamped one.
+func versionLine() string {
+	v := resolveVersion()
+	if len(commit) >= 7 {
+		return v + " (" + commit[:7] + ")"
+	}
+	return v
+}
 
 func main() {
 	langFlag := flag.String("language", "", "界面语言 / UI language: C (中文) or E (English)")
@@ -29,7 +42,7 @@ func main() {
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Printf("EasySB %s\n", resolveVersion())
+		fmt.Printf("EasySB %s\n", versionLine())
 		return
 	}
 

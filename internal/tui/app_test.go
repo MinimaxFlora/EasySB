@@ -220,8 +220,8 @@ func TestKernelMenuEntries(t *testing.T) {
 
 func TestNumberedMenuAndDigitSelection(t *testing.T) {
 	a := newTestApp(t)
-	if a.View().AltScreen {
-		t.Fatalf("dashboard should render inline, not fullscreen")
+	if !a.View().AltScreen {
+		t.Fatalf("dashboard should render fullscreen so the screen is cleared")
 	}
 	if !strings.Contains(a.View().Content, "[5] 服务管理") {
 		t.Fatalf("service entry should be numbered [5]")

@@ -310,10 +310,8 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 func (a *App) View() tea.View {
 	if !a.sized {
-		// Wait for the first size report before drawing. Painting an oversized
-		// frame early makes the terminal scroll and leaves stale copies behind,
-		// which is what produced the stacked headers.
-		return tea.NewView(" ")
+		// Wait for the first size report before drawing.
+		return tea.NewView("")
 	}
 	var content string
 	switch {
@@ -325,9 +323,10 @@ func (a *App) View() tea.View {
 		content = a.dashboard()
 	}
 	v := tea.NewView(content)
-	// The menu draws inline like the shell script; only long-running tasks take
-	// over the screen so their live log can scroll comfortably.
-	v.AltScreen = a.task != nil
+	// Fullscreen keeps the terminal clean: the shell prompt and command above
+	// are hidden while the dashboard runs, and the inline renderer's stale-frame
+	// stacking cannot happen.
+	v.AltScreen = true
 	return v
 }
 
@@ -339,15 +338,21 @@ func (a *App) formScreen() string {
 	if w > 100 {
 		w = 100
 	}
+	h := a.height
+	if h <= 0 {
+		h = 24
+	}
 	out := strings.Split(a.form.View(w, a.palette, a.lang), "\n")
+	for len(out) < h-1 {
+		out = append(out, "")
+	}
 	out = append(out, a.statusBar(w))
 	return strings.Join(out, "\n")
 }
 
-// dashboard renders the whole dashboard inside a single box whose height is
-// derived from the terminal. The inline renderer cannot erase lines that have
-// scrolled off the top, so the frame must never be taller than the terminal:
-// optional sections are dropped first, then the menu scrolls in a viewport.
+// dashboard renders the dashboard inside a single box pinned to the top of the
+// screen, with the hint on the last row. The layout adapts to the terminal so
+// nothing overflows; optional sections drop first, then the menu scrolls.
 func (a *App) dashboard() string {
 	w := a.width
 	if w <= 0 {
@@ -425,6 +430,11 @@ func (a *App) dashboard() string {
 	out := strings.Split(box, "\n")
 	if a.toast != "" {
 		out = append(out, " "+a.renderToast(w))
+	}
+	// Fullscreen: pad so the hint sits on the last row, leaving the rest of the
+	// screen blank instead of letting old shell output show through.
+	for len(out) < h-1 {
+		out = append(out, "")
 	}
 	out = append(out, a.statusBar(w))
 	return strings.Join(out, "\n")

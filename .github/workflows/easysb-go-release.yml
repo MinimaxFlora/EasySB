@@ -73,7 +73,7 @@ jobs:
         run: |
           set -euo pipefail
           go build -trimpath \
-            -ldflags "-s -w -X main.version=${{ steps.ver.outputs.version }}" \
+            -ldflags "-s -w -X main.version=${{ steps.ver.outputs.version }} -X main.commit=${GITHUB_SHA}" \
             -o "dist/easysb-linux-${{ matrix.asset }}" .
           ls -lh "dist/easysb-linux-${{ matrix.asset }}"
 
