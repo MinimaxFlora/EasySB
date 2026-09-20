@@ -29,10 +29,13 @@ Traps already hit in this repository. Each entry names the symptom and the fix.
 
 ## sing-box integration
 
-- **Bare subscription URLs are not importable.** The client does not recognize a
-  plain URL; wrap it as `sing-box://import-remote-profile?url=...`
-  (`subscribe.ImportScheme`) and mihomo as `clash://install-config?url=...`
-  (`subscribe.ClashImportScheme`). This is what broke QR scanning before.
+- **QR payloads differ per client.** sing-box needs its deep link
+  (`sing-box://import-remote-profile?url=...`, `subscribe.ImportScheme`); a bare
+  URL is not recognized and this is what broke sing-box QR scanning before.
+  Clash-family clients are the opposite: their scanners feed the decoded text to
+  an HTTP client, so mihomo (and v2rayN) must carry the plain endpoint URL.
+  `clash://install-config?url=...` (`subscribe.ClashImportScheme`) only works as
+  an OS deep link, never from a scanned QR.
 - **AnyTLS and Hysteria2 URIs need a slash before the query.** Emitting
   `anytls://pass@host:port?query` makes clients reject the link; the spec form is
   `anytls://pass@host:port/?query`. Credentials must also be percent-encoded

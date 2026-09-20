@@ -97,8 +97,10 @@ func TestClientURLs(t *testing.T) {
 	if got := ClientLink(c, ClientSingBox); !strings.HasPrefix(got, ImportScheme) {
 		t.Fatalf("sing-box link missing deep link scheme: %q", got)
 	}
-	if got := ClientLink(c, ClientMihomo); !strings.HasPrefix(got, ClashImportScheme) {
-		t.Fatalf("mihomo link missing Clash scheme: %q", got)
+	// Clash-family clients fetch the scanned payload as a profile URL, so the
+	// mihomo QR must carry the plain endpoint rather than a clash:// deep link.
+	if got := ClientLink(c, ClientMihomo); got != ClientURL(c, ClientMihomo) {
+		t.Fatalf("mihomo link should be the plain URL: %q", got)
 	}
 }
 

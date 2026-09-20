@@ -109,6 +109,8 @@ at comes from `subscribe.ClientFile`.
 | `/mihomo/<uuid>` | `mihomo.yaml` | `text/yaml` | mihomo / Clash Meta |
 | `/v2ray/<uuid>` | `v2ray.txt` | `text/plain` | v2rayN |
 
-`subscribe.ClientLink` wraps the URL into the client deep link
-(`sing-box://import-remote-profile?url=`, `clash://install-config?url=`) for QR
-import; v2rayN takes the plain URL.
+`subscribe.ClientLink` builds the QR payload. sing-box wraps the URL in its
+deep link (`sing-box://import-remote-profile?url=`) because that is what its
+scanner expects. mihomo / Clash Meta and v2rayN get the plain URL: Clash-family
+scanners pass the scanned text straight to their HTTP client, so a
+`clash://install-config?url=` deep link would fail to fetch.

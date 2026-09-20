@@ -202,7 +202,7 @@ It is also hosted by nginx as a lightweight static site on port `8443`. The lega
 | mihomo / Clash Meta | `/mihomo/<uuid>` | Complete YAML profile |
 | v2rayN | `/v2ray/<uuid>` | Base64 share-link document |
 
-The UUID acts as the access token, so treat the URLs as secrets. The sing-box endpoint is wrapped as `sing-box://import-remote-profile?url=...` and mihomo as `clash://install-config?url=...` for one-scan import. sing-box listens for WebSocket directly; nginx only serves static files and never reverse-proxies.
+The UUID acts as the access token, so treat the URLs as secrets. The sing-box QR payload is wrapped as `sing-box://import-remote-profile?url=...` for one-scan import; mihomo and v2rayN QR payloads are the plain subscription URL, because Clash-family scanners fetch the scanned text directly as a profile URL (the `clash://install-config?url=...` deep link only works when clicked from a browser). sing-box listens for WebSocket directly; nginx only serves static files and never reverse-proxies.
 
 The mihomo profile mirrors a full desktop setup: `external-controller` on `0.0.0.0:9090` with `secret`, the Zashboard web UI via `external-ui-url`, fake-ip DNS with `fake-ip-filter`, `load-balance` / `url-test` / `select` proxy groups, and `GEOSITE` / `GEOIP` rules. Import it only on machines you trust on your LAN.
 
