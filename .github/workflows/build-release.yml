@@ -185,15 +185,15 @@ jobs:
           echo "gotag=$latest_version" >> $GITHUB_ENV
 
       - name: 安装 Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version: ${{ env.gotag }}
 
       - name: 检查代码仓库
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: 安装 UPX
-        uses: crazy-max/ghaction-upx@v3
+        uses: crazy-max/ghaction-upx@v4
         with:
           version: v4.2.4
           install-only: true
@@ -417,13 +417,13 @@ jobs:
           rm -f sing-box sing-box.exe sing-box-upx sing-box-upx.exe libcronet.dll libcronet.so
 
       - name: 上传 Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sing-box-${{ env.TAG }}-${{ matrix.target }}
           path: /opt/sing-box/dist/
 
       - name: 发布 Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           token: ${{ github.token }}
           body: |

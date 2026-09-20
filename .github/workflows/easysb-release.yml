@@ -28,7 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: 检出仓库
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: 合成发行脚本 EasySB/dist/easysb.sh
         run: |
@@ -45,14 +45,14 @@ jobs:
           bash EasySB/tests/run-tests.sh
 
       - name: 上传构建产物
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: easysb-script
           path: EasySB/dist/easysb.sh
           if-no-files-found: error
 
       - name: 发布到 Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           token: ${{ github.token }}
           tag_name: ${{ env.RELEASE_TAG }}
