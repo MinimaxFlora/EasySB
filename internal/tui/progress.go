@@ -109,7 +109,9 @@ func (p *progressModel) handleKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		case "enter", "esc", "q", "backspace":
 			return nil, true
 		}
-		return nil, false
+		var cmd tea.Cmd
+		p.vp, cmd = p.vp.Update(msg)
+		return cmd, false
 	}
 	if key == "esc" || key == "ctrl+c" {
 		if p.cancel != nil {
@@ -144,8 +146,11 @@ func (p *progressModel) appendLog(line string) {
 }
 
 func (p *progressModel) refresh() {
+	follow := p.vp.AtBottom()
 	p.vp.SetContent(strings.Join(p.logs, "\n"))
-	p.vp.GotoBottom()
+	if follow {
+		p.vp.GotoBottom()
+	}
 }
 
 func (p *progressModel) View(w, h int, pal theme.Palette, lang i18n.Lang, ic icons.Set) string {
@@ -170,7 +175,7 @@ func (p *progressModel) View(w, h int, pal theme.Palette, lang i18n.Lang, ic ico
 
 	header := " " + status + "  " + pal.Dim(theme.Truncate(p.title, width-24))
 	body := theme.Box(lang.T("task_running"), p.vp.View(), width, pal.Border, pal.Primary)
-	footer := pal.Dim(" " + lang.T("task_press_enter"))
+	footer := pal.Dim(" " + lang.T("task_scroll") + "  " + lang.T("task_press_enter"))
 	if !p.done {
 		footer = pal.Dim(" " + lang.T("hint_back") + "  " + lang.T("cancelled"))
 	}
