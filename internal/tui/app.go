@@ -495,7 +495,7 @@ func (a *App) dashboard() string {
 	// like the menu does.
 	addSection := func(titleKey string, lines []string) {
 		addSep()
-		body(a.sectionTitle(titleKey), false)
+		body(a.sectionTitle(titleKey), true)
 		for _, l := range lines {
 			body(l, true)
 		}
@@ -549,17 +549,35 @@ func (a *App) dashboard() string {
 		}
 	}
 	extra := make([]int, len(rows))
+	spent := 0
 	if gapCount > 0 && leftover > 0 {
 		for i, g := range gapIndex {
 			if g == 0 {
 				continue
 			}
-			extra[i] = g*leftover/gapCount - (g-1)*leftover/gapCount
+			// Never stack more than one blank between two rows; the rest of a
+			// tall terminal's space sinks to the bottom of the panel.
+			if g*leftover/gapCount-(g-1)*leftover/gapCount > 0 {
+				extra[i] = 1
+				spent++
+			}
 		}
+	}
+	pad := leftover - spent
+	if pad < 0 {
+		pad = 0
 	}
 
 	out := []string{theme.TopRule(w, a.palette.Border)}
 	for i, r := range rows {
+		// Keep the quote pinned to the bottom border by parking the spare rows
+		// just above it.
+		if pad > 0 && showQuote && i == len(rows)-1 {
+			for n := 0; n < pad; n++ {
+				out = append(out, theme.FrameLine("", w, a.palette.Border))
+			}
+			pad = 0
+		}
 		if r.sep {
 			out = append(out, theme.SectionRule(w, a.palette.Border))
 			continue
@@ -572,6 +590,9 @@ func (a *App) dashboard() string {
 		for n := 0; n < extra[i]; n++ {
 			out = append(out, theme.FrameLine("", w, a.palette.Border))
 		}
+	}
+	for n := 0; n < pad; n++ {
+		out = append(out, theme.FrameLine("", w, a.palette.Border))
 	}
 	out = append(out, theme.BottomRule(w, a.palette.Border))
 
