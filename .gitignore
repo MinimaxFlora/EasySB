@@ -1,0 +1,32 @@
+# ---------------------------------------------------------------------------
+# EasySB / sing-box 模板仓库忽略规则
+# ---------------------------------------------------------------------------
+
+# 构建产物：EasySB/dist/easysb.sh 由 build.sh 与 GitHub Actions 生成
+EasySB/dist/
+
+# 本地规格与设计草稿（不对外发布）
+.monkeycode/specs/2026-09-20-easysb-refactor/
+
+# 编辑器与 IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 操作系统
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 本地环境与凭据
+.env
+.env.*
+!.env.example
+*.local
+
+# 日志与临时文件
+*.log
+*.tmp
+*.bak
