@@ -176,6 +176,7 @@ Files: server config `/etc/sing-box/config.json`, state `/etc/sing-box/easysb.co
 | `templates/vmess-websocket-tls/` | VMess | WebSocket over TLS | TLS | CDN friendly, Early Data |
 | `templates/vless-vision-reality/` | VLESS + Vision | TCP | REALITY (no cert) | `xtls-rprx-vision`, active-probing resistant |
 | `templates/config/tun-fakeip.json` | TUN + FakeIP | System-wide | — | Rule routing, DNS split, URLTest |
+| `templates/config/mihomo.yaml` | mihomo / Clash Meta | System-wide | — | Full client profile: proxies, groups, DNS, rules |
 
 UUIDs, passwords, REALITY private keys and certificate paths in the templates are samples. Replace them before deployment and keep server and client in sync. Validate syntax with the core:
 
@@ -187,13 +188,21 @@ sing-box check -c templates/vless-vision-reality/config_server.json
 
 ## Subscription
 
-The subscription is rendered from `templates/config/tun-fakeip.json` and delivered in three ways:
+The subscription is rendered from `templates/config/tun-fakeip.json` (sing-box) and `templates/config/mihomo.yaml` (mihomo / Clash Meta), and delivered in three ways:
 
-1. A local file under `/etc/sing-box/subscribe/`.
+1. Local files under `/etc/sing-box/subscribe/`.
 2. A terminal QR code, scannable once `qrencode` is installed.
-3. Five share-link schemes covering mainstream clients.
+3. Five per-protocol share links covering mainstream clients.
 
-It is also hosted by nginx as a lightweight static site on port `8443` at path `/subscribe`, that is `https://domain:8443/subscribe`. sing-box listens for WebSocket directly; nginx only serves static files and never reverse-proxies.
+It is also hosted by nginx as a lightweight static site on port `8443`. The legacy path `/subscribe` serves the sing-box JSON profile, and each client format has its own UUID-tokenised endpoint:
+
+| Client | Endpoint | Content |
+| :--- | :--- | :--- |
+| sing-box (SFM / SFA / SFI) | `/singbox/<uuid>` | JSON profile |
+| mihomo / Clash Meta | `/mihomo/<uuid>` | Complete YAML profile |
+| v2rayN | `/v2ray/<uuid>` | Base64 share-link document |
+
+The UUID acts as the access token, so treat the URLs as secrets. The sing-box endpoint is wrapped as `sing-box://import-remote-profile?url=...` and mihomo as `clash://install-config?url=...` for one-scan import. sing-box listens for WebSocket directly; nginx only serves static files and never reverse-proxies.
 
 ---
 

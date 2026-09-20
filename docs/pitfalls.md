@@ -31,7 +31,17 @@ Traps already hit in this repository. Each entry names the symptom and the fix.
 
 - **Bare subscription URLs are not importable.** The client does not recognize a
   plain URL; wrap it as `sing-box://import-remote-profile?url=...`
-  (`subscribe.ImportScheme`). This is what broke QR scanning before.
+  (`subscribe.ImportScheme`) and mihomo as `clash://install-config?url=...`
+  (`subscribe.ClashImportScheme`). This is what broke QR scanning before.
+- **AnyTLS and Hysteria2 URIs need a slash before the query.** Emitting
+  `anytls://pass@host:port?query` makes clients reject the link; the spec form is
+  `anytls://pass@host:port/?query`. Credentials must also be percent-encoded
+  (`url.User` / `url.UserPassword`), otherwise an `@` or `/` in a generated
+  password truncates the URI.
+- **Template actions in comments are still expanded.** `text/template` executes
+  `{{ ... }}` even inside YAML/JSON comments. A `{{ .Proxies }}` in a mihomo
+  header comment injects uncommented proxy entries above the document root and
+  makes the profile unparseable. Keep actions out of comments.
 - **`releases.atom` tags omit the `v` prefix.** `core.normalizeTag` re-adds it;
   do not compare raw tags.
 - **Downloads assume direct GitHub access.** Deployment targets are overseas,
@@ -45,7 +55,9 @@ Traps already hit in this repository. Each entry names the symptom and the fix.
 
 - **Two subscription templates.** Runtime uses the embedded
   `internal/subscribe/tun-fakeip.json`; `templates/config/tun-fakeip.json` is the
-  readable mirror. Editing only one causes drift.
+  readable mirror. Editing only one causes drift. The same applies to the mihomo
+  template pair `internal/subscribe/mihomo.yaml` and
+  `templates/config/mihomo.yaml`.
 - **Do not rename state keys.** `easysb.conf` stays compatible with the legacy
   shell tool; add keys, never repurpose them.
 - **Renaming a directory touches docs and GitHub metadata.** A folder rename

@@ -180,6 +180,7 @@ sb --language E
 | `templates/vmess-websocket-tls/` | VMess | WebSocket over TLS | 证书 TLS | 可穿 CDN、Early Data |
 | `templates/vless-vision-reality/` | VLESS + Vision | TCP | REALITY（免证书） | `xtls-rprx-vision`、抗主动探测 |
 | `templates/config/tun-fakeip.json` | TUN + FakeIP | 系统全局 | — | 规则分流、DNS 拆分、URLTest 自动测速 |
+| `templates/config/mihomo.yaml` | mihomo / Clash Meta | 系统全局 | — | 完整客户端配置：节点、策略组、DNS、规则 |
 
 模板中的 UUID、密码、REALITY 私钥与证书路径全部是示例值，部署前必须替换，且服务端与客户端保持一致。可先用内核校验语法：
 
@@ -191,13 +192,21 @@ sing-box check -c templates/vless-vision-reality/config_server.json
 
 ## 订阅
 
-订阅基于 `templates/config/tun-fakeip.json` 渲染，生成后通过三种方式交付：
+订阅分别基于 `templates/config/tun-fakeip.json`（sing-box）与 `templates/config/mihomo.yaml`（mihomo / Clash Meta）渲染，生成后通过三种方式交付：
 
 1. 本地订阅文件，位于 `/etc/sing-box/subscribe/`。
 2. 终端二维码，安装 `qrencode` 后可直接扫码导入。
 3. 五类分享链接，覆盖主流客户端。
 
-同时由 nginx 以轻量静态站点形式托管，默认端口 `8443`、路径 `/subscribe`，即 `https://域名:8443/subscribe`。sing-box 直接监听 WebSocket，nginx 只负责静态文件，不做反向代理。
+同时由 nginx 以轻量静态站点形式托管，默认端口 `8443`。旧路径 `/subscribe` 提供 sing-box JSON 配置，各客户端另有带 UUID token 的独立端点：
+
+| 客户端 | 订阅端点 | 内容 |
+| :--- | :--- | :--- |
+| sing-box（SFM / SFA / SFI） | `/singbox/<uuid>` | JSON 配置 |
+| mihomo / Clash Meta | `/mihomo/<uuid>` | 完整 YAML 配置 |
+| v2rayN | `/v2ray/<uuid>` | Base64 分享链接文档 |
+
+UUID 即访问 token，请将订阅地址视为机密。sing-box 端点会包装为 `sing-box://import-remote-profile?url=...`，mihomo 端点包装为 `clash://install-config?url=...`，可扫码一键导入。sing-box 直接监听 WebSocket，nginx 只负责静态文件，不做反向代理。
 
 ---
 

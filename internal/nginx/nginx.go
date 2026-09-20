@@ -14,6 +14,7 @@ import (
 	"github.com/MinimaxFlora/EasySB/internal/cert"
 	"github.com/MinimaxFlora/EasySB/internal/service"
 	"github.com/MinimaxFlora/EasySB/internal/state"
+	"github.com/MinimaxFlora/EasySB/internal/subscribe"
 	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
 )
 
@@ -113,7 +114,8 @@ func WriteSite(cfg state.Config) error {
 	return Do("restart")
 }
 
-// renderSite builds the nginx server block for the current state.
+// renderSite builds the nginx server block for the current state. It serves the
+// legacy /subscribe path plus one UUID-tokenised endpoint per client format.
 func renderSite(cfg state.Config) (string, error) {
 	host := cfg.Host()
 	if host == "" {
@@ -130,7 +132,16 @@ func renderSite(cfg state.Config) (string, error) {
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}
-	subFile := sysinfo.SubscribeDir + "/subscribe.json"
+	subFile := sysinfo.SubscribeDir + "/" + subscribe.ClientFile(subscribe.ClientSingBox)
+
+	locations := clientLocations(cfg)
+	locations += fmt.Sprintf(`    location %s {
+        alias %s;
+        default_type application/json;
+        add_header Cache-Control no-store;
+    }
+
+`, path, subFile)
 
 	if cfg.Domain != "" {
 		pair, err := cert.ResolveActive(cfg.Domain)
@@ -146,34 +157,53 @@ func renderSite(cfg state.Config) (string, error) {
     ssl_certificate_key %s;
     ssl_protocols       TLSv1.2 TLSv1.3;
 
-    location %s {
-        alias %s;
-        default_type application/json;
-        add_header Cache-Control no-store;
-    }
-
-    location / {
+%s    location / {
         return 404;
     }
 }
-`, port, port, cfg.Domain, pair.Fullchain, pair.Key, path, subFile), nil
+`, port, port, cfg.Domain, pair.Fullchain, pair.Key, locations), nil
 	}
 	return fmt.Sprintf(`server {
     listen %s;
     listen [::]:%s;
     server_name _;
 
-    location %s {
-        alias %s;
-        default_type application/json;
-        add_header Cache-Control no-store;
-    }
-
-    location / {
+%s    location / {
         return 404;
     }
 }
-`, port, port, path, subFile), nil
+`, port, port, locations), nil
+}
+
+// clientLocations renders the exact-match location block for every client
+// subscription. It is empty until a UUID exists, since the UUID is the token in
+// the URL.
+func clientLocations(cfg state.Config) string {
+	if cfg.UUID == "" {
+		return ""
+	}
+	var b strings.Builder
+	for _, client := range subscribe.Clients {
+		fmt.Fprintf(&b, `    location = %s {
+        alias %s/%s;
+        default_type %s;
+        add_header Cache-Control no-store;
+    }
+
+`, subscribe.ClientPath(cfg, client), sysinfo.SubscribeDir, subscribe.ClientFile(client), contentType(client))
+	}
+	return b.String()
+}
+
+func contentType(client subscribe.Client) string {
+	switch client {
+	case subscribe.ClientMihomo:
+		return "text/yaml; charset=utf-8"
+	case subscribe.ClientV2Ray:
+		return "text/plain; charset=utf-8"
+	default:
+		return "application/json"
+	}
 }
 
 // RemoveSite deletes the site fragment and reloads nginx when possible.

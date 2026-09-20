@@ -172,7 +172,9 @@ func showSubscriptionURL() actionFunc {
 				log(lang.T("sub_need_domain"))
 				return nil
 			}
-			log(subscribe.URL(cfg))
+			for _, client := range subscribe.Clients {
+				log(clientLabel(lang, client) + ": " + subscribe.ClientURL(cfg, client))
+			}
 			return nil
 		})
 	}
@@ -187,17 +189,21 @@ func showSubscriptionQR() actionFunc {
 				log(lang.T("sub_need_domain"))
 				return nil
 			}
-			payload := subscribe.DeepLink(subscribe.URL(cfg))
-			log(lang.T("sub_qr_payload") + ":")
-			log(payload)
-			log("")
-			qr, err := subscribe.QRCode(payload)
-			if err != nil {
-				log(lang.T("sub_no_qrencode"))
-				return nil
-			}
-			for _, line := range strings.Split(qr, "\n") {
-				log(line)
+			for _, client := range subscribe.Clients {
+				payload := subscribe.ClientLink(cfg, client)
+				log(clientLabel(lang, client) + " · " + lang.T("sub_import_link") + ":")
+				log(payload)
+				log("")
+				qr, err := subscribe.QRCode(payload)
+				if err != nil {
+					log(lang.T("sub_no_qrencode"))
+					log("")
+					continue
+				}
+				for _, line := range strings.Split(qr, "\n") {
+					log(line)
+				}
+				log("")
 			}
 			return nil
 		})

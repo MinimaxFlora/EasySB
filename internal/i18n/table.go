@@ -163,7 +163,6 @@ var table = []entry{
 	{"sub_regen", "重新生成订阅", "Regenerate subscription"},
 	{"sub_url", "订阅链接", "Subscription URL"},
 	{"sub_qr", "订阅二维码", "Subscription QR"},
-	{"sub_qr_payload", "sing-box 导入链接", "sing-box import link"},
 	{"sub_links", "各协议分享链接", "Share links"},
 	{"sub_no_qrencode", "未安装 qrencode，无法显示二维码", "qrencode not installed, no QR available"},
 	{"sub_file", "订阅文件", "Subscription file"},
@@ -171,6 +170,10 @@ var table = []entry{
 	{"sub_need_domain", "订阅链接需要域名与证书", "Subscription needs a domain and certificate"},
 	{"sub_need_nginx", "订阅需要本地 nginx 与已生成的配置", "Subscription needs local nginx and a generated config"},
 	{"sub_need_deploy", "请先部署节点", "Deploy the node first"},
+	{"sub_import_link", "导入链接", "Import link"},
+	{"sub_client_singbox", "sing-box 订阅", "sing-box subscription"},
+	{"sub_client_mihomo", "mihomo / Clash 订阅", "mihomo / Clash subscription"},
+	{"sub_client_v2ray", "v2rayN 订阅", "v2rayN subscription"},
 
 	{"svc_title", "服务管理", "Service management"},
 	{"svc_start", "启动服务", "Start service"},

@@ -1,0 +1,112 @@
+# EasySB mihomo (Clash Meta) subscription - readable mirror.
+#
+# This is sample output of internal/subscribe/mihomo.yaml after rendering; keep
+# it in sync with the embedded template. The live file is generated per node.
+
+mixed-port: 7890
+allow-lan: false
+bind-address: "*"
+mode: rule
+log-level: info
+ipv6: false
+external-controller: 127.0.0.1:9090
+
+dns:
+  enable: true
+  ipv6: false
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  nameserver:
+    - 223.5.5.5
+    - 119.29.29.29
+  fallback:
+    - https://1.1.1.1/dns-query
+    - https://8.8.8.8/dns-query
+
+proxies:
+  - name: "EasySB-AnyTLS"
+    type: anytls
+    server: "YOUR_SERVER"
+    port: 8000
+    password: "YOUR_PASSWORD"
+    sni: "YOUR_SERVER"
+    skip-cert-verify: false
+    udp: true
+  - name: "EasySB-Hysteria2"
+    type: hysteria2
+    server: "YOUR_SERVER"
+    port: 8001
+    ports: "2080-3000"
+    password: "YOUR_PASSWORD"
+    sni: "YOUR_SERVER"
+    skip-cert-verify: false
+    alpn:
+      - h3
+  - name: "EasySB-TUIC"
+    type: tuic
+    server: "YOUR_SERVER"
+    port: 8002
+    uuid: "YOUR_UUID"
+    password: "YOUR_PASSWORD"
+    congestion-controller: bbr
+    udp-relay-mode: native
+    sni: "YOUR_SERVER"
+    alpn:
+      - h3
+    skip-cert-verify: false
+  - name: "EasySB-VMess-WS-TLS"
+    type: vmess
+    server: "YOUR_SERVER"
+    port: 8004
+    uuid: "YOUR_UUID"
+    alterId: 0
+    cipher: auto
+    udp: true
+    tls: true
+    skip-cert-verify: false
+    servername: "YOUR_SERVER"
+    network: ws
+    ws-opts:
+      path: /vmess
+      headers:
+        Host: "YOUR_SERVER"
+  - name: "EasySB-VLESS-Reality"
+    type: vless
+    server: "YOUR_SERVER"
+    port: 8003
+    uuid: "YOUR_UUID"
+    network: tcp
+    udp: true
+    tls: true
+    flow: xtls-rprx-vision
+    servername: "apple.com"
+    client-fingerprint: chrome
+    reality-opts:
+      public-key: "YOUR_REALITY_PUBLIC_KEY"
+      short-id: "YOUR_REALITY_SHORT_ID"
+
+proxy-groups:
+  - name: proxy
+    type: select
+    proxies:
+      - auto
+      - "EasySB-AnyTLS"
+      - "EasySB-Hysteria2"
+      - "EasySB-TUIC"
+      - "EasySB-VMess-WS-TLS"
+      - "EasySB-VLESS-Reality"
+  - name: auto
+    type: url-test
+    url: http://www.gstatic.com/generate_204
+    interval: 300
+    tolerance: 50
+    proxies:
+      - "EasySB-AnyTLS"
+      - "EasySB-Hysteria2"
+      - "EasySB-TUIC"
+      - "EasySB-VMess-WS-TLS"
+      - "EasySB-VLESS-Reality"
+
+rules:
+  - GEOIP,CN,DIRECT
+  - MATCH,proxy

@@ -18,7 +18,9 @@ runtime except the sing-box core and acme.sh.
 │   ├── tuic/
 │   ├── vmess-websocket-tls/
 │   ├── vless-vision-reality/
-│   └── config/tun-fakeip.json      # TUN + FakeIP subscription template
+│   └── config/
+│       ├── tun-fakeip.json          # TUN + FakeIP sing-box subscription template
+│       └── mihomo.yaml              # mihomo / Clash Meta subscription template
 ├── internal/                       # all implementation packages
 ├── assets/                         # README banners
 ├── docs/                           # these engineering docs
@@ -27,9 +29,10 @@ runtime except the sing-box core and acme.sh.
 └── README_ZH.md                    # Chinese
 ```
 
-`templates/` is documentation and reference material. The subscription template
-actually used at runtime is embedded from `internal/subscribe/tun-fakeip.json`
-via `//go:embed`; keep the two in sync when editing.
+`templates/` is documentation and reference material. The subscription templates
+actually used at runtime are embedded from `internal/subscribe/tun-fakeip.json`
+and `internal/subscribe/mihomo.yaml` via `//go:embed`; keep each pair in sync when
+editing.
 
 ## Runtime data
 
@@ -39,7 +42,7 @@ via `//go:embed`; keep the two in sync when editing.
 | `/etc/sing-box/sing-box` | `internal/core` | installed core binary |
 | `/etc/sing-box/config.json` | `internal/config` | rendered server config |
 | `/etc/sing-box/cert/` | `internal/cert` | certificate and key |
-| `/etc/sing-box/subscribe/` | `internal/nginx` + `internal/subscribe` | generated subscription files |
+| `/etc/sing-box/subscribe/` | `internal/nginx` + `internal/subscribe` | generated subscription files (`subscribe.json`, `mihomo.yaml`, `v2ray.txt`, `share-links.txt`) |
 | `/etc/systemd/system/sing-box.service` or `/etc/init.d/sing-box` | `internal/service` | core service unit |
 | `~/.acme.sh/` | `internal/cert` | acme.sh state |
 
@@ -53,8 +56,8 @@ via `//go:embed`; keep the two in sync when editing.
 | `internal/core` | sing-box release discovery, download (with proxy fallback), install, switch, update |
 | `internal/cert` | acme.sh discovery, issue/renew/activate certificates, self-signed fallback |
 | `internal/firewall` | Hysteria2 port-hopping DNAT rules and the boot restore unit |
-| `internal/nginx` | write the static subscription site and its nginx fragment |
-| `internal/subscribe` | subscription URL, per-protocol share links, QR payloads, client template render |
+| `internal/nginx` | write the static subscription site and its nginx fragment (legacy `/subscribe` plus per-client endpoints) |
+| `internal/subscribe` | subscription URLs, per-protocol share links, QR payloads, sing-box JSON plus mihomo YAML and v2rayN base64 renders |
 | `internal/secret` | random UUID / password / Reality keypair generation |
 | `internal/service` | systemd and OpenRC detection, install, start/stop, status |
 | `internal/sysinfo` | host/device/core/service status collected for the dashboard |
@@ -92,3 +95,20 @@ packages and report back through the app's log/progress channel.
 
 State is written after each successful step, so a partial deployment can be
 resumed.
+
+## Subscription endpoints
+
+`internal/nginx` serves one exact-match location per client plus the legacy path.
+The node UUID is the access token in the URL; the file name each location points
+at comes from `subscribe.ClientFile`.
+
+| Path | File | Content type | Client |
+| :--- | :--- | :--- | :--- |
+| `/subscribe` | `subscribe.json` | `application/json` | legacy sing-box |
+| `/singbox/<uuid>` | `subscribe.json` | `application/json` | sing-box (SFM / SFA / SFI) |
+| `/mihomo/<uuid>` | `mihomo.yaml` | `text/yaml` | mihomo / Clash Meta |
+| `/v2ray/<uuid>` | `v2ray.txt` | `text/plain` | v2rayN |
+
+`subscribe.ClientLink` wraps the URL into the client deep link
+(`sing-box://import-remote-profile?url=`, `clash://install-config?url=`) for QR
+import; v2rayN takes the plain URL.

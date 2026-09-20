@@ -19,9 +19,10 @@ add new ones instead.
 
 `templates/` holds JSONC that a human can read and copy. Comments are allowed
 there even though sing-box itself would reject them; the tool strips comments
-when it renders a real config. The subscription template that ships inside the
-binary is `internal/subscribe/tun-fakeip.json`; `templates/config/tun-fakeip.json`
-is the readable mirror.
+when it renders a real config. The subscription templates that ship inside the
+binary are `internal/subscribe/tun-fakeip.json` and `internal/subscribe/mihomo.yaml`;
+the readable mirrors are `templates/config/tun-fakeip.json` and
+`templates/config/mihomo.yaml`.
 
 ## Bilingual by construction
 
