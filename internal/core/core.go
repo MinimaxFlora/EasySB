@@ -233,7 +233,7 @@ func fetchLatestTag(ctx context.Context) (string, error) {
 		resp.Body.Close()
 		if loc := resp.Header.Get("Location"); loc != "" {
 			if tag := path.Base(loc); tag != "" && tag != "latest" {
-				return tag, nil
+				return normalizeTag(tag), nil
 			}
 		}
 		lastErr = fmt.Errorf("no redirect from %s", p)
@@ -252,9 +252,19 @@ func fetchAlphaTag(ctx context.Context) (string, error) {
 		return "", err
 	}
 	if m := alphaTagRe.FindSubmatch(body); len(m) == 2 {
-		return string(m[1]), nil
+		return normalizeTag(string(m[1])), nil
 	}
 	return "", errors.New("no alpha release found")
+}
+
+// normalizeTag restores the conventional "v" prefix on a release tag. The
+// releases.atom feed reports sing-box tags without it (1.15.0-alpha.6), but the
+// download path and archive name expect the real tag (v1.15.0-alpha.6).
+func normalizeTag(tag string) string {
+	if tag == "" || tag[0] < '0' || tag[0] > '9' {
+		return tag
+	}
+	return "v" + tag
 }
 
 // fetch returns the body of a GitHub URL, trying each configured proxy prefix.

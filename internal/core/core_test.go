@@ -171,6 +171,25 @@ func TestAssetURL(t *testing.T) {
 	}
 }
 
+func TestNormalizeTag(t *testing.T) {
+	cases := map[string]string{
+		"1.15.0-alpha.6": "v1.15.0-alpha.6",
+		"1.14.1":         "v1.14.1",
+		"v1.14.1":        "v1.14.1",
+		"nightly":        "nightly",
+		"":               "",
+	}
+	for in, want := range cases {
+		if got := normalizeTag(in); got != want {
+			t.Errorf("normalizeTag(%q) = %q, want %q", in, got, want)
+		}
+	}
+	// The atom feed drops the "v" prefix; the download URL must still resolve.
+	if got := AssetURL(normalizeTag("1.15.0-alpha.6"), "amd64"); !strings.Contains(got, "/download/v1.15.0-alpha.6/") {
+		t.Fatalf("normalized alpha URL = %q", got)
+	}
+}
+
 func TestSelectRelease(t *testing.T) {
 	rels := []ghRelease{
 		{Tag: "v1.11.0-alpha.3", Prerelease: true, Assets: []ghAsset{
