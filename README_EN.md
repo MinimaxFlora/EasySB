@@ -1,6 +1,6 @@
 <div align="center">
 
-# EasySB
+<img src="assets/easysb-banner-en.webp" alt="EasySB" width="950">
 
 **5-in-1 sing-box deployment script · readable config templates · one-click core management**
 

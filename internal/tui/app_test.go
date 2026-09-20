@@ -302,6 +302,9 @@ func TestFormValidationKeepsOpen(t *testing.T) {
 
 func TestDashboardPanelsAndIcons(t *testing.T) {
 	a := newTestApp(t)
+	// Uniform spacing needs a little more room than the old packed layout, so
+	// use a terminal tall enough to show the device card and the hint box.
+	a.height = 44
 	view := a.View().Content
 	for _, want := range []string{
 		i18n.Chinese.T("panel_device"),

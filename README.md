@@ -1,6 +1,6 @@
 <div align="center">
 
-# EasySB
+<img src="assets/easysb-banner-zh.webp" alt="EasySB" width="950">
 
 **sing-box 五合一部署脚本 · 配置模板开箱可读 · 内核版本一键管理**
 

@@ -409,189 +409,274 @@ func (a *App) dashboard() string {
 		inner = 16
 	}
 
-	// Two stacked panels need five rows of chrome; below that the hints go
-	// inline on the final row, which leaves room for three more body rows.
-	useHintBox := h >= 14
-	var budget int
-	if useHintBox {
-		budget = h - 5
-	} else {
-		budget = h - 3
-	}
-	if a.toast != "" {
-		budget--
-	}
-	if budget < 3 {
-		budget = 3
-	}
-
+	// A hint box costs two extra rows of chrome. It is used only when it can
+	// still show at least as much content as the inline hints, so a short but
+	// not tiny terminal keeps its panels instead of sacrificing them to the box.
 	inNode := a.inNodeManagement()
-	navRows := 0
-	if a.hasNavRow() {
-		navRows = 1
-	}
+	nav := a.hasNavRow()
 	totalItems := len(a.current().nodes)
-
-	// Required rows: tagline, hairline rule, menu divider, menu title, one menu
-	// entry and the optional navigation row.
-	used := 5 + navRows
-	menuRows := 1
-
-	// The wordmark is the brand anchor, so it claims space before the data
-	// sections and the extra menu rows.
-	var logo []string
-	if lines := a.logoLines(inner); lines != nil && used+len(lines) <= budget {
-		used += len(lines)
-		logo = lines
+	if totalItems < 1 {
+		totalItems = 1
 	}
 
-	showOverview, showDevice, showNode := false, false, false
-	if inNode {
-		if used+9 <= budget {
-			used += 9
-			showNode = true
+	logoLines := a.logoLines(inner)
+	overviewRows := a.overviewRows(inner)
+	deviceLines := a.deviceSection(inner)[1:]
+	nodeLines := a.nodeSection(inner)[1:]
+
+	// layout describes which optional blocks are on screen; its cost is the
+	// exact number of body rows it renders. Every block is separated by one
+	// blank line and every menu item trails one, while rows inside a panel stay
+	// tight, so the whole dashboard shares a single vertical rhythm.
+	type layout struct {
+		logo     bool
+		overview bool
+		device   bool
+		node     bool
+		items    int
+		quote    bool
+	}
+	cost := func(l layout) int {
+		n := 2 // tagline + hairline rule
+		if l.logo {
+			n += len(logoLines)
 		}
+		firstSection := true
+		section := func(rows int) {
+			n++ // blank above the divider
+			if !firstSection {
+				n++ // section divider
+			}
+			firstSection = false
+			n += 1 + rows // title + rows
+		}
+		if l.node {
+			section(len(nodeLines))
+		} else {
+			if l.overview {
+				section(len(overviewRows))
+			}
+			if l.device {
+				section(len(deviceLines))
+			}
+		}
+		n++ // blank above the menu divider
+		n++ // menu divider
+		n++ // menu title
+		if l.items > 0 {
+			n++              // blank under the menu title
+			n += l.items     // entries
+			n += l.items - 1 // blanks between entries
+		}
+		if nav {
+			n += 2 // blank + navigation row
+		}
+		if l.quote {
+			n += 2 // blank + quote
+		}
+		return n
+	}
+	value := func(l layout) int {
+		v := l.items * 4
+		if l.logo {
+			v += 2
+		}
+		if l.overview {
+			v += 3
+		}
+		if l.device {
+			v += 3
+		}
+		if l.node {
+			v += 3
+		}
+		if l.quote {
+			v += 1
+		}
+		return v
+	}
+	// solve drops the least critical blocks first until the layout fits, then
+	// trims menu entries as a last resort.
+	solve := func(budget int) layout {
+		l := layout{
+			logo:     len(logoLines) > 0,
+			overview: !inNode,
+			device:   !inNode,
+			node:     inNode,
+			items:    totalItems,
+			quote:    true,
+		}
+		// Drop the decorative blocks first, then the secondary device card, so
+		// the status overview and the full menu survive the longest.
+		drops := []func(*layout){
+			func(l *layout) { l.quote = false },
+			func(l *layout) { l.logo = false },
+			func(l *layout) { l.device = false },
+			func(l *layout) { l.overview = false },
+			func(l *layout) { l.node = false },
+		}
+		for i := 0; cost(l) > budget; {
+			if i < len(drops) {
+				drops[i](&l)
+				i++
+				continue
+			}
+			if l.items > 1 {
+				l.items--
+				continue
+			}
+			break
+		}
+		return l
+	}
+
+	boxBudget, inlineBudget := h-5, h-3
+	if a.toast != "" {
+		boxBudget--
+		inlineBudget--
+	}
+	if boxBudget < 3 {
+		boxBudget = 3
+	}
+	if inlineBudget < 3 {
+		inlineBudget = 3
+	}
+
+	useHintBox := h >= 14
+	var l layout
+	box := solve(boxBudget)
+	if useHintBox && value(box) >= value(solve(inlineBudget)) {
+		l = box
 	} else {
-		if used+5 <= budget {
-			used += 5
-			showOverview = true
-		}
-		if used+5 <= budget {
-			used += 5
-			showDevice = true
-		}
+		useHintBox = false
+		l = solve(inlineBudget)
 	}
-	// Every menu entry reserves one row; the blank spacers between entries are
-	// filled from the leftover budget below, so the menu never loses an item to
-	// whitespace.
-	for menuRows < totalItems && used+1 <= budget {
-		used++
-		menuRows++
-	}
-	showQuote := used+1 <= budget
-	if showQuote {
-		used++
+	budget := boxBudget
+	if !useHintBox {
+		budget = inlineBudget
 	}
 
 	type row struct {
-		text string
-		sep  bool
-		rule bool
-		gap  bool
+		text  string
+		sep   bool
+		rule  bool
+		blank bool
 	}
 	var rows []row
-	body := func(text string, gap bool) { rows = append(rows, row{text: text, gap: gap}) }
-	// The tagline rule already closes the header, so the first section or menu
-	// divider does not need a second line right beneath it.
-	sepSeen := false
-	addSep := func() {
-		if !sepSeen {
-			sepSeen = true
-			return
-		}
-		rows = append(rows, row{sep: true})
-	}
-	// Each section row is eligible for a trailing blank so the panels breathe
-	// like the menu does.
-	addSection := func(titleKey string, lines []string) {
-		addSep()
-		body(a.sectionTitle(titleKey), true)
-		for _, l := range lines {
-			body(l, true)
-		}
-	}
+	add := func(text string) { rows = append(rows, row{text: text}) }
+	blank := func() { rows = append(rows, row{blank: true}) }
+	divider := func() { rows = append(rows, row{sep: true}) }
 
-	for i := 0; i < len(logo); i++ {
-		body(logo[i], false)
+	if l.logo {
+		for _, line := range logoLines {
+			add(line)
+		}
 	}
-	body(a.taglineLine(inner), false)
+	add(a.taglineLine(inner))
 	rows = append(rows, row{rule: true})
-	if showOverview {
-		addSection("panel_overview", a.overviewRows(inner))
+
+	// The tagline rule already closes the header, so the first section skips its
+	// divider; every later section gets one blank line and a full-width rule.
+	firstSection := true
+	section := func(titleKey string, lines []string) {
+		blank()
+		if !firstSection {
+			divider()
+		}
+		firstSection = false
+		add(a.sectionTitle(titleKey))
+		for _, line := range lines {
+			add(line)
+		}
 	}
-	if showDevice {
-		addSection("panel_device", a.deviceSection(inner)[1:])
-	}
-	if showNode {
-		addSection("panel_node", a.nodeSection(inner)[1:])
+	if l.node {
+		section("panel_node", nodeLines)
+	} else {
+		if l.overview {
+			section("panel_overview", overviewRows)
+		}
+		if l.device {
+			section("panel_device", deviceLines)
+		}
 	}
 
-	addSep()
+	blank()
+	divider()
 	menuTitle := "  " + a.palette.Bold(a.palette.Primary, a.current().title(a.lang))
-	items, hidden := a.menuViewport(menuRows, inner, a.menuLabelColumn())
+	items, hidden := a.menuViewport(l.items, inner, a.menuLabelColumn())
 	if hidden > 0 {
 		menuTitle += a.palette.Dim(fmt.Sprintf("  (+%d)", hidden))
 	}
-	body(menuTitle, false)
-	for i, l := range items {
-		body(l, i < len(items)-1)
+	add(menuTitle)
+	if len(items) > 0 {
+		blank()
 	}
-	if a.hasNavRow() {
-		body(a.rowLine(a.onNavRow(), a.iconSet.Arrow+" "+a.navLabel(), inner), false)
+	for i, item := range items {
+		if i > 0 {
+			blank()
+		}
+		add(item)
 	}
-	if showQuote {
-		body(a.quoteLine(inner), false)
+	if nav {
+		blank()
+		add(a.rowLine(a.onNavRow(), a.iconSet.Arrow+" "+a.navLabel(), inner))
 	}
 
-	// Spread the leftover rows evenly over every eligible gap, so no single
-	// section hoards the whitespace. Recompute from the rows actually built,
-	// since the first divider is folded into the header rule.
+	if l.quote {
+		blank()
+		add(a.quoteLine(inner))
+	}
+
+	// Safety net for very short terminals: if even the tightest layout overflows,
+	// reclaim blank rows from the bottom until it fits. The frame stays intact.
+	for len(rows) > budget {
+		idx := -1
+		for i := len(rows) - 1; i >= 0; i-- {
+			if rows[i].blank {
+				idx = i
+				break
+			}
+		}
+		if idx < 0 {
+			break
+		}
+		rows = append(rows[:idx], rows[idx+1:]...)
+	}
+
+	// The quote block is last; spare rows are parked just above it so it stays
+	// pinned to the closing border.
+	padBefore := -1
+	if l.quote {
+		padBefore = len(rows) - 1
+		if padBefore > 0 && rows[padBefore-1].blank {
+			padBefore--
+		}
+	}
 	leftover := budget - len(rows)
 	if leftover < 0 {
 		leftover = 0
 	}
-	gapIndex := make([]int, len(rows))
-	gapCount := 0
-	for i, r := range rows {
-		if r.gap {
-			gapCount++
-			gapIndex[i] = gapCount
-		}
-	}
-	extra := make([]int, len(rows))
-	spent := 0
-	if gapCount > 0 && leftover > 0 {
-		for i, g := range gapIndex {
-			if g == 0 {
-				continue
-			}
-			// Never stack more than one blank between two rows; the rest of a
-			// tall terminal's space sinks to the bottom of the panel.
-			if g*leftover/gapCount-(g-1)*leftover/gapCount > 0 {
-				extra[i] = 1
-				spent++
-			}
-		}
-	}
-	pad := leftover - spent
-	if pad < 0 {
-		pad = 0
-	}
 
 	out := []string{theme.TopRule(w, a.palette.Border)}
 	for i, r := range rows {
-		// Keep the quote pinned to the bottom border by parking the spare rows
-		// just above it.
-		if pad > 0 && showQuote && i == len(rows)-1 {
-			for n := 0; n < pad; n++ {
+		if i == padBefore {
+			for n := 0; n < leftover; n++ {
 				out = append(out, theme.FrameLine("", w, a.palette.Border))
 			}
-			pad = 0
+			leftover = 0
 		}
-		if r.sep {
-			out = append(out, theme.SectionRule(w, a.palette.Border))
-			continue
-		}
-		if r.rule {
-			out = append(out, theme.FrameRule(w, a.palette.Border))
-			continue
-		}
-		out = append(out, theme.FrameLine(r.text, w, a.palette.Border))
-		for n := 0; n < extra[i]; n++ {
+		switch {
+		case r.blank:
 			out = append(out, theme.FrameLine("", w, a.palette.Border))
+		case r.sep:
+			out = append(out, theme.SectionRule(w, a.palette.Border))
+		case r.rule:
+			out = append(out, theme.FrameRule(w, a.palette.Border))
+		default:
+			out = append(out, theme.FrameLine(r.text, w, a.palette.Border))
 		}
 	}
-	for n := 0; n < pad; n++ {
+	for n := 0; n < leftover; n++ {
 		out = append(out, theme.FrameLine("", w, a.palette.Border))
 	}
 	out = append(out, theme.BottomRule(w, a.palette.Border))
