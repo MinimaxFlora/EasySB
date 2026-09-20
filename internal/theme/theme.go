@@ -55,8 +55,11 @@ func (p Palette) Value(s string) string {
 	return lipgloss.NewStyle().Foreground(p.Text).Render(s)
 }
 
-func (p Palette) Selected(s string) string {
-	return lipgloss.NewStyle().Bold(true).Foreground(p.SelFg).Background(p.SelBg).Padding(0, 1).Render(s)
+// SelectedRow paints one full menu row as the selection cursor. It spans the
+// whole row, label and trailing description included, so the highlight is not
+// limited to the label column.
+func (p Palette) SelectedRow(s string) string {
+	return lipgloss.NewStyle().Bold(true).Foreground(p.SelFg).Background(p.SelBg).Render(s)
 }
 
 func (p Palette) State(s string, ok bool, warn bool) string {

@@ -253,7 +253,7 @@ var table = []entry{
 	{"task_done", "执行完成", "finished"},
 	{"task_failed", "执行失败", "failed"},
 	{"task_press_enter", "按回车返回", "Press Enter to return"},
-	{"task_scroll", "↑/↓ 滚动", "↑/↓ scroll"},
+	{"task_scroll", "↑/↓ 滚轮滚动 · PgUp/PgDn 翻页", "↑/↓ wheel · PgUp/PgDn page"},
 	{"detail_hint", "右侧显示选中项的状态与说明", "Details for the selected item appear here"},
 	{"font_check_title", "终端字体检查", "Terminal font check"},
 	{"font_check_hint", "若下方图标显示为方块，请在终端启用 Nerd Font，或用 --icons off / EASYSB_ICONS=0 关闭图标", "If the icons below render as boxes, enable a Nerd Font or use --icons off / EASYSB_ICONS=0"},

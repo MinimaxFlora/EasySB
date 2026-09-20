@@ -9,13 +9,17 @@
 ### 新增
 
 - 订阅支持多客户端：新增 mihomo / Clash Meta 完整配置（`mihomo.yaml`）与 v2rayN 分享链接文档（`v2ray.txt`），nginx 分别以 `/singbox/<uuid>`、`/mihomo/<uuid>`、`/v2ray/<uuid>` 端点提供，旧 `/subscribe` 路径保留。
-- 订阅二维码按客户端分别生成导入链接：sing-box 使用 `sing-box://import-remote-profile?url=`，mihomo 使用 `clash://install-config?url=`，v2rayN 使用纯订阅地址。
+- 订阅二维码按客户端分别生成导入链接：sing-box 使用 `sing-box://import-remote-profile?url=`，mihomo 与 v2rayN 使用纯订阅地址（Clash 系客户端的扫码导入会把二维码内容直接当作订阅 URL 抓取，`clash://install-config?url=` 仅适用于系统级深链点击）。
 - 新增 `templates/config/mihomo.yaml` 可读样例，与内嵌模板 `internal/subscribe/mihomo.yaml` 保持同步。
 - mihomo 配置对齐完整桌面方案：新增 `external-controller`（`0.0.0.0:9090`）、`secret`、`external-ui`、`external-ui-url`（Zashboard）、`unified-delay`，补全 fake-ip DNS 与 `fake-ip-filter`，策略组改为 `负载均衡` / `自动选择` / `🌍选择代理节点`，规则新增 `GEOIP,LAN,DIRECT` 与 `GEOSITE,CN,DIRECT`。
 
 ### 修复
 
 - 修复分享链接生成失败：AnyTLS 与 Hysteria2 URI 在查询串前缺少 `/`，且密码未做百分号编码，导致客户端拒绝导入。
+- 修复 mihomo 二维码无法被 FlClash 等 Clash 系客户端识别：二维码改为纯订阅地址，不再包装 `clash://install-config?url=`。
+- 修复任务/二维码页无法用鼠标滚轮滚动：仅在任务页开启鼠标上报，并将滚轮与 ↑/↓ 的滚动步长统一为 3 行，同时支持 PgUp/PgDn 翻页。
+- 修复主菜单选中态只高亮标签、描述仍为暗色的问题：选中行现在整行高亮（含描述），子菜单与返回行同样处理。
+- 修复二级菜单中按 `q` 只返回上一级的问题：`q` 现在任意层级都直接退出，返回上一级使用 `Esc` / 左方向键 / 返回行。
 
 ### 变更
 

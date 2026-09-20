@@ -367,6 +367,19 @@ func TestDashboardFitsNarrowWidths(t *testing.T) {
 	}
 }
 
+func TestMouseWheelOnlyOnTaskScreen(t *testing.T) {
+	a := newTestApp(t)
+	if got := a.View().MouseMode; got != tea.MouseModeNone {
+		t.Fatalf("dashboard should not capture the mouse, got %v", got)
+	}
+	p := newProgress("qr", func(context.Context, func(string)) error { return nil })
+	p.resize(a.width, a.height)
+	a.task = &p
+	if got := a.View().MouseMode; got != tea.MouseModeCellMotion {
+		t.Fatalf("task screen should enable mouse wheel, got %v", got)
+	}
+}
+
 func TestPublishSubscriptionNeedsHost(t *testing.T) {
 	var logged []string
 	err := publishSubscription(context.Background(), state.Config{},
