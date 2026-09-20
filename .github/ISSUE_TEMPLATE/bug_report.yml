@@ -1,0 +1,109 @@
+name: 缺陷报告
+description: 报告 EasySB 脚本、配置模板或 CI 工作流的缺陷
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈。提交前请先确认：
+
+        - 已经阅读 README，并升级到最新脚本后重新复现。
+        - 已经移除配置与日志中的所有敏感信息（密钥、UUID、证书私钥、域名、订阅 token）。
+
+        安全漏洞请不要在这里提交，请按 SECURITY.md 私下报告。
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已使用最新脚本版本重新复现
+          required: true
+        - label: 我已移除所有敏感信息
+          required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: 受影响组件
+      options:
+        - EasySB 一键脚本
+        - 配置模板
+        - 订阅模板
+        - CI 工作流
+        - 文档
+    validations:
+      required: true
+
+  - type: input
+    id: script-version
+    attributes:
+      label: 脚本版本
+      description: 脚本启动时显示的版本号
+      placeholder: v1.3.25
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: 系统与架构
+      placeholder: Debian 12 x86_64
+    validations:
+      required: true
+
+  - type: dropdown
+    id: protocol
+    attributes:
+      label: 相关协议
+      options:
+        - 不涉及
+        - AnyTLS
+        - Hysteria2
+        - TUIC v5
+        - VLESS + Vision + Reality
+        - VMess + WebSocket + TLS
+        - 证书 / acme.sh
+        - 订阅 / nginx
+    validations:
+      required: false
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 问题描述
+      description: 实际发生了什么，与你的预期有何差别
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 请按顺序列出可以稳定复现的步骤
+      placeholder: |
+        1. 执行 ...
+        2. 选择 ...
+        3. 观察到 ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志
+      description: 已脱敏的相关日志
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: config
+    attributes:
+      label: 配置片段
+      description: 已脱敏的相关配置
+      render: json
+    validations:
+      required: false

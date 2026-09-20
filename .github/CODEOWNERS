@@ -1,0 +1,20 @@
+# 代码所有者 / Code owners
+#
+# 语法说明：每行格式为「路径模式 负责人」，路径模式中的 * 只匹配单层。
+# 仓库默认所有者，未单独指定的文件都由其负责。
+
+* @MinimaxFlora
+
+# 脚本源码、构建与测试
+/EasySB/ @MinimaxFlora
+
+# 客户端订阅与全局代理模板
+/Templates/ @MinimaxFlora
+
+# CI 工作流与社区健康文件
+/.github/ @MinimaxFlora
+
+# 仓库级协议与文档
+/LICENSE @MinimaxFlora
+/README.md @MinimaxFlora
+/README_EN.md @MinimaxFlora
