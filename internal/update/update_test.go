@@ -1,6 +1,9 @@
 package update
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestAssetName(t *testing.T) {
 	cases := map[string]string{
@@ -15,5 +18,28 @@ func TestAssetName(t *testing.T) {
 	}
 	if _, ok := AssetName("mips"); ok {
 		t.Fatal("expected unsupported architecture to be rejected")
+	}
+}
+
+func TestReleaseTag(t *testing.T) {
+	cases := map[string]string{
+		"3.0.0":   "v3.0.0",
+		"v3.0.0":  "v3.0.0",
+		" 3.0.0 ": "v3.0.0",
+	}
+	for in, want := range cases {
+		if got := ReleaseTag(in); got != want {
+			t.Fatalf("ReleaseTag(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestAssetURLUsesVersionTag(t *testing.T) {
+	got, err := AssetURL("3.0.0")
+	if err != nil {
+		t.Fatalf("AssetURL(3.0.0) error: %v", err)
+	}
+	if !strings.Contains(got, "/releases/download/v3.0.0/easysb-linux-") {
+		t.Fatalf("AssetURL(3.0.0) = %q, want a v3.0.0 download path", got)
 	}
 }
