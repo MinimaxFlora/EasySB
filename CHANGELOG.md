@@ -2,7 +2,24 @@
 
 本文件记录 EasySB 项目的重要变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
-脚本自身的版本号定义在 `EasySB/VERSION`，构建时注入 `SCRIPT_VERSION`；内核版本独立于脚本版本，由官方 `SagerNet/sing-box` Releases 提供。
+程序的版本号与构建提交在编译期注入，内核版本独立于程序版本，由官方 `SagerNet/sing-box` Releases 提供。
+
+## [v3.0.0] - 2026-09-20
+
+### 新增
+
+- 全量 Go 重写：移除 bash 实现，基于 bubbletea / bubbles / lipgloss 的深色全屏仪表盘 TUI，编译为单一静态二进制，以 `sb` 呼出。
+- 目录重组：五个协议样例与订阅模板统一归入 `Templates/`，订阅模板移至 `Templates/Config/tun-fakeip.json`；内核管理改为安装 stable / 安装 alpha / 通道切换 / 更新当前通道。
+- 命令参数改为 Go flag：`--language`、`--icons`、`--apply-firewall`、`--render`、`--version`、`--help`。
+- 发行流程改为 `.github/workflows/easysb-go-release.yml` 交叉编译多平台二进制，以固定 tag `easysb-go` 发布，并在 `--version` 中输出构建短哈希以便核验。
+
+### 变更
+
+- 版本号与构建提交由编译期注入（`main.version` / `main.commit`），取代 `EasySB/VERSION` 文件。
+
+### 移除
+
+- 移除 `legacy/EasySB/` bash 源码、`tests/`、`build.sh`、`config.conf` 非交互安装模板与旧 bash 发布工作流。
 
 ## [v2.1.0] - 2026-09-20
 

@@ -42,8 +42,7 @@
 EasySB is a 5-in-1 sing-box deployment script for Linux VPS. It brings protocol deployment, certificate issuance, core version management and subscription generation into one interactive menu.
 
 - **Go (primary implementation)**: a root Go module built with bubbletea / bubbles / lipgloss, compiled into a single static binary exposed as `sb`.
-- **Script (archived)**: `legacy/EasySB/` keeps the original bash implementation, composed into a single `easysb.sh` at runtime.
-- **Templates**: `Templates/` and the five protocol directories ship readable JSONC samples. Use the templates on their own, or let the script deploy them.
+- **Templates**: `Templates/` ships readable JSONC samples for the five protocols plus the subscription template. Use them on their own, or let the tool deploy them.
 - **Core**: the sing-box binary comes from the official [SagerNet/sing-box](https://github.com/SagerNet/sing-box) releases. Stable and alpha builds can be installed, replaced or removed at any time.
 
 - Homepage: https://github.com/MinimaxFlora/EasySB
@@ -62,42 +61,16 @@ EasySB is a 5-in-1 sing-box deployment script for Linux VPS. It brings protocol 
 ├── install.sh                    # One-click installer (deps / binary / Nerd Font)
 ├── internal/                     # Go packages: i18n / theme / icons / sysinfo / state / subscribe / tui
 ├── go.mod                        # Go module definition
-├── legacy/EasySB/                # Archived bash implementation
-│   ├── lib/                      # Source modules, order equals composition order (12)
-│   ├── tests/                    # Test suite (build / text / static / lint)
-│   ├── build.sh                  # Compose the single-file release and check syntax
-│   ├── config.conf               # Non-interactive install template
-│   └── dist/                     # Build output, git-ignored, published to Releases only
-├── Templates/                    # Client subscription and global proxy templates
-│   ├── config.yaml               # Clash / Mihomo subscription
-│   ├── config-rule.yaml          # Clash / Mihomo subscription
-│   ├── config.json               # sing-box SFM / SFA / SFI subscription
-│   └── tun-fakeip.json           # TUN global proxy + FakeIP template
-├── AnyTLS/                       # Protocol config template
-├── Hysteria2/                    # Protocol config template
-├── Tuic/                         # Protocol config template
-├── VMess-WebSocket-TLS/          # Protocol config template
-├── VLESS-Vision-Reality/         # Protocol config template
-├── Release/                      # Official sing-box packaging files (systemd / completion / scripts)
+├── Templates/                    # Subscription and protocol config templates
+│   ├── Config/
+│   │   └── tun-fakeip.json       # TUN global proxy + FakeIP template
+│   ├── AnyTLS/                   # AnyTLS client / server samples
+│   ├── Hysteria2/                # Hysteria2 client / server samples
+│   ├── Tuic/                     # TUIC client / server samples
+│   ├── VMess-WebSocket-TLS/      # VMess + WebSocket + TLS samples
+│   └── VLESS-Vision-Reality/     # VLESS + Vision + Reality samples
 └── .github/                      # CI workflows and community health files
 ```
-
-`legacy/EasySB/lib/` is split by responsibility; the file number is the composition order:
-
-| Module | Responsibility |
-| :--- | :--- |
-| `00-header.sh` | Constants, script version, remote endpoints, banner |
-| `01-i18n.sh` | Chinese and English text table |
-| `02-utils.sh` | Colored output, read wrappers, port input, state I/O |
-| `03-detect.sh` | System, architecture, network and dependency detection |
-| `04-core.sh` | Core install / uninstall / replace, official version lookup |
-| `05-cert.sh` | acme.sh certificate issue, list, switch, remove |
-| `06-protocols.sh` | Protocol parameters, server config generation, protocol add/remove |
-| `07-firewall.sh` | Port-hopping DNAT rules and boot restore unit |
-| `08-service.sh` | Service unit, shortcut, self-update, nginx static site |
-| `09-subscribe.sh` | Subscription generation, share links, QR codes |
-| `10-menu.sh` | Version panel, main menu, uninstall |
-| `11-entry.sh` | Script entry point (must be last) |
 
 ---
 
@@ -117,13 +90,13 @@ Ports are prompted one by one: Enter takes the default, `r` picks a random port,
 
 ## Quick Start
 
-First install (the script detects the system, installs dependencies and walks you through protocol selection):
+One-click install (detects the system and architecture, fills in runtime dependencies, prefers a prebuilt binary with a source-build fallback, and installs a Nerd Font in local graphical environments):
 
 ```bash
-bash <(curl -fsSL https://github.com/MinimaxFlora/EasySB/releases/download/easysb/easysb.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/MinimaxFlora/EasySB/master/install.sh)
 ```
 
-After installation, the shortcut opens the menu:
+After installation, the shortcut opens the dark dashboard:
 
 ```bash
 sb
@@ -133,10 +106,10 @@ Preset the language before entering the menu:
 
 ```bash
 # Simplified Chinese
-bash <(curl -fsSL https://github.com/MinimaxFlora/EasySB/releases/download/easysb/easysb.sh) --language C
+sb --language C
 
 # English
-bash <(curl -fsSL https://github.com/MinimaxFlora/EasySB/releases/download/easysb/easysb.sh) --language E
+sb --language E
 ```
 
 Supports Debian / Ubuntu (systemd) and Alpine (OpenRC); run as root.
@@ -151,7 +124,7 @@ Supports Debian / Ubuntu (systemd) and Alpine (OpenRC); run as root.
 | Core management | Install, replace or remove stable and alpha builds; replace keeps the existing config |
 | Version panel | Script version, local core, stable and alpha versions on top of the menu with update markers |
 | Certificates | acme.sh `--standalone` issue and renew, list, switch active, remove; handles 80 / 443 occupancy |
-| Subscription | Renders `Templates/tun-fakeip.json`, outputs files, QR codes and share links, hosted by nginx |
+| Subscription | Renders `Templates/Config/tun-fakeip.json`, outputs files, QR codes and share links, hosted by nginx |
 | Port hopping | Hysteria2 defaults to `2080:3000`, auto-applies iptables / nftables DNAT and a boot restore unit |
 | Service control | Start, stop, restart, status and enable-on-boot |
 | Self-update | Pulls the latest script from this repository and replaces it after validation |
@@ -182,39 +155,12 @@ Files: server config `/etc/sing-box/config.json`, state `/etc/sing-box/easysb.co
 
 | Flag | Description |
 | :--- | :--- |
-| `--language C\|E` | Preset the language, then open the menu |
-| `--install stable\|alpha` | Install the given core channel and deploy protocols |
-| `--replace stable\|alpha` | Swap the core binary, keep the existing config |
-| `--uninstall` | Remove the core |
-| `--config FILE` | Read `config.conf` and install non-interactively |
+| `--language C\|E` | Preset the UI language, then open the menu |
+| `--icons on\|off` | Override the Nerd Font icon detection result |
 | `--apply-firewall` | Restore port-hopping rules only, used by the boot unit |
-| `--version` | Print the script version |
+| `--render --width N --height N` | Render the dashboard once and exit (debug) |
+| `--version` | Print the version and build hash |
 | `--help` | Print usage |
-
----
-
-## Non-interactive Install
-
-`legacy/EasySB/config.conf` is a KV template. Every variable is optional and falls back to a built-in default:
-
-```bash
-bash easysb.sh --config config.conf
-```
-
-Main fields:
-
-| Field | Description |
-| :--- | :--- |
-| `LANGUAGE` | `C` Simplified Chinese, `E` English |
-| `CORE_CHANNEL` | `stable` or `alpha` |
-| `SERVER_IP` | Public address, auto-detected if empty |
-| `DOMAIN` / `CERT_DOMAIN` | Certificate domain, self-signed placeholder if empty |
-| `UUID` / `PASSWORD` | Shared credentials, auto-generated if empty |
-| `IS_ANYTLS` and four more | Per-protocol switches |
-| `PORT_ANYTLS` and four more | Per-protocol ports |
-| `HY2_HOP_RANGE` | Hysteria2 port-hopping range |
-| `REALITY_SNI` / `REALITY_PRIVATE` etc. | Reality handshake domain and keypair, auto-generated if empty |
-| `SUB_PORT` / `SUB_PATH` | Subscription port and path |
 
 ---
 
@@ -222,24 +168,24 @@ Main fields:
 
 | Directory | Protocol | Transport | Disguise / encryption | Highlights |
 | :--- | :--- | :--- | :--- | :--- |
-| `AnyTLS/` | AnyTLS | TCP | TLS | Multi-stage Padding Scheme |
-| `Hysteria2/` | Hysteria 2 | QUIC / UDP | TLS (ALPN `h3`) | Port hopping, strong on lossy links |
-| `Tuic/` | TUIC | QUIC / UDP | TLS (ALPN `h3`) | 0-RTT handshake, `native` UDP relay |
-| `VMess-WebSocket-TLS/` | VMess | WebSocket over TLS | TLS | CDN friendly, Early Data |
-| `VLESS-Vision-Reality/` | VLESS + Vision | TCP | REALITY (no cert) | `xtls-rprx-vision`, active-probing resistant |
-| `Templates/tun-fakeip.json` | TUN + FakeIP | System-wide | — | Rule routing, DNS split, URLTest |
+| `Templates/AnyTLS/` | AnyTLS | TCP | TLS | Multi-stage Padding Scheme |
+| `Templates/Hysteria2/` | Hysteria 2 | QUIC / UDP | TLS (ALPN `h3`) | Port hopping, strong on lossy links |
+| `Templates/Tuic/` | TUIC | QUIC / UDP | TLS (ALPN `h3`) | 0-RTT handshake, `native` UDP relay |
+| `Templates/VMess-WebSocket-TLS/` | VMess | WebSocket over TLS | TLS | CDN friendly, Early Data |
+| `Templates/VLESS-Vision-Reality/` | VLESS + Vision | TCP | REALITY (no cert) | `xtls-rprx-vision`, active-probing resistant |
+| `Templates/Config/tun-fakeip.json` | TUN + FakeIP | System-wide | — | Rule routing, DNS split, URLTest |
 
 UUIDs, passwords, REALITY private keys and certificate paths in the templates are samples. Replace them before deployment and keep server and client in sync. Validate syntax with the core:
 
 ```bash
-sing-box check -c VLESS-Vision-Reality/config_server.json
+sing-box check -c Templates/VLESS-Vision-Reality/config_server.json
 ```
 
 ---
 
 ## Subscription
 
-The subscription is rendered from `Templates/tun-fakeip.json` and delivered in three ways:
+The subscription is rendered from `Templates/Config/tun-fakeip.json` and delivered in three ways:
 
 1. A local file under `/etc/sing-box/subscribe/`.
 2. A terminal QR code, scannable once `qrencode` is installed.
@@ -268,7 +214,7 @@ NAT rules do not survive a reboot, so the script creates a boot restore unit:
 - systemd: `easysb-firewall.service` (oneshot, starts before `sing-box.service`).
 - OpenRC: `/etc/init.d/easysb-firewall`.
 
-The unit restores rules via `bash /etc/sing-box/easysb.sh --apply-firewall`. It is not created when Hysteria2 port hopping is disabled.
+The unit restores rules via `easysb --apply-firewall`. It is not created when Hysteria2 port hopping is disabled.
 
 ---
 
@@ -276,13 +222,13 @@ The unit restores rules via `bash /etc/sing-box/easysb.sh --apply-firewall`. It 
 
 | Item | Description |
 | :--- | :--- |
-| Core source | Official `SagerNet/sing-box` releases; the script downloads official assets directly |
+| Core source | Official `SagerNet/sing-box` releases; the tool downloads official assets directly |
 | Stable | Official latest release |
 | Alpha | Official prerelease |
 | Install | Downloads and verifies for the architecture, writes `/etc/sing-box/sing-box` |
 | Replace | Swaps the binary only, keeps `/etc/sing-box/config.json` |
 | Uninstall | Stops the service and removes the core |
-| Script release | `.github/workflows/easysb-release.yml` builds, tests and publishes `legacy/EasySB/dist/easysb.sh` under the fixed `easysb` tag |
+| Release | `.github/workflows/easysb-go-release.yml` cross-compiles every platform binary and publishes them under the fixed `easysb-go` tag |
 
 ---
 
@@ -304,17 +250,20 @@ go test ./...
 ./easysb --language E --icons off
 ```
 
-`legacy/EasySB/lib/` is the archived script's single source; `dist/` is generated and not committed:
+`internal/tui/` holds the TUI shell and interaction logic; the other packages under `internal/` cover the core, certificate, service, subscription and firewall modules:
 
 ```bash
-# Compose the release script
-bash legacy/EasySB/build.sh
+# Build the binary
+go build -o easysb .
 
-# Check only, write nothing
-bash legacy/EasySB/build.sh --check
+# Run tests
+go test ./...
 
-# Run the full test suite
-bash legacy/EasySB/tests/run-tests.sh
+# Render the dashboard once without interaction (preview / screenshot / debug)
+./easysb --render --width 100 --height 34
+
+# Switch language and icon mode
+./easysb --language E --icons off
 ```
 
 ---

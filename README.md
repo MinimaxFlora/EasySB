@@ -42,8 +42,7 @@
 EasySB 是一个面向 Linux VPS 的 sing-box 五合一部署脚本，把协议部署、证书申请、内核版本管理、订阅生成统一到一套交互式菜单里。
 
 - **Go 版（当前主实现）**：根目录 Go module，基于 bubbletea / bubbles / lipgloss 的深色仪表盘 TUI，编译为单一静态二进制并以 `sb` 呼出。
-- **脚本版（归档）**：`legacy/EasySB/` 保留原 bash 实现，运行时合成单文件 `easysb.sh`。
-- **模板**：`Templates/` 与五个协议目录提供可直接阅读的 JSONC 配置样例，既可以只用模板，也可以交给程序自动落地。
+- **模板**：`Templates/` 存放五个协议的 JSONC 配置样例与订阅模板，既可以只用模板，也可以交给程序自动落地。
 - **内核**：sing-box 内核取自官方 [SagerNet/sing-box](https://github.com/SagerNet/sing-box) Releases，正式版与 alpha 内测版可随时切换、替换、卸载。
 
 - 项目地址：https://github.com/MinimaxFlora/EasySB
@@ -62,42 +61,18 @@ EasySB 是一个面向 Linux VPS 的 sing-box 五合一部署脚本，把协议�
 ├── install.sh                    # 一键安装脚本（依赖 / 二进制 / Nerd Font）
 ├── internal/                     # Go 实现：i18n / theme / icons / sysinfo / state / subscribe / tui
 ├── go.mod                        # Go module 定义
-├── legacy/EasySB/                # 归档的 bash 版一键部署脚本
-│   ├── lib/                      # 源码模块，编号顺序即合成顺序（12 个）
-│   ├── tests/                    # 测试套件（构建 / 文案 / 静态 / lint）
-│   ├── build.sh                  # 模块合成单文件 + 语法校验
-│   ├── config.conf               # 无交互安装配置模板
-│   └── dist/                     # 构建产物，git 忽略，仅发布到 Releases
-├── Templates/                    # 客户端订阅与全局代理模板
-│   ├── config.yaml               # Clash / Mihomo 订阅
-│   ├── config-rule.yaml          # Clash / Mihomo 订阅
-│   ├── config.json               # sing-box SFM / SFA / SFI 订阅
-│   └── tun-fakeip.json           # TUN 全局代理 + FakeIP 模板
-├── AnyTLS/                       # 协议配置模板
-├── Hysteria2/                    # 协议配置模板
-├── Tuic/                         # 协议配置模板
-├── VMess-WebSocket-TLS/          # 协议配置模板
-├── VLESS-Vision-Reality/         # 协议配置模板
-├── Release/                      # sing-box 官方打包文件（systemd / shell 补全 / 打包脚本）
+├── Templates/                    # 订阅与协议配置模板
+│   ├── Config/
+│   │   └── tun-fakeip.json       # TUN 全局代理 + FakeIP 模板
+│   ├── AnyTLS/                   # AnyTLS 协议客户端 / 服务端样例
+│   ├── Hysteria2/                # Hysteria2 协议客户端 / 服务端样例
+│   ├── Tuic/                     # TUIC 协议客户端 / 服务端样例
+│   ├── VMess-WebSocket-TLS/      # VMess + WebSocket + TLS 样例
+│   └── VLESS-Vision-Reality/     # VLESS + Vision + Reality 样例
 └── .github/                      # CI 工作流与社区健康文件
 ```
 
-`legacy/EasySB/lib/` 按功能拆分，文件编号即合成顺序：
-
-| 模块 | 职责 |
-| :--- | :--- |
-| `00-header.sh` | 项目常量、脚本版本、远端地址、版本横幅 |
-| `01-i18n.sh` | 中英文文案表 |
-| `02-utils.sh` | 彩色输出、read 封装、端口输入、状态读写 |
-| `03-detect.sh` | 系统、架构、网络与依赖检测 |
-| `04-core.sh` | 内核安装 / 卸载 / 替换、官方版本查询 |
-| `05-cert.sh` | acme.sh 证书申请、列表、切换、删除 |
-| `06-protocols.sh` | 协议参数、服务端配置生成、协议增删 |
-| `07-firewall.sh` | 端口跳跃 DNAT 规则与开机恢复单元 |
-| `08-service.sh` | 服务单元、快捷指令、自更新、nginx 静态站点 |
-| `09-subscribe.sh` | 订阅生成、分享链接、二维码 |
-| `10-menu.sh` | 版本面板、主菜单、卸载 |
-| `11-entry.sh` | 脚本入口（必须最后） |
+`Templates/` 下的协议样例为可直接阅读的 JSONC，去注释后即可作为 sing-box 服务端 / 客户端配置使用。
 
 ---
 
@@ -123,11 +98,7 @@ Go 版（当前主实现）一键安装：脚本会检测系统与架构，补�
 bash <(curl -fsSL https://raw.githubusercontent.com/MinimaxFlora/EasySB/master/install.sh)
 ```
 
-安装完成后以快捷指令 `sb` 启动深色仪表盘。归档的 bash 版仍可用以下方式安装（脚本会自动识别系统、补全依赖并引导你选择协议）：
-
-```bash
-bash <(curl -fsSL https://github.com/MinimaxFlora/EasySB/releases/download/easysb/easysb.sh)
-```
+安装完成后以快捷指令 `sb` 启动深色仪表盘。
 
 再次运行只需输入快捷指令：
 
@@ -139,10 +110,10 @@ sb
 
 ```bash
 # 简体中文
-bash <(curl -fsSL https://github.com/MinimaxFlora/EasySB/releases/download/easysb/easysb.sh) --language C
+sb --language C
 
 # English
-bash <(curl -fsSL https://github.com/MinimaxFlora/EasySB/releases/download/easysb/easysb.sh) --language E
+sb --language E
 ```
 
 支持 Debian / Ubuntu（systemd）与 Alpine（OpenRC）；需要 root 权限运行。
@@ -157,7 +128,7 @@ bash <(curl -fsSL https://github.com/MinimaxFlora/EasySB/releases/download/easys
 | 内核版本管理 | 正式版 stable 与 alpha 内测版随时安装、替换、卸载，替换保留现有配置 |
 | 版本面板 | 菜单顶部常驻脚本版本、本地内核、正式版与 alpha 版，并标注可更新状态 |
 | 证书管理 | acme.sh `--standalone` 申请与续期，支持列表、切换激活、删除，自动处理 80 / 443 占用 |
-| 订阅生成 | 渲染 `Templates/tun-fakeip.json`，输出订阅文件、二维码与分享链接，nginx 静态托管 |
+| 订阅生成 | 渲染 `Templates/Config/tun-fakeip.json`，输出订阅文件、二维码与分享链接，nginx 静态托管 |
 | 端口跳跃 | Hysteria2 默认 `2080:3000`，自动下发 iptables / nftables DNAT，并生成开机恢复单元 |
 | 服务管理 | 启动、停止、重启、查看状态与开机自启 |
 | 脚本自更新 | 从本仓库拉取最新脚本，校验通过后替换 |
@@ -188,39 +159,12 @@ bash <(curl -fsSL https://github.com/MinimaxFlora/EasySB/releases/download/easys
 
 | 参数 | 说明 |
 | :--- | :--- |
-| `--language C\|E` | 预设语言后进入菜单 |
-| `--install stable\|alpha` | 安装指定通道内核并部署协议 |
-| `--replace stable\|alpha` | 替换内核二进制，保留现有配置 |
-| `--uninstall` | 卸载内核 |
-| `--config FILE` | 读取 `config.conf` 后无交互安装 |
+| `--language C\|E` | 预设界面语言后进入菜单 |
+| `--icons on\|off` | 覆盖 Nerd Font 图标检测结果 |
 | `--apply-firewall` | 仅恢复端口跳跃规则，供开机单元调用 |
-| `--version` | 显示脚本版本 |
+| `--render --width N --height N` | 渲染一次仪表盘后退出（调试用） |
+| `--version` | 显示版本与构建短哈希 |
 | `--help` | 显示用法 |
-
----
-
-## 无交互安装
-
-`legacy/EasySB/config.conf` 是 KV 配置模板，所有变量均可选，缺省时使用内置默认值：
-
-```bash
-bash easysb.sh --config config.conf
-```
-
-主要字段：
-
-| 字段 | 说明 |
-| :--- | :--- |
-| `LANGUAGE` | `C` 简体中文，`E` English |
-| `CORE_CHANNEL` | `stable` 或 `alpha` |
-| `SERVER_IP` | 公网地址，留空自动探测 |
-| `DOMAIN` / `CERT_DOMAIN` | 证书域名，留空使用自签占位证书 |
-| `UUID` / `PASSWORD` | 共享凭据，留空自动生成 |
-| `IS_ANYTLS` 等五项 | 各协议开关 |
-| `PORT_ANYTLS` 等五项 | 各协议端口 |
-| `HY2_HOP_RANGE` | Hysteria2 端口跳跃范围 |
-| `REALITY_SNI` / `REALITY_PRIVATE` 等 | Reality 偷用域名与密钥，留空自动生成 |
-| `SUB_PORT` / `SUB_PATH` | 订阅端口与路径 |
 
 ---
 
@@ -228,24 +172,24 @@ bash easysb.sh --config config.conf
 
 | 目录 | 协议 | 承载层 | 伪装 / 加密 | 关键能力 |
 | :--- | :--- | :--- | :--- | :--- |
-| `AnyTLS/` | AnyTLS | TCP | 证书 TLS | Padding Scheme 多阶段填充 |
-| `Hysteria2/` | Hysteria 2 | QUIC / UDP | TLS（ALPN `h3`） | 端口跳跃、弱网表现优秀 |
-| `Tuic/` | TUIC | QUIC / UDP | TLS（ALPN `h3`） | 0-RTT 握手、`native` UDP 转发 |
-| `VMess-WebSocket-TLS/` | VMess | WebSocket over TLS | 证书 TLS | 可穿 CDN、Early Data |
-| `VLESS-Vision-Reality/` | VLESS + Vision | TCP | REALITY（免证书） | `xtls-rprx-vision`、抗主动探测 |
-| `Templates/tun-fakeip.json` | TUN + FakeIP | 系统全局 | — | 规则分流、DNS 拆分、URLTest 自动测速 |
+| `Templates/AnyTLS/` | AnyTLS | TCP | 证书 TLS | Padding Scheme 多阶段填充 |
+| `Templates/Hysteria2/` | Hysteria 2 | QUIC / UDP | TLS（ALPN `h3`） | 端口跳跃、弱网表现优秀 |
+| `Templates/Tuic/` | TUIC | QUIC / UDP | TLS（ALPN `h3`） | 0-RTT 握手、`native` UDP 转发 |
+| `Templates/VMess-WebSocket-TLS/` | VMess | WebSocket over TLS | 证书 TLS | 可穿 CDN、Early Data |
+| `Templates/VLESS-Vision-Reality/` | VLESS + Vision | TCP | REALITY（免证书） | `xtls-rprx-vision`、抗主动探测 |
+| `Templates/Config/tun-fakeip.json` | TUN + FakeIP | 系统全局 | — | 规则分流、DNS 拆分、URLTest 自动测速 |
 
 模板中的 UUID、密码、REALITY 私钥与证书路径全部是示例值，部署前必须替换，且服务端与客户端保持一致。可先用内核校验语法：
 
 ```bash
-sing-box check -c VLESS-Vision-Reality/config_server.json
+sing-box check -c Templates/VLESS-Vision-Reality/config_server.json
 ```
 
 ---
 
 ## 订阅
 
-订阅基于 `Templates/tun-fakeip.json` 渲染，生成后通过三种方式交付：
+订阅基于 `Templates/Config/tun-fakeip.json` 渲染，生成后通过三种方式交付：
 
 1. 本地订阅文件，位于 `/etc/sing-box/subscribe/`。
 2. 终端二维码，安装 `qrencode` 后可直接扫码导入。
@@ -274,7 +218,7 @@ NAT 规则重启即失效，因此脚本会生成开机恢复单元：
 - systemd：`easysb-firewall.service`（oneshot，早于 `sing-box.service`）。
 - OpenRC：`/etc/init.d/easysb-firewall`。
 
-单元通过 `bash /etc/sing-box/easysb.sh --apply-firewall` 恢复规则，不使用 Hysteria2 端口跳跃时不会创建该单元。
+单元通过 `easysb --apply-firewall` 恢复规则，不使用 Hysteria2 端口跳跃时不会创建该单元。
 
 ---
 
@@ -288,7 +232,7 @@ NAT 规则重启即失效，因此脚本会生成开机恢复单元：
 | 安装 | 按架构下载并校验，写入 `/etc/sing-box/sing-box` |
 | 替换 | 只更换二进制，保留 `/etc/sing-box/config.json` |
 | 卸载 | 停止服务并移除内核 |
-| 脚本发行 | `.github/workflows/easysb-release.yml` 运行构建与测试，以固定 tag `easysb` 发布 `legacy/EasySB/dist/easysb.sh` |
+| 程序发行 | `.github/workflows/easysb-go-release.yml` 交叉编译各平台二进制，以固定 tag `easysb-go` 发布 |
 
 ---
 
@@ -310,17 +254,20 @@ go test ./...
 ./easysb --language E --icons off
 ```
 
-`legacy/EasySB/lib/` 是归档脚本的唯一源，`dist/` 由构建生成，不提交到仓库：
+`internal/tui/` 是 TUI 主界面与交互逻辑，`internal/` 下其余包各自负责内核、证书、服务、订阅、防火墙等模块：
 
 ```bash
-# 合成发行脚本
-bash legacy/EasySB/build.sh
+# 编译二进制
+go build -o easysb .
 
-# 只做校验，不写文件
-bash legacy/EasySB/build.sh --check
+# 运行测试
+go test ./...
 
-# 运行全部测试
-bash legacy/EasySB/tests/run-tests.sh
+# 无交互渲染一次仪表盘（用于预览 / 截图 / 排错）
+./easysb --render --width 100 --height 34
+
+# 切换语言与图标模式
+./easysb --language E --icons off
 ```
 
 ---
