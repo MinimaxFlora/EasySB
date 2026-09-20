@@ -134,6 +134,18 @@ detect_system() {
   esac
 }
 
+# 脚本位于源码树内时以树内 VERSION 为准，避免版本号两处维护
+# Prefer the in-tree VERSION when this script sits inside the source tree.
+sync_version_from_tree() {
+  local dir v
+  dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  [ -r "$dir/VERSION" ] || return 0
+  v="$(tr -d '[:space:]' < "$dir/VERSION")"
+  [ -n "$v" ] || return 0
+  VERSION="$v"
+  RELEASE_TAG="v${VERSION}"
+}
+
 # 提权执行 / Run as root
 as_root() {
   if [ "$(id -u)" -eq 0 ]; then
@@ -245,13 +257,18 @@ _install_go_tarball() {
 # EasySB 二进制安装 / EasySB binary installation
 # ------------------------------------------------------------------------------
 download_binary() {
-  local url="https://github.com/${REPO}/releases/download/${RELEASE_TAG}/easysb-linux-${ARCH}"
-  local out="$1"
+  local base="https://github.com/${REPO}/releases/download/${RELEASE_TAG}/easysb-linux-${ARCH}"
+  local out="$1" proxy
   say "尝试下载预编译二进制" "Trying prebuilt binary"
-  dim "$url"
-  curl -fsSL -A 'EasySB-installer' --connect-timeout 15 -o "$out" "$url" 2>/dev/null || return 1
-  [ -s "$out" ] || return 1
-  return 0
+  # 依次尝试直连与 GitHub 反代，与 internal/core 的下载回退链保持一致
+  # Try direct then GitHub proxies, matching the fallback chain in internal/core
+  for proxy in '' 'https://ghfast.top/' 'https://gh-proxy.com/'; do
+    dim "${proxy}${base}"
+    if curl -fsSL -A 'EasySB-installer' --connect-timeout 15 -o "$out" "${proxy}${base}" 2>/dev/null && [ -s "$out" ]; then
+      return 0
+    fi
+  done
+  return 1
 }
 
 build_from_source() {
@@ -260,7 +277,7 @@ build_from_source() {
   [ -f "$srcdir/go.mod" ] || { warn "$(say '未找到源码' 'source tree not found')"; return 1; }
   ensure_go
   say "正在从源码构建" "Building from source"
-  ( cd "$srcdir" && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$out" . ) || return 1
+  ( cd "$srcdir" && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o "$out" . ) || return 1
   [ -s "$out" ] || return 1
   return 0
 }
@@ -358,7 +375,8 @@ install_nerd_font() {
 main() {
   setup_sudo
   detect_system
-  log "EasySB installer · ${OS_ID}/${ARCH} · pkg=${PKG_MGR}"
+  sync_version_from_tree
+  log "EasySB installer · ${OS_ID}/${ARCH} · pkg=${PKG_MGR} · v${VERSION}"
 
   if [ "$FONT_ONLY" -eq 1 ]; then
     install_nerd_font
