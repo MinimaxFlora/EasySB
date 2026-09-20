@@ -141,3 +141,50 @@ func Rule(width int, c color.Color) string {
 	}
 	return lipgloss.NewStyle().Foreground(c).Render(strings.Repeat("─", width))
 }
+
+// Center places s in the middle of a field of the given width, measuring styled
+// text with lipgloss so ANSI sequences do not skew the padding.
+func Center(s string, width int) string {
+	if width <= 0 {
+		return s
+	}
+	pad := width - lipgloss.Width(s)
+	if pad <= 0 {
+		return s
+	}
+	return strings.Repeat(" ", pad/2) + s
+}
+
+// TopRule draws the opening border of a panel.
+func TopRule(width int, c color.Color) string {
+	if width < 2 {
+		return ""
+	}
+	return lipgloss.NewStyle().Foreground(c).Render("╭" + strings.Repeat("─", width-2) + "╮")
+}
+
+// BottomRule draws the closing border of a panel.
+func BottomRule(width int, c color.Color) string {
+	if width < 2 {
+		return ""
+	}
+	return lipgloss.NewStyle().Foreground(c).Render("╰" + strings.Repeat("─", width-2) + "╯")
+}
+
+// SectionRule draws a full-width divider between two sections of a panel.
+func SectionRule(width int, c color.Color) string {
+	if width < 2 {
+		return ""
+	}
+	return lipgloss.NewStyle().Foreground(c).Render("├" + strings.Repeat("─", width-2) + "┤")
+}
+
+// FrameLine wraps one body row in the panel's side borders, padding it to the
+// inner width so the right border stays aligned.
+func FrameLine(s string, width int, c color.Color) string {
+	inner := width - 4
+	if inner < 0 {
+		inner = 0
+	}
+	return lipgloss.NewStyle().Foreground(c).Render("│ ") + Pad(s, inner) + lipgloss.NewStyle().Foreground(c).Render(" │")
+}

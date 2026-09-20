@@ -323,6 +323,25 @@ func TestDashboardPanelsAndIcons(t *testing.T) {
 	}
 }
 
+func TestDashboardShowsLogoAndMenuDescriptions(t *testing.T) {
+	a := New("test", i18n.Chinese)
+	a.width, a.height = 100, 40
+	a.sized = true
+	a.status = sysinfo.Collect("test")
+	a.ready = true
+
+	view := a.dashboard()
+	if !strings.Contains(view, "██████") {
+		t.Fatalf("tall dashboard should show the block-letter wordmark:\n%s", view)
+	}
+	if !strings.Contains(view, i18n.Chinese.T("menu_kernel")) {
+		t.Fatalf("root menu should describe each entry:\n%s", view)
+	}
+	if !strings.Contains(view, i18n.Chinese.T("panel_overview")) {
+		t.Fatalf("dashboard should show the overview section:\n%s", view)
+	}
+}
+
 func TestValidHopRange(t *testing.T) {
 	cases := map[string]bool{
 		"2080:3000": true,

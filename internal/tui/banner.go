@@ -1,53 +1,109 @@
 package tui
 
 import (
+	"charm.land/lipgloss/v2"
+
 	"github.com/MinimaxFlora/EasySB/internal/theme"
 )
 
-// headerTagline renders the enlarged product tagline shown as the first line of
-// the dashboard body.
-func (a *App) headerTagline(w int) string {
-	text := theme.Truncate(a.lang.T("banner_tagline"), maxInt(8, w-4))
-	return "  " + a.palette.Bold(a.palette.Primary, text)
+const (
+	bannerAuthor = "MinimaxFlora"
+	bannerRepo   = "MinimaxFlora/EasySB"
+	bannerBlog   = "www.kejizero.xyz"
+	bannerDocs   = "sb.kejizero.xyz"
+)
+
+// logoGlyphs holds the "ANSI Shadow" block letters used for the EasySB banner.
+// Every glyph is six rows tall and eight columns wide so the letters tile.
+var logoGlyphs = map[rune][6]string{
+	'E': {
+		"███████╗",
+		"██╔════╝",
+		"█████╗  ",
+		"██╔══╝  ",
+		"███████╗",
+		"╚══════╝",
+	},
+	'A': {
+		" █████╗ ",
+		"██╔══██╗",
+		"███████║",
+		"██╔══██║",
+		"██║  ██║",
+		"╚═╝  ╚═╝",
+	},
+	'S': {
+		"███████╗",
+		"██╔════╝",
+		"███████╗",
+		"╚════██║",
+		"███████║",
+		"╚══════╝",
+	},
+	'Y': {
+		"██╗   ██╗",
+		"╚██╗ ██╔╝",
+		" ╚████╔╝ ",
+		"  ╚██╔╝  ",
+		"   ██║   ",
+		"   ╚═╝   ",
+	},
+	'B': {
+		"██████╗ ",
+		"██╔══██╗",
+		"██████╔╝",
+		"██╔══██╗",
+		"██████╔╝",
+		"╚═════╝ ",
+	},
 }
 
-// headerAuthor renders the author and project line.
-func (a *App) headerAuthor() string {
-	return "  " + a.palette.Label(a.lang.T("banner_author")) + " " + a.palette.Value("MinimaxFlora") +
-		a.palette.Dim("  ·  ") + a.palette.Label(a.lang.T("banner_project")) + " " +
-		a.palette.Value("github.com/MinimaxFlora/EasySB")
-}
-
-// versionLines renders the version block: the app version, the installed core
-// with its channel tag, and a compact runtime summary.
-func (a *App) versionLines(width int) []string {
-	core := a.lang.T("ver_not_installed")
-	tag := ""
-	if a.status.CoreVersion != "" {
-		core = a.status.CoreVersion
-		tag = "  " + a.channelTag()
+// logoLines renders the block-letter EasySB wordmark centered in the panel. It
+// returns nil when the terminal is too narrow to hold it.
+func (a *App) logoLines(inner int) []string {
+	rows := make([]string, 6)
+	for _, ch := range "EASYSB" {
+		glyph, ok := logoGlyphs[ch]
+		if !ok {
+			return nil
+		}
+		for r := 0; r < 6; r++ {
+			rows[r] += glyph[r]
+		}
 	}
-	label := func(key string) string {
-		return "  " + theme.Pad(a.palette.Label(a.lang.T(key)), 16)
+	if lipgloss.Width(rows[0]) > inner {
+		return nil
 	}
-	line1 := label("ver_easysb") + a.palette.Value(a.scriptVersion)
-	line2 := label("ver_core") + a.palette.Value(core) + tag
-	line3 := label("ver_runtime") + a.runtimeStatus(width-18)
-	return []string{line1, line2, line3}
+	out := make([]string, len(rows))
+	for r, row := range rows {
+		out[r] = theme.Center(a.palette.Bold(a.palette.Primary, row), inner)
+	}
+	return out
 }
 
-// channelTag renders a colored stable/test badge for the installed core.
-func (a *App) channelTag() string {
-	if a.status.CoreChannel == "alpha" {
-		return a.palette.Colored(a.palette.Warn, "["+a.lang.T("ver_channel_test")+"]")
-	}
-	return a.palette.Colored(a.palette.OK, "["+a.lang.T("ver_channel_stable")+"]")
+// taglineLines renders the centered product tagline followed by a hairline rule
+// that separates the header from the rest of the dashboard.
+func (a *App) taglineLines(inner int) []string {
+	text := theme.Center(a.palette.Bold(a.palette.Primary, theme.Truncate(a.lang.T("banner_tagline"), inner)), inner)
+	return []string{text, "  " + theme.Rule(maxInt(1, inner-4), a.palette.Border) + "  "}
 }
 
-// headerQuote renders the daily quote chosen when the app started.
-func (a *App) headerQuote(w int) string {
-	return "  " + a.palette.Label(a.lang.T("banner_quote")) + " " +
-		a.palette.Value(theme.Truncate(a.quote, maxInt(8, w-12)))
+// contactLines renders the centered-ish author, project, blog and docs block.
+func (a *App) contactLines() []string {
+	row := func(key, value string) string {
+		return "  " + theme.Pad(a.palette.Label(a.lang.T(key)), 9) + a.palette.Value(value)
+	}
+	return []string{
+		row("banner_author", bannerAuthor),
+		row("banner_project", bannerRepo),
+		row("banner_blog", bannerBlog),
+		row("banner_docs", bannerDocs),
+	}
+}
+
+// quoteLine renders the frozen daily quote framed by full-width quotation marks.
+func (a *App) quoteLine(inner int) string {
+	return theme.Center(a.palette.Dim("“"+a.quote+"”"), inner)
 }
 
 func channelKey(channel string) string {

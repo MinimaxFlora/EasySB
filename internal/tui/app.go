@@ -385,11 +385,10 @@ func (a *App) formScreen() string {
 	return strings.Join(out, "\n")
 }
 
-// dashboard renders the dashboard inside a main box pinned to the top of the
-// screen, with an optional hint box below it. The layout adapts to the terminal
-// so nothing overflows: optional cards drop first, then the menu scrolls. When
-// the terminal is too short for a second box, the hints fall back to the inline
-// bottom row.
+// dashboard renders the dashboard inside a single framed panel with full-width
+// section dividers. Decorative blocks (logo, contact block, quote) and status
+// sections drop out as the terminal shrinks, and the menu scrolls, so the panel
+// never grows taller than the screen.
 func (a *App) dashboard() string {
 	w := a.width
 	if w <= 0 {
@@ -410,92 +409,137 @@ func (a *App) dashboard() string {
 		inner = 16
 	}
 
-	// Two stacked boxes need 5 rows of chrome (2 + 3); below that the hints go
+	// Two stacked panels need five rows of chrome; below that the hints go
 	// inline on the final row, which leaves room for three more body rows.
-	useHintBox := h >= 12
+	useHintBox := h >= 14
 	var budget int
 	if useHintBox {
 		budget = h - 5
 	} else {
 		budget = h - 3
 	}
-	if budget < 5 {
-		budget = 5
+	if a.toast != "" {
+		budget--
 	}
-
-	tagline := a.headerTagline(inner)
-	author := a.headerAuthor()
-	rule := theme.Rule(inner, a.palette.Border)
+	if budget < 3 {
+		budget = 3
+	}
 
 	inNode := a.inNodeManagement()
-	var version []string
-	var info []string
-	if inNode {
-		info = a.nodeSection(inner)
-	} else {
-		version = a.versionLines(inner)
-		info = a.deviceSection(inner)
-	}
-	quote := a.headerQuote(inner)
-
 	navRows := 0
 	if a.hasNavRow() {
 		navRows = 1
 	}
+	totalItems := len(a.current().nodes)
 
-	// Greedy section budget. base covers the tagline, author line, the rule
-	// before the menu and the menu title; one row is reserved for a menu entry.
-	base := 4
-	avail := budget - base - navRows - 1
-	if a.toast != "" {
-		avail--
-	}
-	if avail < 0 {
-		avail = 0
-	}
+	// Required rows: tagline, hairline rule, menu divider, menu title, one menu
+	// entry and the optional navigation row.
+	used := 5 + navRows
+	menuRows := 1
 
-	take := func(cost int) bool {
-		if cost > avail {
-			return false
+	showOverview, showDevice, showNode := false, false, false
+	if inNode {
+		if used+9 <= budget {
+			used += 9
+			showNode = true
 		}
-		avail -= cost
-		return true
+	} else {
+		if used+5 <= budget {
+			used += 5
+			showOverview = true
+		}
+		if used+5 <= budget {
+			used += 5
+			showDevice = true
+		}
 	}
-	// The version block is preceded by a separator rule, so it costs one extra
-	// row on top of its content lines.
-	showVersion := len(version) > 0 && take(len(version)+1)
-	showInfo := take(len(info))
-	showQuote := take(1)
-	rowsAvail := 1 + avail
-	if rowsAvail < 1 {
-		rowsAvail = 1
+	for menuRows < totalItems && used+1 <= budget {
+		used++
+		menuRows++
+	}
+	showQuote := used+1 <= budget
+	if showQuote {
+		used++
+	}
+	showContact := used+4 <= budget
+	if showContact {
+		used += 4
+	}
+	var logo []string
+	if lines := a.logoLines(inner); lines != nil && used+len(lines) <= budget {
+		used += len(lines)
+		logo = lines
+	}
+	leftover := budget - used
+
+	type row struct {
+		text    string
+		sep     bool
+		blankOK bool
+	}
+	var rows []row
+	addText := func(s string, blankOK bool) { rows = append(rows, row{text: s, blankOK: blankOK}) }
+	addSection := func(titleKey string, lines []string) {
+		rows = append(rows, row{sep: true})
+		addText(a.sectionTitle(titleKey), len(lines) > 0)
+		for i, l := range lines {
+			addText(l, i == len(lines)-1)
+		}
 	}
 
-	items, hidden := a.menuViewport(rowsAvail, inner)
-	menuTitle := " " + a.palette.Bold(a.palette.Primary, a.current().title(a.lang))
+	for i, l := range logo {
+		addText(l, i == len(logo)-1)
+	}
+	for i, l := range a.taglineLines(inner) {
+		addText(l, i == 1)
+	}
+	if showContact {
+		lines := a.contactLines()
+		for i, l := range lines {
+			addText(l, i == len(lines)-1)
+		}
+	}
+	if showOverview {
+		addSection("panel_overview", a.overviewRows(inner))
+	}
+	if showDevice {
+		addSection("panel_device", a.deviceSection(inner)[1:])
+	}
+	if showNode {
+		addSection("panel_node", a.nodeSection(inner)[1:])
+	}
+
+	rows = append(rows, row{sep: true})
+	menuTitle := "  " + a.palette.Bold(a.palette.Primary, a.current().title(a.lang))
+	items, hidden := a.menuViewport(menuRows, inner, a.menuLabelColumn())
 	if hidden > 0 {
 		menuTitle += a.palette.Dim(fmt.Sprintf("  (+%d)", hidden))
 	}
-
-	body := []string{tagline, author}
-	if showVersion {
-		body = append(body, rule)
-		body = append(body, version...)
+	addText(menuTitle, true)
+	for i, l := range items {
+		addText(l, i == len(items)-1)
 	}
-	if showInfo {
-		body = append(body, info...)
+	if a.hasNavRow() {
+		addText(a.rowLine(a.onNavRow(), a.iconSet.Arrow+" "+a.navLabel(), inner), true)
 	}
 	if showQuote {
-		body = append(body, quote)
-	}
-	body = append(body, rule, menuTitle)
-	body = append(body, items...)
-	if a.hasNavRow() {
-		body = append(body, a.rowLine(a.onNavRow(), a.iconSet.Arrow+" "+a.navLabel(), inner))
+		addText(a.quoteLine(inner), false)
 	}
 
-	box := theme.Box("EasySB", strings.Join(body, "\n"), w, a.palette.Border, a.palette.Primary)
-	out := strings.Split(box, "\n")
+	out := []string{theme.TopRule(w, a.palette.Border)}
+	for i, r := range rows {
+		if r.sep {
+			out = append(out, theme.SectionRule(w, a.palette.Border))
+			continue
+		}
+		out = append(out, theme.FrameLine(r.text, w, a.palette.Border))
+		if r.blankOK && leftover > 0 && i < len(rows)-1 {
+			out = append(out, theme.FrameLine("", w, a.palette.Border))
+			leftover--
+		}
+	}
+	out = append(out, theme.BottomRule(w, a.palette.Border))
+
 	if a.toast != "" {
 		out = append(out, " "+a.renderToast(w))
 	}
@@ -512,9 +556,21 @@ func (a *App) dashboard() string {
 	return strings.Join(out, "\n")
 }
 
+// menuLabelColumn returns the column at which root menu descriptions start so
+// they all line up behind the widest label.
+func (a *App) menuLabelColumn() int {
+	width := 0
+	for _, n := range a.current().nodes {
+		if w := lipgloss.Width(a.nodeLabel(n)); w > width {
+			width = w
+		}
+	}
+	return width + 3
+}
+
 // menuViewport renders at most limit menu rows, keeping the cursor visible, and
 // reports how many items are currently out of view.
-func (a *App) menuViewport(limit, inner int) ([]string, int) {
+func (a *App) menuViewport(limit, inner, labelCol int) ([]string, int) {
 	nodes := a.current().nodes
 	n := len(nodes)
 	if n == 0 {
@@ -539,9 +595,47 @@ func (a *App) menuViewport(limit, inner int) ([]string, int) {
 	}
 	rows := make([]string, 0, end-top)
 	for i := top; i < end; i++ {
-		rows = append(rows, a.rowLine(i == a.index, a.nodeLabel(nodes[i]), inner))
+		rows = append(rows, a.menuRow(i == a.index, nodes[i], inner, labelCol))
 	}
 	return rows, n - len(rows)
+}
+
+// menuRow renders one menu entry. The main menu pads its labels into a column
+// and follows them with a short one-line description; submenus stay compact.
+func (a *App) menuRow(selected bool, n *node, inner, labelCol int) string {
+	marker := "  "
+	if selected {
+		marker = "▌ "
+	}
+	label := a.nodeLabel(n)
+
+	desc := ""
+	if a.current().id == "root" && n.desc != nil {
+		desc = n.desc(a.lang)
+	}
+	if desc == "" {
+		line := " " + marker + theme.Truncate(label, inner-3)
+		if selected {
+			return a.palette.Bold(a.palette.Primary, line)
+		}
+		return a.palette.Bold(a.palette.Text, line)
+	}
+
+	gap := labelCol - lipgloss.Width(label)
+	if gap < 2 {
+		gap = 2
+	}
+	descWidth := inner - 3 - lipgloss.Width(label) - gap
+	if descWidth < 4 {
+		descWidth = 4
+	}
+	line := " " + marker + label + strings.Repeat(" ", gap)
+	d := theme.Truncate(desc, descWidth)
+	if selected {
+		// Keep the selected label highlighted while the hint stays muted.
+		return a.palette.Bold(a.palette.Primary, line) + a.palette.Dim(d)
+	}
+	return a.palette.Bold(a.palette.Text, line) + a.palette.Dim(d)
 }
 
 // nodeLabel prefixes a menu entry with its icon, falling back to a bullet for
@@ -583,9 +677,14 @@ func (a *App) statusBar(w int) string {
 		a.lang.T("hint_lang"),
 		a.lang.T("hint_quit"),
 	}, "  ")
-	left := " " + a.palette.Dim(keys)
 	right := a.palette.Label(a.lang.Code()) + " "
-	gap := w - lipgloss.Width(left) - lipgloss.Width(right)
+	rightW := lipgloss.Width(right)
+	availLeft := w - rightW - 1
+	if availLeft < 1 {
+		availLeft = 1
+	}
+	left := " " + a.palette.Dim(theme.Truncate(keys, maxInt(0, availLeft-1)))
+	gap := w - lipgloss.Width(left) - rightW
 	if gap < 1 {
 		gap = 1
 	}
