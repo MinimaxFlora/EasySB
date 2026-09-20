@@ -1,0 +1,196 @@
+# ==========================================
+# Mihomo / Clash 配置文件
+# ==========================================
+
+# ------------------------------------------
+# 基础通用设置
+# ------------------------------------------
+port: 7890                      # HTTP/HTTPS 代理监听端口
+allow-lan: true                 # 允许局域网内其他设备连接
+mode: rule                      # 运行模式：rule（规则分流）/ global（全局代理）/ direct（直连）
+log-level: info                 # 日志输出级别：info / warning / error / debug / silent
+unified-delay: true             # 启用统一延迟计算（扣除 TCP 握手/RTT 抖动）
+
+external-controller: 0.0.0.0:9090 # RESTful API 控制接口监听地址与端口
+secret: "1234567890"            # RESTful API 鉴权密钥（Web UI 访问密码）
+external-ui: ui                 # Web 控制面板本地静态资源存放目录
+external-ui-url: "https://gh-proxy.com/https://github.com/Zephyruso/zashboard/archive/refs/heads/gh-pages.zip" # Web UI 自动下载解压地址（此处为 Zashboard）
+
+# ------------------------------------------
+# DNS 模块配置
+# ------------------------------------------
+dns:
+  enable: true                  # 开启内置 DNS 解析服务
+  listen: "0.0.0.0:1053"        # DNS 监听地址与端口
+  ipv6: true                    # 开启 IPv6 域名解析 (AAAA 记录)
+  prefer-h3: false              # 是否优先使用 DoH3 (DNS over HTTP/3)
+  respect-rules: true           # DNS 查询遵从分流规则（按规则指定的策略组 DNS 进行解析）
+  use-system-hosts: false       # 不使用系统本地 Hosts 文件
+  cache-algorithm: "arc"        # DNS 缓存算法：arc（自适应替换缓存）/ lru
+  enhanced-mode: "fake-ip"      # DNS 模式：fake-ip（伪装 IP 模式）/ redir-host
+  fake-ip-range: "198.18.0.1/16"# Fake-IP 分配的虚拟 IP 网段范围
+
+  # 不使用 Fake-IP、直接返回真实 DNS 解析结果的过滤域名清单
+  fake-ip-filter:
+    - "+.lan"                   # 局域网本地域名后缀
+    - "+.local"                 # mDNS 本地域名后缀
+    - "+.msftconnecttest.com"   # Windows 网络连接状况探针域名
+    - "+.msftncsi.com"          # Windows 网络指示器检查域名
+    - "localhost.ptlogin2.qq.com" # 腾讯 QQ 本地快捷登录回环域名
+    - "localhost.sec.qq.com"     # 腾讯安全组件本地回环域名
+    - "+.in-addr.arpa"          # IPv4 反向 DNS 解析
+    - "+.ip6.arpa"              # IPv6 反向 DNS 解析
+    - "time.*.com"              # NTP 时间同步服务器域名
+    - "time.*.gov"              # 官方 NTP 时间同步服务器域名
+    - "pool.ntp.org"            # 公共 NTP 时间同步服务器池
+    - "localhost.work.weixin.qq.com" # 企业微信本地回环域名
+
+  # 默认 DNS 服务器，仅用于解析后续 nameserver 中的 DoH/DoT 域名
+  default-nameserver:
+    - "223.5.5.5"               # 阿里公共 DNS (IPv4)
+    - "119.29.29.29"            # 腾讯 DNSPod (IPv4)
+
+  # 主 DNS 服务器列表（采用 DoH 加密查询，用于常规域名解析）
+  nameserver:
+    - "https://1.1.1.1/dns-query" # Cloudflare DoH
+    - "https://8.8.8.8/dns-query" # Google DoH
+
+  # 专门用于解析代理节点服务器域名的 DNS（直连解析以防循环依赖与 DNS 污染）
+  proxy-server-nameserver:
+    - "https://223.5.5.5/dns-query" # 阿里 DoH
+    - "https://doh.pub/dns-query"   # 腾讯 DNSPod DoH
+
+# ------------------------------------------
+# 代理节点配置 (Proxies)
+# ------------------------------------------
+proxies:
+  # 1. VLESS + XTLS-Vision + REALITY 节点
+  - name: vless-vision-reality  # 节点自定义名称
+    type: vless                 # 协议类型：vless
+    server: example.com         # 服务器地址/域名
+    port: 8003                  # 服务器端口
+    uuid: "89fa641b-7bcf-47b8-8cdd-ad7dadfbfb54" # 用户 UUID 密钥
+    network: tcp                # 传输层协议 (tcp/ws/grpc 等)
+    udp: true                   # 是否开启 UDP 转发支持
+    tls: true                   # 开启 TLS 加密
+    flow: xtls-rprx-vision      # 流控模式（Vision 算法，降低流量特征）
+    servername: apple.com       # REALITY 伪装的目标 SNI 域名
+    client-fingerprint: chrome  # TLS 客户端指纹伪装（模拟 Chrome 浏览器）
+    reality-opts:
+      public-key: "h8Jr0BZHqPAXFLPsmd8JXyA4TkgtDWBGpcbJSu_a5Fg" # REALITY 服务端公钥
+      short-id: "d3fd7da9"      # REALITY 简短 ID (Short ID)
+
+  # 2. VMess + WebSocket + TLS 节点
+  - name: vmess-websocket-tls   # 节点自定义名称
+    type: vmess                 # 协议类型：vmess
+    server: example.com         # 服务器地址/域名
+    port: 8004                  # 服务器端口
+    uuid: "89fa641b-7bcf-47b8-8cdd-ad7dadfbfb54" # 用户 UUID 密钥
+    alterId: 0                  # 额外 ID（设为 0 开启 VMess AEAD 加密认证）
+    cipher: auto                # 加密算法：auto（自动协商）
+    udp: true                   # 是否开启 UDP 转发支持
+    tls: true                   # 开启 TLS 加密
+    servername: example.com     # TLS SNI 伪装域名
+    client-fingerprint: chrome  # TLS 客户端指纹伪装
+    network: ws                 # 传输层协议：WebSocket
+    ws-opts:
+      path: "/vmess"            # WebSocket 请求路径
+      headers:
+        Host: example.com       # WebSocket 请求头中的 Host 字段
+
+  # 3. Hysteria2 (UDP 高速双边加速协议) 节点
+  - name: hysteria2             # 节点自定义名称
+    type: hysteria2             # 协议类型：hysteria2
+    server: example.com         # 服务器地址/域名
+    ports: "2080-3000"          # 端口跳跃范围（Port Hopping，防止特定端口被限速/封锁）
+    password: "fvYX5611KiMPeT+H5Ge4/w==" # 节点身份认证密码
+    sni: example.com            # TLS SNI 伪装域名
+    alpn:
+      - h3                      # 应用层协议协商：HTTP/3
+    up: "20 Mbps"               # 客户端上行带宽限制
+    down: "100 Mbps"            # 客户端下行带宽限制
+    hop-interval: 30            # 端口跳跃触发间隔时间（单位：秒）
+    fast-open: true             # 开启 TCP Fast Open（降低连接建立首包时延）
+
+  # 4. TUIC (基于 QUIC 的双边加速协议) 节点
+  - name: tuic                  # 节点自定义名称
+    type: tuic                  # 协议类型：tuic
+    server: example.com         # 服务器地址/域名
+    port: 8002                  # 服务器端口
+    uuid: "89fa641b-7bcf-47b8-8cdd-ad7dadfbfb54" # 用户 UUID 密钥
+    password: "fvYX5611KiMPeT+H5Ge4/w==" # 节点验证密码
+    sni: example.com            # TLS SNI 伪装域名
+    alpn:
+      - h3                      # 应用层协议协商：HTTP/3
+    reduce-rtt: false           # 是否开启 0-RTT 握手（追求极低时延可开启，但可能引发重放风险）
+    udp-relay-mode: native      # UDP 转发模式：native（原生模式） / quic
+    congestion-controller: bbr   # 拥塞控制算法：bbr / cubic / new_reno
+
+  # 5. AnyTLS 节点
+  - name: anytls                # 节点自定义名称
+    type: anytls                # 协议类型：anytls（Mihomo 特有协议）
+    server: example.com         # 服务器地址/域名
+    port: 8000                  # 服务器端口
+    password: "fvYX5611KiMPeT+H5Ge4/w==" # 节点认证密码
+    client-fingerprint: chrome  # TLS 客户端指纹伪装
+    udp: true                   # 是否开启 UDP 转发支持
+    idle-session-check-interval: 30 # 空闲连接检查间隔（秒）
+    idle-session-timeout: 30    # 空闲连接超时回收时间（秒）
+    min-idle-session: 5         # 保持的最小空闲连接池数量
+    sni: example.com            # TLS SNI 伪装域名
+    alpn:
+      - h3                      # 优先协商协议：HTTP/3
+      - h2                      # 备选协商协议：HTTP/2
+      - http/1.1                # 兼容协商协议：HTTP/1.1
+
+# ------------------------------------------
+# 策略组配置 (Proxy Groups)
+# ------------------------------------------
+proxy-groups:
+  # 负载均衡组：在组内节点间按轮询算法分配连接请求
+  - name: 负载均衡              # 策略组名称
+    type: load-balance          # 策略组类型：负载均衡
+    url: https://www.gstatic.com/generate_204 # 节点可用性心跳测试 URL
+    interval: 300               # 心跳测试间隔时间（秒）
+    strategy: round-robin       # 负载分流策略：round-robin（轮询） / consistent-hashing（哈希绑定）
+    proxies:
+      - vless-vision-reality
+      - vmess-websocket-tls
+      - hysteria2
+      - tuic
+      - anytls
+
+  # 自动选择组：定期测试节点延迟并自动切换至最低延迟节点
+  - name: 自动选择              # 策略组名称
+    type: url-test              # 策略组类型：自动延迟测试切换
+    url: https://www.gstatic.com/generate_204 # 延迟测试测速 URL
+    interval: 300               # 测速切换周期（秒）
+    tolerance: 50               # 切换容忍度 (ms)，仅当新节点比旧节点快 50ms 以上时才发生切换
+    proxies:
+      - vless-vision-reality
+      - vmess-websocket-tls
+      - hysteria2
+      - tuic
+      - anytls
+
+  # 手动选择组：提供前端 UI 手动选择节点或子策略组
+  - name: 🌍选择代理节点        # 策略组名称
+    type: select                # 策略组类型：手动选择
+    proxies:
+      - 负载均衡                # 嵌套引用“负载均衡”策略组
+      - 自动选择                # 嵌套引用“自动选择”策略组
+      - DIRECT                  # 直连选项（不经过代理）
+      - vless-vision-reality    # 可供单独选取的节点列表
+      - vmess-websocket-tls
+      - hysteria2
+      - tuic
+      - anytls
+
+# ------------------------------------------
+# 分流规则配置 (Rules)
+# ------------------------------------------
+rules:
+  - GEOIP,LAN,DIRECT             # 局域网 IP 流量直接连接（不走代理）
+  - GEOSITE,CN,DIRECT            # 中国大陆常见域名/网站直接连接
+  - GEOIP,CN,DIRECT              # 中国大陆 IP 地址直接连接
+  - MATCH,🌍选择代理节点         # 未匹配上述任何规则的兜底流量，统一送入“🌍选择代理节点”策略组
