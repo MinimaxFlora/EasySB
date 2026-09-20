@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"context"
 	"strings"
 	"testing"
 
@@ -135,15 +134,5 @@ func TestActionableStubSetsToast(t *testing.T) {
 	a = m.(*App)
 	if a.toast == "" {
 		t.Fatalf("expected a toast after deploy stub")
-	}
-}
-
-func TestKernelTaskRuns(t *testing.T) {
-	var logs []string
-	if err := simulateKernel("stable")(context.Background(), func(s string) { logs = append(logs, s) }); err != nil {
-		t.Fatalf("task error: %v", err)
-	}
-	if len(logs) == 0 {
-		t.Fatalf("expected task logs")
 	}
 }

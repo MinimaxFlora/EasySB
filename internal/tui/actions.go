@@ -2,13 +2,14 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"strings"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/MinimaxFlora/EasySB/internal/core"
 	"github.com/MinimaxFlora/EasySB/internal/state"
 	"github.com/MinimaxFlora/EasySB/internal/subscribe"
 	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
@@ -42,27 +43,69 @@ func serviceAction(verb string) actionFunc {
 	}
 }
 
-func simulateKernel(channel string) taskFunc {
-	return func(ctx context.Context, log func(string)) error {
-		steps := []string{
-			"resolve channel: " + channel,
-			"query SagerNet/sing-box releases",
-			"download core archive",
-			"verify checksum",
-			"install to " + sysinfo.CoreBin,
-			"reload sing-box service",
-		}
-		for _, s := range steps {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
+// kernelAction installs, switches or updates the sing-box core. The channel
+// argument is "stable", "alpha" or "current" (update the installed channel).
+func kernelAction(channel string) actionFunc {
+	return func(a *App) tea.Cmd {
+		lang := a.lang
+		return a.startTask(lang.T("kernel_installing"), func(ctx context.Context, log func(string)) error {
+			cfg := state.Load()
+			target := channel
+			if channel == "current" {
+				if !core.Installed() {
+					return errors.New(lang.T("svc_not_installed"))
+				}
+				target = core.InstalledChannel(cfg.CoreChannel)
+			} else if core.Installed() && core.InstalledChannel(cfg.CoreChannel) == channel {
+				log(lang.T("kernel_already") + ": " + lang.T(channelKey(channel)))
+				return nil
 			}
-			log("→ " + s)
-			time.Sleep(350 * time.Millisecond)
-		}
-		return nil
+
+			rels, err := core.FetchReleases(ctx)
+			if err != nil {
+				log(lang.T("ver_offline"))
+			}
+			rel := rels.Stable
+			if target == "alpha" {
+				rel = rels.Alpha
+			}
+			if rel.Version == "" {
+				return errors.New(lang.T("kernel_no_version"))
+			}
+
+			if core.Installed() {
+				log("$ systemctl stop " + sysinfo.ServiceName)
+				runCmd(ctx, "systemctl", "stop", sysinfo.ServiceName)
+			}
+
+			log(lang.T("kernel_downloading") + ": " + target + " " + rel.Version)
+			version, err := core.Install(ctx, rel, log)
+			if err != nil {
+				return err
+			}
+
+			cfg.CoreChannel = target
+			if err := cfg.Save(); err != nil {
+				return err
+			}
+
+			if hasServerConfig() {
+				log("$ systemctl start " + sysinfo.ServiceName)
+				runCmd(ctx, "systemctl", "start", sysinfo.ServiceName)
+			}
+			if channel == "current" {
+				log(lang.T("kernel_updated") + ": " + version)
+			} else {
+				log(lang.T("kernel_installed") + ": " + lang.T(channelKey(target)) + " " + version)
+			}
+			return nil
+		})
 	}
+}
+
+func hasServerConfig() bool {
+	info, err := os.Stat(sysinfo.ConfigJSON)
+	return err == nil && info.Size() > 0
 }
 
 func showSubscriptionURL() actionFunc {

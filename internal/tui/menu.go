@@ -66,15 +66,9 @@ func buildKernel() *menu {
 		id:    "kernel",
 		title: tk("kernel_title"),
 		nodes: []*node{
-			leaf("kernel-stable", "kernel_stable", "kernel_source", func(a *App) tea.Cmd {
-				return a.startTask(a.lang.T("kernel_installing"), simulateKernel("stable"))
-			}),
-			leaf("kernel-alpha", "kernel_alpha", "kernel_source", func(a *App) tea.Cmd {
-				return a.startTask(a.lang.T("kernel_installing"), simulateKernel("alpha"))
-			}),
-			leaf("kernel-update", "kernel_update", "kernel_source", func(a *App) tea.Cmd {
-				return a.startTask(a.lang.T("kernel_installing"), simulateKernel("current"))
-			}),
+			leaf("kernel-stable", "kernel_stable", "kernel_source", kernelAction("stable")),
+			leaf("kernel-alpha", "kernel_alpha", "kernel_source", kernelAction("alpha")),
+			leaf("kernel-update", "kernel_update", "kernel_source", kernelAction("current")),
 		},
 	}
 }
