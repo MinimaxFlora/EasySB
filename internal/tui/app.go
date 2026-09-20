@@ -27,6 +27,8 @@ type App struct {
 	height        int
 	status        sysinfo.Status
 	ready         bool
+	sized         bool
+	quote         string
 	toast         string
 	toastErr      bool
 	task          *progressModel
@@ -40,6 +42,7 @@ func New(scriptVersion string, lang i18n.Lang) *App {
 		iconSet:       icons.Detect(),
 		palette:       theme.Dark(),
 		stack:         []*menu{buildRoot()},
+		quote:         lang.Hitokoto(),
 	}
 }
 
@@ -49,6 +52,7 @@ func (a *App) Init() tea.Cmd {
 
 func (a *App) Snapshot(width, height int) string {
 	a.width, a.height = width, height
+	a.sized = true
 	a.status = sysinfo.Collect(a.scriptVersion)
 	a.ready = true
 	return a.dashboard()
@@ -195,6 +199,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		a.width, a.height = msg.Width, msg.Height
+		a.sized = true
 		if a.task != nil {
 			a.task.resize(msg.Width, msg.Height)
 		}
@@ -288,6 +293,7 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return a, a.enter()
 	case "l":
 		a.lang = a.lang.Toggle()
+		a.quote = a.lang.Hitokoto()
 	case "r":
 		return a, collectStatus(a.scriptVersion)
 	}
@@ -295,6 +301,12 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 func (a *App) View() tea.View {
+	if !a.sized {
+		// Wait for the first size report before drawing. Painting an oversized
+		// frame early makes the terminal scroll and leaves stale copies behind,
+		// which is what produced the stacked headers.
+		return tea.NewView(" ")
+	}
 	var content string
 	switch {
 	case a.form != nil:
@@ -316,42 +328,79 @@ func (a *App) formScreen() string {
 	if w <= 0 {
 		w = 96
 	}
+	if w > 100 {
+		w = 100
+	}
 	out := strings.Split(a.form.View(w, a.palette, a.lang), "\n")
-	out = append(out, "")
 	out = append(out, a.statusBar(w))
 	return strings.Join(out, "\n")
 }
 
+// dashboard renders the whole dashboard inside a single box that always fits
+// the terminal, so the inline renderer never needs to scroll.
 func (a *App) dashboard() string {
 	w := a.width
 	if w <= 0 {
 		w = 96
 	}
+	if w > 100 {
+		w = 100
+	}
+	h := a.height
+	if h <= 0 {
+		h = 30
+	}
+	inner := w - 4
+	if inner < 16 {
+		inner = 16
+	}
 
-	out := a.renderHeader(w)
-	out = append(out, a.statusSummary(w)...)
-	out = append(out, theme.Rule(w, a.palette.Border))
-	out = append(out, "")
-	out = append(out, " "+a.palette.Bold(a.palette.Primary, a.current().title(a.lang)))
-	out = append(out, a.menuLines(w)...)
-	if desc := a.descLines(w); len(desc) > 0 {
-		out = append(out, "")
-		out = append(out, desc...)
+	title := a.headerTitle(inner)
+	author := a.headerAuthor()
+	quote := a.headerQuote(inner)
+	rule := theme.Rule(inner, a.palette.Border)
+	status := a.statusSummary(inner)
+	menuTitle := " " + a.palette.Bold(a.palette.Primary, a.current().title(a.lang))
+	rows := a.menuLines(inner)
+
+	assemble := func(withQuote, withStatus bool) []string {
+		var body []string
+		body = append(body, title, author)
+		if withQuote {
+			body = append(body, quote)
+		}
+		if withStatus {
+			body = append(body, rule)
+			body = append(body, status...)
+		}
+		body = append(body, rule, menuTitle)
+		body = append(body, rows...)
+		return body
 	}
+
+	// Budget: terminal height minus box borders (2) and the hint line (1).
+	budget := h - 3
 	if a.toast != "" {
-		out = append(out, "")
-		out = append(out, a.renderToast(w))
+		budget--
 	}
-	out = append(out, "")
+	body := assemble(true, true)
+	if len(body) > budget {
+		body = assemble(false, true)
+	}
+	if len(body) > budget {
+		body = assemble(false, false)
+	}
+
+	box := theme.Box("EasySB", strings.Join(body, "\n"), w, a.palette.Border, a.palette.Primary)
+	out := strings.Split(box, "\n")
+	if a.toast != "" {
+		out = append(out, " "+a.renderToast(w))
+	}
 	out = append(out, a.statusBar(w))
 	return strings.Join(out, "\n")
 }
 
-func (a *App) menuLines(w int) []string {
-	inner := w - 2
-	if inner < 8 {
-		inner = 8
-	}
+func (a *App) menuLines(inner int) []string {
 	var rows []string
 	for i, n := range a.current().nodes {
 		rows = append(rows, a.rowLine(i == a.index, fmt.Sprintf("[%d] %s", i+1, n.label(a.lang)), inner))
@@ -370,22 +419,6 @@ func (a *App) rowLine(selected bool, label string, inner int) string {
 		return a.palette.Bold(a.palette.Primary, line)
 	}
 	return a.palette.Value(line)
-}
-
-func (a *App) descLines(w int) []string {
-	n := a.selected()
-	if n == nil {
-		return nil
-	}
-	inner := w - 4
-	if inner < 10 {
-		inner = 10
-	}
-	var out []string
-	for _, line := range wrapText(n.desc(a.lang), inner) {
-		out = append(out, "   "+a.palette.Dim(line))
-	}
-	return out
 }
 
 func (a *App) renderToast(w int) string {

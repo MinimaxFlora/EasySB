@@ -3,8 +3,6 @@ package tui
 import (
 	"strings"
 
-	"charm.land/lipgloss/v2"
-
 	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
 	"github.com/MinimaxFlora/EasySB/internal/theme"
 )
@@ -61,30 +59,4 @@ func enabledPorts(ports []sysinfo.PortInfo) string {
 		}
 	}
 	return strings.Join(out, " ")
-}
-
-func wrapText(s string, width int) []string {
-	if width <= 0 {
-		return []string{s}
-	}
-	var lines []string
-	cur := ""
-	curWidth := 0
-	for _, r := range s {
-		rw := lipgloss.Width(string(r))
-		if curWidth+rw > width {
-			lines = append(lines, cur)
-			cur = ""
-			curWidth = 0
-		}
-		cur += string(r)
-		curWidth += rw
-	}
-	if cur != "" {
-		lines = append(lines, cur)
-	}
-	if len(lines) == 0 {
-		lines = []string{""}
-	}
-	return lines
 }

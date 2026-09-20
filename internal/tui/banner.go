@@ -6,22 +6,25 @@ import (
 	"github.com/MinimaxFlora/EasySB/internal/theme"
 )
 
-// renderHeader prints the compact title and author block shown above the menu:
-// version + tagline, author/project links and the daily quote.
-func (a *App) renderHeader(w int) []string {
+// headerTitle renders the product name, version and tagline.
+func (a *App) headerTitle(w int) string {
 	versionTag := "v" + a.scriptVersion
-	head := a.palette.Bold(a.palette.Primary, "EasySB") + " " +
-		a.palette.Colored(a.palette.Accent, versionTag) + "  " +
-		a.palette.Dim(theme.Truncate(a.lang.T("banner_tagline"), maxInt(4, w-lipgloss.Width(versionTag)-12)))
+	tagline := theme.Truncate(a.lang.T("banner_tagline"), maxInt(4, w-lipgloss.Width(versionTag)-12))
+	return " " + a.palette.Bold(a.palette.Primary, "EasySB") + " " +
+		a.palette.Colored(a.palette.Accent, versionTag) + "  " + a.palette.Dim(tagline)
+}
 
-	meta := a.palette.Label(a.lang.T("banner_author")) + " " + a.palette.Value("MinimaxFlora") +
+// headerAuthor renders the author and project line.
+func (a *App) headerAuthor() string {
+	return " " + a.palette.Label(a.lang.T("banner_author")) + " " + a.palette.Value("MinimaxFlora") +
 		a.palette.Dim("  ·  ") + a.palette.Label(a.lang.T("banner_project")) + " " +
 		a.palette.Value("github.com/MinimaxFlora/EasySB")
+}
 
-	quote := a.palette.Label(a.lang.T("banner_quote")) + " " +
-		a.palette.Value(theme.Truncate(a.lang.Hitokoto(), maxInt(8, w-12)))
-
-	return []string{" " + head, " " + meta, " " + quote}
+// headerQuote renders the daily quote chosen when the app started.
+func (a *App) headerQuote(w int) string {
+	return " " + a.palette.Label(a.lang.T("banner_quote")) + " " +
+		a.palette.Value(theme.Truncate(a.quote, maxInt(8, w-12)))
 }
 
 func channelKey(channel string) string {

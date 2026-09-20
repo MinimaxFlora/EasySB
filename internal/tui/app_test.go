@@ -36,6 +36,22 @@ func newTestApp(t *testing.T) *App {
 	return m.(*App)
 }
 
+func TestDashboardFitsTerminal(t *testing.T) {
+	// The inline renderer cannot erase lines that scrolled off the top, so the
+	// boxed dashboard must never be taller than the terminal.
+	for _, h := range []int{16, 18, 20, 24, 30, 40} {
+		a := New("test", i18n.Chinese)
+		a.width, a.height = 100, h
+		a.sized = true
+		a.status = sysinfo.Collect("test")
+		a.ready = true
+		lines := strings.Count(a.dashboard(), "\n") + 1
+		if lines > h {
+			t.Fatalf("height %d: dashboard drew %d lines", h, lines)
+		}
+	}
+}
+
 func TestDashboardRendersStatus(t *testing.T) {
 	a := newTestApp(t)
 	v := a.View()
