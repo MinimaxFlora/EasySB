@@ -77,16 +77,39 @@ func (a *App) pop() {
 }
 
 func (a *App) move(d int) {
-	n := len(a.current().nodes)
+	n := a.itemCount()
 	if n == 0 {
 		return
 	}
 	a.index = (a.index + d + n) % n
 }
 
+// itemCount is the number of selectable rows: menu nodes plus the trailing
+// navigation row ("back" / "exit").
+func (a *App) itemCount() int {
+	n := len(a.current().nodes)
+	if n == 0 {
+		return 1
+	}
+	return n + 1
+}
+
+// onNavRow reports whether the cursor sits on the trailing navigation row.
+func (a *App) onNavRow() bool {
+	return a.index >= len(a.current().nodes)
+}
+
+// navLabel is the label of the trailing navigation row.
+func (a *App) navLabel() string {
+	if len(a.stack) <= 1 {
+		return a.lang.T("exit")
+	}
+	return a.lang.T("nav_back")
+}
+
 func (a *App) selected() *node {
 	nodes := a.current().nodes
-	if len(nodes) == 0 {
+	if len(nodes) == 0 || a.onNavRow() {
 		return nil
 	}
 	if a.index >= len(nodes) {
@@ -101,6 +124,13 @@ func (a *App) setToast(msg string, warn bool) {
 }
 
 func (a *App) enter() tea.Cmd {
+	if a.onNavRow() {
+		if len(a.stack) > 1 {
+			a.pop()
+			return nil
+		}
+		return quit()
+	}
 	n := a.selected()
 	if n == nil {
 		return nil
@@ -224,35 +254,25 @@ func (a *App) dashboard() string {
 		h = 32
 	}
 
-	header := a.headerLines(w)
-	bodyHeight := h - len(header) - 3
-	if bodyHeight < 6 {
-		bodyHeight = 6
+	out := a.headerLines(w)
+	out = append(out, "")
+	out = append(out, " "+a.palette.Bold(a.palette.Primary, a.current().title(a.lang)))
+	out = append(out, a.menuLines(w)...)
+	if desc := a.descLines(w); len(desc) > 0 {
+		out = append(out, "")
+		out = append(out, desc...)
 	}
 
-	var body []string
-	if w < 78 {
-		body = append(body, a.leftPanel(w-2)...)
-		body = append(body, "")
-		body = append(body, a.rightPanel(w-2)...)
-	} else {
-		lw := int(float64(w) * 0.32)
-		if lw < 24 {
-			lw = 24
-		}
-		if lw > 34 {
-			lw = 34
-		}
-		rw := w - lw - 2
-		body = mergeColumns(a.leftPanel(lw), a.rightPanel(rw), lw, "  ")
+	// 菜单始终自左上角向下排列，仅在内容不足时向下补白，让底部状态栏贴底。
+	// The menu flows top-left; pad only so the bottom bar stays anchored.
+	bodyHeight := h - 3
+	if bodyHeight < 4 {
+		bodyHeight = 4
 	}
-	for len(body) < bodyHeight {
-		body = append(body, "")
+	for len(out) < bodyHeight {
+		out = append(out, "")
 	}
 
-	out := make([]string, 0, len(header)+len(body)+3)
-	out = append(out, header...)
-	out = append(out, body...)
 	if a.toast != "" {
 		out = append(out, a.renderToast(w))
 	} else {
@@ -263,53 +283,58 @@ func (a *App) dashboard() string {
 	return strings.Join(out, "\n")
 }
 
-func (a *App) headerLines(w int) []string {
-	bannerWidth := w
-	if bannerWidth > 76 {
-		bannerWidth = 76
-	}
-	lines := strings.Split(a.renderBanner(bannerWidth), "\n")
-	lines = append(lines, "")
-	lines = append(lines, a.renderVersions(w)...)
-	lines = append(lines, "")
-	return lines
-}
-
-func (a *App) leftPanel(width int) []string {
-	inner := width - 4
+func (a *App) menuLines(w int) []string {
+	inner := w - 2
 	if inner < 8 {
 		inner = 8
 	}
 	var rows []string
 	for i, n := range a.current().nodes {
-		selected := i == a.index
-		marker := "  "
-		if selected {
-			marker = "▌ "
-		}
-		icon := ""
-		if n.icon != nil {
-			icon = n.icon(a.iconSet) + " "
-		}
-		raw := theme.Truncate(marker+icon+n.label(a.lang), inner)
-		if selected {
-			rows = append(rows, a.palette.Bold(a.palette.Primary, raw))
-		} else {
-			rows = append(rows, a.palette.Value(raw))
-		}
+		rows = append(rows, a.rowLine(i == a.index, n.label(a.lang), inner))
 	}
-	box := theme.Box(a.current().title(a.lang), strings.Join(rows, "\n"), width, a.palette.Border, a.palette.Primary)
-	return strings.Split(box, "\n")
+	rows = append(rows, a.rowLine(a.onNavRow(), a.navLabel(), inner))
+	return rows
 }
 
-func (a *App) rightPanel(width int) []string {
-	inner := width - 4
+func (a *App) rowLine(selected bool, label string, inner int) string {
+	marker := "  "
+	if selected {
+		marker = "▌ "
+	}
+	line := " " + marker + theme.Truncate(label, inner-3)
+	if selected {
+		return a.palette.Bold(a.palette.Primary, line)
+	}
+	return a.palette.Value(line)
+}
+
+func (a *App) descLines(w int) []string {
+	n := a.selected()
+	if n == nil {
+		return nil
+	}
+	inner := w - 4
 	if inner < 10 {
 		inner = 10
 	}
-	content := strings.Join(a.statusLines(inner), "\n")
-	box := theme.Box(a.lang.T("status_overview"), content, width, a.palette.Border, a.palette.Primary)
-	return strings.Split(box, "\n")
+	var out []string
+	for _, line := range wrapText(n.desc(a.lang), inner) {
+		out = append(out, "   "+a.palette.Dim(line))
+	}
+	return out
+}
+
+func (a *App) headerLines(w int) []string {
+	bannerWidth := w
+	if bannerWidth > 72 {
+		bannerWidth = 72
+	}
+	lines := strings.Split(a.renderBanner(bannerWidth), "\n")
+	lines = append(lines, "")
+	lines = append(lines, a.renderVersions(w)...)
+	lines = append(lines, "")
+	lines = append(lines, a.statusSummary(w)...)
+	return lines
 }
 
 func (a *App) renderToast(w int) string {
@@ -337,24 +362,4 @@ func (a *App) statusBar(w int) string {
 		gap = 1
 	}
 	return left + strings.Repeat(" ", gap) + right
-}
-
-func mergeColumns(left, right []string, leftWidth int, gap string) []string {
-	n := len(left)
-	if len(right) > n {
-		n = len(right)
-	}
-	out := make([]string, n)
-	for i := 0; i < n; i++ {
-		l := ""
-		if i < len(left) {
-			l = left[i]
-		}
-		r := ""
-		if i < len(right) {
-			r = right[i]
-		}
-		out[i] = theme.Pad(l, leftWidth) + gap + r
-	}
-	return out
 }

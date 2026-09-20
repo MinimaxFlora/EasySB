@@ -51,30 +51,19 @@ func (a *App) renderVersions(w int) []string {
 		{a.lang.T("ver_alpha"), "—"},
 	}
 
-	gap := 4
-	colWidth := (w - gap) / 2
-	if colWidth < 24 {
-		colWidth = 24
-	}
-
-	var lines []string
-	for i := 0; i < len(pairs); i += 2 {
-		left := a.versionCell(pairs[i], colWidth)
-		right := a.versionCell(pairs[i+1], colWidth)
-		lines = append(lines, left+strings.Repeat(" ", gap)+right)
-	}
-	return lines
-}
-
-func (a *App) versionCell(pair [2]string, width int) string {
-	labelWidth := 10
-	valueWidth := width - labelWidth - 3
+	labelWidth := 12
+	valueWidth := w - labelWidth - 5
 	if valueWidth < 6 {
 		valueWidth = 6
 	}
-	label := a.palette.Label(theme.Fit(pair[0], labelWidth))
-	value := a.palette.Value(theme.Fit(pair[1], valueWidth))
-	return label + " : " + value
+
+	lines := make([]string, 0, len(pairs))
+	for _, p := range pairs {
+		label := a.palette.Label(theme.Fit(p[0], labelWidth))
+		value := a.palette.Value(theme.Truncate(p[1], valueWidth))
+		lines = append(lines, " "+label+" : "+value)
+	}
+	return lines
 }
 
 func channelKey(channel string) string {

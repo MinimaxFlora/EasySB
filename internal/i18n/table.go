@@ -12,6 +12,7 @@ var table = []entry{
 	{"no", "否", "No"},
 	{"cancelled", "已取消", "Cancelled"},
 	{"back", "返回", "Back"},
+	{"nav_back", "返回上一级", "Back to previous"},
 	{"exit", "退出脚本", "Exit"},
 	{"invalid", "输入无效，请重新输入", "Invalid input, try again"},
 	{"need_root", "请使用 root 权限运行本脚本", "Please run this script as root"},

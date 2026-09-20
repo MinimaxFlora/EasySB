@@ -84,6 +84,35 @@ func TestRecursiveNavigation(t *testing.T) {
 	}
 }
 
+func TestNavRowReturnsToParent(t *testing.T) {
+	a := newTestApp(t)
+	m, _ := a.Update(press(tea.KeyDown))
+	a = m.(*App)
+	m, _ = a.Update(press(tea.KeyEnter))
+	a = m.(*App)
+	if a.current().id != "node" {
+		t.Fatalf("expected node menu, got %s", a.current().id)
+	}
+
+	// node menu has two nodes plus the trailing navigation row.
+	for i := 0; i < 2; i++ {
+		m, _ = a.Update(press(tea.KeyDown))
+		a = m.(*App)
+	}
+	if !a.onNavRow() {
+		t.Fatalf("expected cursor on nav row")
+	}
+	if !strings.Contains(a.View().Content, i18n.Chinese.T("nav_back")) {
+		t.Fatalf("nav row label missing from view")
+	}
+
+	m, _ = a.Update(press(tea.KeyEnter))
+	a = m.(*App)
+	if a.current().id != "root" {
+		t.Fatalf("expected to return to root, got %s", a.current().id)
+	}
+}
+
 func TestLanguageToggle(t *testing.T) {
 	a := newTestApp(t)
 	m, _ := a.Update(press('l'))
@@ -91,8 +120,8 @@ func TestLanguageToggle(t *testing.T) {
 	if a.lang != i18n.English {
 		t.Fatalf("expected English, got %s", a.lang)
 	}
-	if !strings.Contains(a.View().Content, "Live status overview") {
-		t.Fatalf("english detail title missing")
+	if !strings.Contains(a.View().Content, "Main menu") {
+		t.Fatalf("english menu title missing")
 	}
 }
 
