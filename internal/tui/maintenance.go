@@ -16,6 +16,18 @@ import (
 	"github.com/MinimaxFlora/EasySB/internal/update"
 )
 
+// clientLabel returns the localized menu label for a subscription client.
+func clientLabel(lang i18n.Lang, client subscribe.Client) string {
+	switch client {
+	case subscribe.ClientMihomo:
+		return lang.T("sub_client_mihomo")
+	case subscribe.ClientV2Ray:
+		return lang.T("sub_client_v2ray")
+	default:
+		return lang.T("sub_client_singbox")
+	}
+}
+
 // publishSubscription installs nginx when it is missing, renders subscribe.json
 // plus the nginx site, and reports the public subscription URL. It is shared by
 // node deployment and the manual regenerate action.
@@ -27,17 +39,20 @@ func publishSubscription(ctx context.Context, cfg state.Config, log func(string)
 	if err := nginx.Ensure(ctx, log); err != nil {
 		return err
 	}
-	subPath, sharePath, err := subscribe.GenerateFiles(cfg)
+	paths, err := subscribe.GenerateFiles(cfg)
 	if err != nil {
 		return err
 	}
-	log(lang.T("sub_generated") + ": " + subPath)
-	log(lang.T("sub_links") + ": " + sharePath)
+	for _, path := range paths {
+		log(lang.T("sub_generated") + ": " + path)
+	}
 	if err := nginx.WriteSite(cfg); err != nil {
 		return err
 	}
 	log(lang.T("svc_nginx_ok"))
-	log(lang.T("sub_url") + ": " + subscribe.URL(cfg))
+	for _, client := range subscribe.Clients {
+		log(clientLabel(lang, client) + ": " + subscribe.ClientURL(cfg, client))
+	}
 	return nil
 }
 

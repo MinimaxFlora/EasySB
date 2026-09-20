@@ -81,3 +81,54 @@ func TestShareLinksRespectsDisabled(t *testing.T) {
 		t.Fatalf("expected only vless link, got %v", links)
 	}
 }
+
+func TestClientURLs(t *testing.T) {
+	c := sample()
+	if got := ClientPath(c, ClientSingBox); got != "/singbox/"+c.UUID {
+		t.Fatalf("ClientPath = %q", got)
+	}
+	want := "http://203.0.113.10:8443/mihomo/" + c.UUID
+	if got := ClientURL(c, ClientMihomo); got != want {
+		t.Fatalf("ClientURL = %q, want %q", got, want)
+	}
+	if got := ClientLink(c, ClientV2Ray); got != ClientURL(c, ClientV2Ray) {
+		t.Fatalf("v2ray link should be the plain URL: %q", got)
+	}
+	if got := ClientLink(c, ClientSingBox); !strings.HasPrefix(got, ImportScheme) {
+		t.Fatalf("sing-box link missing deep link scheme: %q", got)
+	}
+	// Clash-family clients fetch the scanned payload as a profile URL, so the
+	// mihomo QR must carry the plain endpoint rather than a clash:// deep link.
+	if got := ClientLink(c, ClientMihomo); got != ClientURL(c, ClientMihomo) {
+		t.Fatalf("mihomo link should be the plain URL: %q", got)
+	}
+}
+
+func TestShareLinksEncodeCredentials(t *testing.T) {
+	c := sample()
+	c.Password = "p@ss/word"
+	links := ShareLinks(c)
+	joined := strings.Join(links, "\n")
+	if strings.Contains(joined, "p@ss/word") {
+		t.Fatalf("password not percent-encoded:\n%s", joined)
+	}
+	// AnyTLS and Hysteria2 URIs require a slash before the query, otherwise
+	// clients reject the link.
+	if !strings.Contains(joined, "anytls://p%40ss%2Fword@203.0.113.10:8000/?") {
+		t.Fatalf("anytls link malformed:\n%s", joined)
+	}
+	if !strings.Contains(joined, "hysteria2://p%40ss%2Fword@203.0.113.10:8001/?") {
+		t.Fatalf("hysteria2 link malformed:\n%s", joined)
+	}
+}
+
+func TestV2RaySubscription(t *testing.T) {
+	c := sample()
+	raw, err := base64.StdEncoding.DecodeString(V2RaySubscription(c))
+	if err != nil {
+		t.Fatalf("decode v2ray document: %v", err)
+	}
+	if !strings.Contains(string(raw), "vless://") {
+		t.Fatalf("v2ray document missing share links:\n%s", raw)
+	}
+}

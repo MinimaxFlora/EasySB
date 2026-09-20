@@ -15,6 +15,10 @@ import (
 
 type taskFunc func(ctx context.Context, log func(string)) error
 
+// progressScrollStep is how many lines one arrow key or mouse-wheel notch
+// scrolls the finished log. Three matches the feel of a browser wheel.
+const progressScrollStep = 3
+
 type logLineMsg string
 type logsClosedMsg struct{}
 type taskDoneMsg struct{ err error }
@@ -44,6 +48,7 @@ func newProgress(title string, fn taskFunc) progressModel {
 	p.spin = spinner.New(spinner.WithSpinner(spinner.Line))
 	p.vp = viewport.New()
 	p.vp.SoftWrap = true
+	p.vp.MouseWheelDelta = progressScrollStep
 	return p
 }
 
@@ -90,6 +95,12 @@ func (p *progressModel) handle(msg tea.Msg) tea.Cmd {
 		return waitLog(p.ch)
 	case logsClosedMsg:
 		return waitErr(p.errCh)
+	case tea.MouseWheelMsg:
+		// Mouse mode is only enabled while a task is on screen, so wheel
+		// events belong to the log viewport.
+		var cmd tea.Cmd
+		p.vp, cmd = p.vp.Update(m)
+		return cmd
 	case taskDoneMsg:
 		p.done = true
 		p.err = m.err
@@ -108,8 +119,16 @@ func (p *progressModel) handleKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		switch key {
 		case "enter", "esc", "q", "backspace":
 			return nil, true
+		case "up", "k":
+			p.vp.ScrollUp(progressScrollStep)
+			return nil, false
+		case "down", "j":
+			p.vp.ScrollDown(progressScrollStep)
+			return nil, false
 		}
-		return nil, false
+		var cmd tea.Cmd
+		p.vp, cmd = p.vp.Update(msg)
+		return cmd, false
 	}
 	if key == "esc" || key == "ctrl+c" {
 		if p.cancel != nil {
@@ -144,8 +163,11 @@ func (p *progressModel) appendLog(line string) {
 }
 
 func (p *progressModel) refresh() {
+	follow := p.vp.AtBottom()
 	p.vp.SetContent(strings.Join(p.logs, "\n"))
-	p.vp.GotoBottom()
+	if follow {
+		p.vp.GotoBottom()
+	}
 }
 
 func (p *progressModel) View(w, h int, pal theme.Palette, lang i18n.Lang, ic icons.Set) string {
@@ -170,7 +192,7 @@ func (p *progressModel) View(w, h int, pal theme.Palette, lang i18n.Lang, ic ico
 
 	header := " " + status + "  " + pal.Dim(theme.Truncate(p.title, width-24))
 	body := theme.Box(lang.T("task_running"), p.vp.View(), width, pal.Border, pal.Primary)
-	footer := pal.Dim(" " + lang.T("task_press_enter"))
+	footer := pal.Dim(" " + lang.T("task_scroll") + "  " + lang.T("task_press_enter"))
 	if !p.done {
 		footer = pal.Dim(" " + lang.T("hint_back") + "  " + lang.T("cancelled"))
 	}

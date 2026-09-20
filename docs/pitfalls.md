@@ -29,9 +29,22 @@ Traps already hit in this repository. Each entry names the symptom and the fix.
 
 ## sing-box integration
 
-- **Bare subscription URLs are not importable.** The client does not recognize a
-  plain URL; wrap it as `sing-box://import-remote-profile?url=...`
-  (`subscribe.ImportScheme`). This is what broke QR scanning before.
+- **QR payloads differ per client.** sing-box needs its deep link
+  (`sing-box://import-remote-profile?url=...`, `subscribe.ImportScheme`); a bare
+  URL is not recognized and this is what broke sing-box QR scanning before.
+  Clash-family clients are the opposite: their scanners feed the decoded text to
+  an HTTP client, so mihomo (and v2rayN) must carry the plain endpoint URL.
+  `clash://install-config?url=...` (`subscribe.ClashImportScheme`) only works as
+  an OS deep link, never from a scanned QR.
+- **AnyTLS and Hysteria2 URIs need a slash before the query.** Emitting
+  `anytls://pass@host:port?query` makes clients reject the link; the spec form is
+  `anytls://pass@host:port/?query`. Credentials must also be percent-encoded
+  (`url.User` / `url.UserPassword`), otherwise an `@` or `/` in a generated
+  password truncates the URI.
+- **Template actions in comments are still expanded.** `text/template` executes
+  `{{ ... }}` even inside YAML/JSON comments. A `{{ .Proxies }}` in a mihomo
+  header comment injects uncommented proxy entries above the document root and
+  makes the profile unparseable. Keep actions out of comments.
 - **`releases.atom` tags omit the `v` prefix.** `core.normalizeTag` re-adds it;
   do not compare raw tags.
 - **Downloads assume direct GitHub access.** Deployment targets are overseas,
@@ -41,11 +54,23 @@ Traps already hit in this repository. Each entry names the symptom and the fix.
 - **Comments are invalid JSON.** `templates/` files are JSONC for humans. Strip
   comments before handing anything to `sing-box check`.
 
+## nginx site
+
+- **`;` does not separate directives without whitespace.** Emitting
+  `default_type text/yaml; charset=utf-8;` makes nginx parse `charset=utf-8` as
+  the directive name and abort with `unknown directive "charset=utf-8"`. Quote
+  the whole value instead: `default_type "text/yaml; charset=utf-8";`.
+- **Surface the `[emerg]` line.** The last line of `nginx -t` output only says
+  the test failed; report the first `[emerg]`/`[error]` line
+  (`nginx.errorLine`) so the real cause is visible.
+
 ## State and templates
 
 - **Two subscription templates.** Runtime uses the embedded
   `internal/subscribe/tun-fakeip.json`; `templates/config/tun-fakeip.json` is the
-  readable mirror. Editing only one causes drift.
+  readable mirror. Editing only one causes drift. The same applies to the mihomo
+  template pair `internal/subscribe/mihomo.yaml` and
+  `templates/config/mihomo.yaml`.
 - **Do not rename state keys.** `easysb.conf` stays compatible with the legacy
   shell tool; add keys, never repurpose them.
 - **Renaming a directory touches docs and GitHub metadata.** A folder rename

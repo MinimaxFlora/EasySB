@@ -14,6 +14,7 @@ import (
 	"github.com/MinimaxFlora/EasySB/internal/cert"
 	"github.com/MinimaxFlora/EasySB/internal/service"
 	"github.com/MinimaxFlora/EasySB/internal/state"
+	"github.com/MinimaxFlora/EasySB/internal/subscribe"
 	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
 )
 
@@ -104,16 +105,27 @@ func WriteSite(cfg state.Config) error {
 	if err := os.MkdirAll(ConfDir(), 0o755); err != nil {
 		return err
 	}
+	previous, readErr := os.ReadFile(ConfPath())
+	hadPrevious := readErr == nil
 	if err := os.WriteFile(ConfPath(), []byte(body), 0o644); err != nil {
 		return err
 	}
 	if err := Test(); err != nil {
+		// Never leave an invalid fragment behind: it keeps every later
+		// `nginx -t` failing and freezes nginx on the previous config, so the
+		// newly published endpoints would silently keep returning 404.
+		if hadPrevious {
+			_ = os.WriteFile(ConfPath(), previous, 0o644)
+		} else {
+			_ = os.Remove(ConfPath())
+		}
 		return err
 	}
 	return Do("restart")
 }
 
-// renderSite builds the nginx server block for the current state.
+// renderSite builds the nginx server block for the current state. It serves the
+// legacy /subscribe path plus one UUID-tokenised endpoint per client format.
 func renderSite(cfg state.Config) (string, error) {
 	host := cfg.Host()
 	if host == "" {
@@ -130,7 +142,16 @@ func renderSite(cfg state.Config) (string, error) {
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}
-	subFile := sysinfo.SubscribeDir + "/subscribe.json"
+	subFile := sysinfo.SubscribeDir + "/" + subscribe.ClientFile(subscribe.ClientSingBox)
+
+	locations := clientLocations(cfg)
+	locations += fmt.Sprintf(`    location %s {
+        alias %s;
+        default_type application/json;
+        add_header Cache-Control no-store;
+    }
+
+`, path, subFile)
 
 	if cfg.Domain != "" {
 		pair, err := cert.ResolveActive(cfg.Domain)
@@ -146,34 +167,56 @@ func renderSite(cfg state.Config) (string, error) {
     ssl_certificate_key %s;
     ssl_protocols       TLSv1.2 TLSv1.3;
 
-    location %s {
-        alias %s;
-        default_type application/json;
-        add_header Cache-Control no-store;
-    }
-
-    location / {
+%s    location / {
         return 404;
     }
 }
-`, port, port, cfg.Domain, pair.Fullchain, pair.Key, path, subFile), nil
+`, port, port, cfg.Domain, pair.Fullchain, pair.Key, locations), nil
 	}
 	return fmt.Sprintf(`server {
     listen %s;
     listen [::]:%s;
     server_name _;
 
-    location %s {
-        alias %s;
-        default_type application/json;
-        add_header Cache-Control no-store;
-    }
-
-    location / {
+%s    location / {
         return 404;
     }
 }
-`, port, port, path, subFile), nil
+`, port, port, locations), nil
+}
+
+// clientLocations renders the exact-match location block for every client
+// subscription. It is empty until a UUID exists, since the UUID is the token in
+// the URL.
+func clientLocations(cfg state.Config) string {
+	if cfg.UUID == "" {
+		return ""
+	}
+	var b strings.Builder
+	for _, client := range subscribe.Clients {
+		fmt.Fprintf(&b, `    location = %s {
+        alias %s/%s;
+        default_type %s;
+        add_header Cache-Control no-store;
+    }
+
+`, subscribe.ClientPath(cfg, client), sysinfo.SubscribeDir, subscribe.ClientFile(client), contentType(client))
+	}
+	return b.String()
+}
+
+func contentType(client subscribe.Client) string {
+	switch client {
+	case subscribe.ClientMihomo:
+		// The value is quoted because nginx does not split on ";" here: an
+		// unquoted `text/yaml; charset=utf-8` becomes the bogus directive
+		// `charset=utf-8`.
+		return `"text/yaml; charset=utf-8"`
+	case subscribe.ClientV2Ray:
+		return `"text/plain; charset=utf-8"`
+	default:
+		return "application/json"
+	}
 }
 
 // RemoveSite deletes the site fragment and reloads nginx when possible.
@@ -198,9 +241,20 @@ func Test() error {
 	cmd.Env = append(os.Environ(), "LC_ALL=C")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return errors.New("nginx -t: " + lastLine(string(out)))
+		return errors.New("nginx -t: " + errorLine(string(out)))
 	}
 	return nil
+}
+
+// errorLine returns the most useful line from `nginx -t` output. The final line
+// only says the test failed, so prefer the first [emerg]/[error] line.
+func errorLine(s string) string {
+	for _, line := range strings.Split(s, "\n") {
+		if strings.Contains(line, "[emerg]") || strings.Contains(line, "[error]") {
+			return strings.TrimSpace(line)
+		}
+	}
+	return lastLine(s)
 }
 
 // Do performs a lifecycle action on the nginx service.

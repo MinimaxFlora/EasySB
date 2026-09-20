@@ -153,36 +153,40 @@ func portInt(cfg state.Config, key string) int {
 	return n
 }
 
-// FilePaths returns the generated subscription and share-link destinations.
-func FilePaths() (string, string) {
-	return filepath.Join(sysinfo.SubscribeDir, "subscribe.json"),
-		filepath.Join(sysinfo.SubscribeDir, "share-links.txt")
-}
-
-// GenerateFiles renders the subscription and share links into the subscribe
-// directory.
-func GenerateFiles(cfg state.Config) (string, string, error) {
-	data, err := Generate(cfg)
+// GenerateFiles renders every client subscription document plus the share-link
+// list into the subscribe directory and returns the files it wrote.
+func GenerateFiles(cfg state.Config) ([]string, error) {
+	jsonData, err := Generate(cfg)
 	if err != nil {
-		return "", "", err
+		return nil, err
+	}
+	yamlData, err := GenerateMihomo(cfg)
+	if err != nil {
+		return nil, err
 	}
 	if err := os.MkdirAll(sysinfo.SubscribeDir, 0o755); err != nil {
-		return "", "", err
+		return nil, err
 	}
-	subPath, sharePath := FilePaths()
-	if err := os.WriteFile(subPath, data, 0o644); err != nil {
-		return "", "", err
-	}
-	share := strings.Join(ShareLinksText(cfg), "\n") + "\n"
-	if err := os.WriteFile(sharePath, []byte(share), 0o644); err != nil {
-		return "", "", err
-	}
-	return subPath, sharePath, nil
-}
 
-// ShareLinksText returns the share links that header share-links.txt.
-func ShareLinksText(cfg state.Config) []string {
-	return ShareLinks(cfg)
+	files := []struct {
+		name string
+		data []byte
+	}{
+		{ClientFile(ClientSingBox), jsonData},
+		{ClientFile(ClientMihomo), yamlData},
+		{ClientFile(ClientV2Ray), []byte(V2RaySubscription(cfg) + "\n")},
+		{"share-links.txt", []byte(strings.Join(ShareLinks(cfg), "\n") + "\n")},
+	}
+
+	written := make([]string, 0, len(files))
+	for _, f := range files {
+		path := filepath.Join(sysinfo.SubscribeDir, f.name)
+		if err := os.WriteFile(path, f.data, 0o644); err != nil {
+			return written, err
+		}
+		written = append(written, path)
+	}
+	return written, nil
 }
 
 // stripJSONC removes // line comments that appear outside string literals.

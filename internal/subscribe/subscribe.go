@@ -15,13 +15,90 @@ import (
 	"github.com/MinimaxFlora/EasySB/internal/state"
 )
 
+// Client identifies one subscription format served by nginx.
+type Client string
+
+const (
+	// ClientSingBox serves the JSON profile consumed by sing-box (SFM/SFA/SFI).
+	ClientSingBox Client = "singbox"
+	// ClientMihomo serves a complete mihomo / Clash Meta YAML profile.
+	ClientMihomo Client = "mihomo"
+	// ClientV2Ray serves the base64 share-link document imported by v2rayN and
+	// similar clients.
+	ClientV2Ray Client = "v2ray"
+)
+
+// Clients lists the supported subscription formats in menu order.
+var Clients = []Client{ClientSingBox, ClientMihomo, ClientV2Ray}
+
 // ImportScheme is the sing-box client deep link used to import a remote profile.
 // A bare subscription URL is not recognised by the client, which is what broke
 // QR scanning in the legacy build.
 const ImportScheme = "sing-box://import-remote-profile?url="
 
-// URL returns the subscription endpoint derived from the state.
+// ClashImportScheme is the OS deep link Clash / mihomo clients register for
+// importing a remote profile. It is meant for clicking a link, not for QR
+// scanning: FlClash and Clash Meta hand the scanned text straight to their HTTP
+// client, which cannot fetch a clash:// URL. QR payloads therefore carry the
+// plain endpoint URL; this constant is kept for reference only.
+const ClashImportScheme = "clash://install-config?url="
+
+// URL returns the legacy subscription endpoint derived from the state.
 func URL(cfg state.Config) string {
+	path := cfg.SubPath
+	if path == "" {
+		path = state.DefaultSubPath
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	return baseURL(cfg) + path
+}
+
+// ClientPath returns the URL path served for one client format. The node UUID
+// acts as the access token so the document is not publicly guessable.
+func ClientPath(cfg state.Config, client Client) string {
+	return fmt.Sprintf("/%s/%s", client, cfg.UUID)
+}
+
+// ClientURL returns the subscription endpoint for one client format. The node
+// UUID acts as the access token: <scheme>://host:port/<client>/<uuid>.
+func ClientURL(cfg state.Config, client Client) string {
+	return baseURL(cfg) + ClientPath(cfg, client)
+}
+
+// ClientFile returns the generated file name backing a client endpoint. The
+// sing-box profile keeps the legacy name so the old /subscribe path still
+// works.
+func ClientFile(client Client) string {
+	switch client {
+	case ClientMihomo:
+		return "mihomo.yaml"
+	case ClientV2Ray:
+		return "v2ray.txt"
+	default:
+		return "subscribe.json"
+	}
+}
+
+// ClientLink wraps a client subscription URL into the payload a client imports
+// from a QR code. Only sing-box needs a deep link: its scanner expects
+// sing-box://import-remote-profile. Clash-family scanners (FlClash, Clash Meta)
+// fetch the scanned text as a profile URL, so wrapping it in clash:// makes the
+// import fail; they receive the plain endpoint instead. v2rayN likewise imports
+// the plain URL.
+func ClientLink(cfg state.Config, client Client) string {
+	u := ClientURL(cfg, client)
+	switch client {
+	case ClientSingBox:
+		return DeepLink(u)
+	default:
+		return u
+	}
+}
+
+// baseURL returns scheme://host:port for subscription links.
+func baseURL(cfg state.Config) string {
 	host := cfg.Host()
 	scheme := "http"
 	if cfg.Domain != "" && certExists(cfg.Domain) {
@@ -31,14 +108,7 @@ func URL(cfg state.Config) string {
 	if port == "" {
 		port = state.DefaultSubPort
 	}
-	path := cfg.SubPath
-	if path == "" {
-		path = state.DefaultSubPath
-	}
-	if !strings.HasPrefix(path, "/") {
-		path = "/" + path
-	}
-	return fmt.Sprintf("%s://%s:%s%s", scheme, host, port, path)
+	return fmt.Sprintf("%s://%s:%s", scheme, host, port)
 }
 
 // DeepLink wraps a subscription URL into the sing-box import deep link.
@@ -47,38 +117,99 @@ func DeepLink(subURL string) string {
 }
 
 // ShareLinks returns the enabled protocols' share links in canonical order.
+// Every URI follows the de-facto scheme each client parses, so the same link
+// works in sing-box, mihomo, v2rayN and friends.
 func ShareLinks(cfg state.Config) []string {
 	host := cfg.Host()
 	name := "EasySB"
 	var links []string
 
 	if cfg.Enabled[state.ProtoAnyTLS] {
-		links = append(links, fmt.Sprintf("anytls://%s@%s:%s?insecure=0&sni=%s#%s-AnyTLS",
-			cfg.Password, host, cfg.Ports[state.ProtoAnyTLS], host, name))
+		links = append(links, anytlsLink(cfg, host, name))
 	}
 	if cfg.Enabled[state.ProtoHysteria2] {
-		links = append(links, fmt.Sprintf("hysteria2://%s@%s:%s?sni=%s&insecure=0#%s-Hysteria2",
-			cfg.Password, host, cfg.Ports[state.ProtoHysteria2], host, name))
-		if cfg.HopRange != "" {
-			links = append(links, "# Hysteria2 port hopping: "+cfg.HopRange)
-		}
+		links = append(links, hysteria2Link(cfg, host, name))
 	}
 	if cfg.Enabled[state.ProtoTUIC] {
-		links = append(links, fmt.Sprintf("tuic://%s:%s@%s:%s?congestion_control=bbr&alpn=h3&sni=%s&udp_relay_mode=native#%s-TUIC",
-			cfg.UUID, cfg.Password, host, cfg.Ports[state.ProtoTUIC], host, name))
+		links = append(links, tuicLink(cfg, host, name))
 	}
 	if cfg.Enabled[state.ProtoVMessWSTLS] {
 		links = append(links, vmessLink(cfg, host, name))
 	}
 	if cfg.Enabled[state.ProtoVLESSReality] {
-		sni := cfg.RealitySNI
-		if sni == "" {
-			sni = state.DefaultSNI
-		}
-		links = append(links, fmt.Sprintf("vless://%s@%s:%s?encryption=none&flow=xtls-rprx-vision&security=reality&sni=%s&fp=chrome&pbk=%s&sid=%s&type=tcp#%s-VLESS-Reality",
-			cfg.UUID, host, cfg.Ports[state.ProtoVLESSReality], sni, cfg.RealityPub, cfg.RealitySID, name))
+		links = append(links, vlessLink(cfg, host, name))
 	}
 	return links
+}
+
+// V2RaySubscription encodes the share links as one base64 document, the
+// subscription format v2rayN and similar clients import.
+func V2RaySubscription(cfg state.Config) string {
+	raw := strings.Join(ShareLinks(cfg), "\n") + "\n"
+	return base64.StdEncoding.EncodeToString([]byte(raw))
+}
+
+func anytlsLink(cfg state.Config, host, name string) string {
+	q := url.Values{}
+	q.Set("sni", host)
+	q.Set("insecure", "0")
+	port := portOf(cfg, state.ProtoAnyTLS)
+	// The trailing slash before the query is required by the AnyTLS URI spec;
+	// omitting it makes clients reject the link.
+	return fmt.Sprintf("anytls://%s@%s:%s/?%s#%s-AnyTLS",
+		url.User(cfg.Password).String(), host, port, q.Encode(), name)
+}
+
+func hysteria2Link(cfg state.Config, host, name string) string {
+	q := url.Values{}
+	q.Set("sni", host)
+	q.Set("insecure", "0")
+	if cfg.HopRange != "" {
+		// hysteria2 share links carry the hopping range as mport.
+		q.Set("mport", strings.ReplaceAll(cfg.HopRange, ":", "-"))
+	}
+	port := portOf(cfg, state.ProtoHysteria2)
+	return fmt.Sprintf("hysteria2://%s@%s:%s/?%s#%s-Hysteria2",
+		url.User(cfg.Password).String(), host, port, q.Encode(), name)
+}
+
+func tuicLink(cfg state.Config, host, name string) string {
+	q := url.Values{}
+	q.Set("congestion_control", "bbr")
+	q.Set("udp_relay_mode", "native")
+	q.Set("alpn", "h3")
+	q.Set("sni", host)
+	q.Set("insecure", "0")
+	port := portOf(cfg, state.ProtoTUIC)
+	return fmt.Sprintf("tuic://%s@%s:%s?%s#%s-TUIC",
+		url.UserPassword(cfg.UUID, cfg.Password).String(), host, port, q.Encode(), name)
+}
+
+func vlessLink(cfg state.Config, host, name string) string {
+	sni := cfg.RealitySNI
+	if sni == "" {
+		sni = state.DefaultSNI
+	}
+	q := url.Values{}
+	q.Set("type", "tcp")
+	q.Set("encryption", "none")
+	q.Set("flow", "xtls-rprx-vision")
+	q.Set("security", "reality")
+	q.Set("sni", sni)
+	q.Set("fp", "chrome")
+	q.Set("pbk", cfg.RealityPub)
+	q.Set("sid", cfg.RealitySID)
+	port := portOf(cfg, state.ProtoVLESSReality)
+	return fmt.Sprintf("vless://%s@%s:%s?%s#%s-VLESS-Reality",
+		url.User(cfg.UUID).String(), host, port, q.Encode(), name)
+}
+
+func portOf(cfg state.Config, key string) string {
+	port := cfg.Ports[key]
+	if port == "" {
+		port = state.DefaultPorts[key]
+	}
+	return port
 }
 
 func vmessLink(cfg state.Config, host, name string) string {
@@ -87,7 +218,7 @@ func vmessLink(cfg state.Config, host, name string) string {
 		"v":    "2",
 		"ps":   name + "-VMess",
 		"add":  host,
-		"port": cfg.Ports[state.ProtoVMessWSTLS],
+		"port": portOf(cfg, state.ProtoVMessWSTLS),
 		"id":   cfg.UUID,
 		"aid":  "0",
 		"scy":  "auto",

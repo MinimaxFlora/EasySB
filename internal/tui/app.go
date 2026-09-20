@@ -277,6 +277,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmd := a.task.handle(msg)
 			return a, tea.Batch(cmd, collectStatus(a.scriptVersion))
 		}
+	case tea.MouseWheelMsg:
+		// Wheel scrolling is only wired up for the finished-task log/QR view,
+		// which is also the only screen that turns the mouse on.
+		if a.task != nil {
+			return a, a.task.handle(msg)
+		}
 	}
 	return a, nil
 }
@@ -303,10 +309,8 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+c":
 		return a, quit()
 	case "q":
-		if len(a.stack) > 1 {
-			a.pop()
-			return a, nil
-		}
+		// Q always quits, at any depth. Esc and the navigation row are the
+		// ways back to the parent menu.
 		return a, quit()
 	case "esc", "backspace":
 		if len(a.stack) > 1 {
@@ -362,6 +366,12 @@ func (a *App) View() tea.View {
 	// are hidden while the dashboard runs, and the inline renderer's stale-frame
 	// stacking cannot happen.
 	v.AltScreen = true
+	// Mouse wheel scrolling is enabled only on the task screen (subscription
+	// URLs and QR codes). Keeping it off elsewhere preserves click-drag text
+	// selection in the menus.
+	if a.task != nil {
+		v.MouseMode = tea.MouseModeCellMotion
+	}
 	return v
 }
 
@@ -796,7 +806,7 @@ func (a *App) menuRow(selected bool, n *node, inner, descCol int) string {
 	compact := func() string {
 		line := " " + marker + theme.Truncate(label, inner-3)
 		if selected {
-			return a.palette.Bold(a.palette.Primary, line)
+			return a.palette.SelectedRow(theme.Pad(line, inner))
 		}
 		return a.palette.Bold(a.palette.Text, line)
 	}
@@ -818,8 +828,10 @@ func (a *App) menuRow(selected bool, n *node, inner, descCol int) string {
 	line := " " + marker + label + strings.Repeat(" ", gap)
 	d := theme.Truncate(desc, descWidth)
 	if selected {
-		// Keep the selected label highlighted while the hint stays muted.
-		return a.palette.Bold(a.palette.Primary, line) + a.palette.Dim(d)
+		// The cursor bar covers the description too: on the root menu the
+		// label alone used to be highlighted, which made the selection look
+		// like it stopped at the label column.
+		return a.palette.SelectedRow(line + d)
 	}
 	return a.palette.Bold(a.palette.Text, line) + a.palette.Dim(d)
 }
@@ -840,7 +852,7 @@ func (a *App) rowLine(selected bool, label string, inner int) string {
 	}
 	line := " " + marker + theme.Truncate(label, inner-3)
 	if selected {
-		return a.palette.Bold(a.palette.Primary, line)
+		return a.palette.SelectedRow(theme.Pad(line, inner))
 	}
 	return a.palette.Value(line)
 }
