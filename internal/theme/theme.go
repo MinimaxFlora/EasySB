@@ -35,6 +35,24 @@ func Dark() Palette {
 	}
 }
 
+// Light is the palette for terminals with a light background. The hues match
+// Dark, but every color is darkened so it stays readable on white: the dark
+// palette's pastel accents and near-white body text all but disappear there.
+func Light() Palette {
+	return Palette{
+		Primary: lipgloss.Color("#0e7490"),
+		Accent:  lipgloss.Color("#1d4ed8"),
+		OK:      lipgloss.Color("#047857"),
+		Warn:    lipgloss.Color("#b45309"),
+		Err:     lipgloss.Color("#b91c1c"),
+		Text:    lipgloss.Color("#1f2937"),
+		Muted:   lipgloss.Color("#4b5563"),
+		Border:  lipgloss.Color("#0891b2"),
+		SelBg:   lipgloss.Color("#bae6fd"),
+		SelFg:   lipgloss.Color("#0c4a6e"),
+	}
+}
+
 func (p Palette) Bold(c color.Color, s string) string {
 	return lipgloss.NewStyle().Bold(true).Foreground(c).Render(s)
 }
@@ -102,13 +120,6 @@ func Pad(s string, w int) string {
 		return s
 	}
 	return s + strings.Repeat(" ", pad)
-}
-
-func Fit(s string, w int) string {
-	if w <= 0 {
-		return s
-	}
-	return Pad(Truncate(s, w), w)
 }
 
 func Box(title, content string, width int, border color.Color, titleColor color.Color) string {

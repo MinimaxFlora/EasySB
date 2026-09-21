@@ -100,6 +100,43 @@ func TestGenerateIncludesOnlyEnabled(t *testing.T) {
 	}
 }
 
+func TestGeneratePreservesTemplateOrder(t *testing.T) {
+	data, err := Generate(testConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(data)
+
+	// Top-level sections keep the template order instead of encoding/json's
+	// alphabetical map order.
+	assertSubstringOrder(t, out,
+		"\n  \"$schema\"", "\n  \"log\"", "\n  \"http_clients\"", "\n  \"dns\"",
+		"\n  \"inbounds\"", "\n  \"route\"", "\n  \"experimental\"", "\n  \"outbounds\"")
+
+	// A node keeps type first, then tag, address, port, secret and TLS.
+	i := strings.Index(out, "\"type\": \"anytls\"")
+	if i < 0 {
+		t.Fatal("anytls node missing from the subscription")
+	}
+	assertSubstringOrder(t, out[i:],
+		"\"type\"", "\"tag\"", "\"server\"", "\"server_port\"", "\"password\"", "\"tls\"")
+}
+
+func assertSubstringOrder(t *testing.T, haystack string, needles ...string) {
+	t.Helper()
+	last := -1
+	for _, n := range needles {
+		i := strings.Index(haystack, n)
+		if i < 0 {
+			t.Fatalf("%q missing", n)
+		}
+		if i < last {
+			t.Fatalf("%q appears out of order", n)
+		}
+		last = i
+	}
+}
+
 func TestGenerateRequiresHost(t *testing.T) {
 	cfg := testConfig()
 	cfg.Domain = ""

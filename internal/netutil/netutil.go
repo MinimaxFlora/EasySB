@@ -11,7 +11,12 @@ import (
 	"time"
 )
 
+// endpoints are tried in order. The first two only answer over IPv4, so a host
+// with dual-stack connectivity reports a usable IPv4 address instead of
+// whichever family the generic endpoints happen to pick.
 var endpoints = []string{
+	"https://api.ipify.org",
+	"https://ipv4.icanhazip.com",
 	"https://api.ip.sb/ip",
 	"https://ifconfig.me/ip",
 	"https://ipinfo.io/ip",

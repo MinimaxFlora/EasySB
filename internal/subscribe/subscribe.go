@@ -23,8 +23,9 @@ const (
 	ClientSingBox Client = "singbox"
 	// ClientMihomo serves a complete mihomo / Clash Meta YAML profile.
 	ClientMihomo Client = "mihomo"
-	// ClientV2Ray serves the base64 share-link document imported by v2rayN and
-	// similar clients.
+	// ClientV2Ray serves the base64 share-link document. It is the universal
+	// format: v2rayN reads it directly, and passwall, passwall2 and homeproxy
+	// all base64-decode the same document before parsing.
 	ClientV2Ray Client = "v2ray"
 )
 
@@ -35,25 +36,6 @@ var Clients = []Client{ClientSingBox, ClientMihomo, ClientV2Ray}
 // A bare subscription URL is not recognised by the client, which is what broke
 // QR scanning in the legacy build.
 const ImportScheme = "sing-box://import-remote-profile?url="
-
-// ClashImportScheme is the OS deep link Clash / mihomo clients register for
-// importing a remote profile. It is meant for clicking a link, not for QR
-// scanning: FlClash and Clash Meta hand the scanned text straight to their HTTP
-// client, which cannot fetch a clash:// URL. QR payloads therefore carry the
-// plain endpoint URL; this constant is kept for reference only.
-const ClashImportScheme = "clash://install-config?url="
-
-// URL returns the legacy subscription endpoint derived from the state.
-func URL(cfg state.Config) string {
-	path := cfg.SubPath
-	if path == "" {
-		path = state.DefaultSubPath
-	}
-	if !strings.HasPrefix(path, "/") {
-		path = "/" + path
-	}
-	return baseURL(cfg) + path
-}
 
 // ClientPath returns the URL path served for one client format. The node UUID
 // acts as the access token so the document is not publicly guessable.
@@ -215,19 +197,20 @@ func portOf(cfg state.Config, key string) string {
 func vmessLink(cfg state.Config, host, name string) string {
 	sni := host
 	payload := map[string]any{
-		"v":    "2",
-		"ps":   name + "-VMess",
-		"add":  host,
-		"port": portOf(cfg, state.ProtoVMessWSTLS),
-		"id":   cfg.UUID,
-		"aid":  "0",
-		"scy":  "auto",
-		"net":  "ws",
-		"type": "none",
-		"host": sni,
-		"path": "/vmess",
-		"tls":  "tls",
-		"sni":  sni,
+		"v":        "2",
+		"ps":       name + "-VMess",
+		"add":      host,
+		"port":     portOf(cfg, state.ProtoVMessWSTLS),
+		"id":       cfg.UUID,
+		"aid":      "0",
+		"scy":      "auto",
+		"security": "auto",
+		"net":      "ws",
+		"type":     "none",
+		"host":     sni,
+		"path":     "/vmess",
+		"tls":      "tls",
+		"sni":      sni,
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {

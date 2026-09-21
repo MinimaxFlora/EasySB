@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"image/color"
 	"strings"
 	"testing"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/MinimaxFlora/EasySB/internal/i18n"
 	"github.com/MinimaxFlora/EasySB/internal/state"
 	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
+	"github.com/MinimaxFlora/EasySB/internal/theme"
 )
 
 func press(code rune) tea.KeyPressMsg {
@@ -302,9 +304,9 @@ func TestFormValidationKeepsOpen(t *testing.T) {
 
 func TestDashboardPanelsAndIcons(t *testing.T) {
 	a := newTestApp(t)
-	// Uniform spacing needs a little more room than the old packed layout, so
+	// Uniform spacing plus the fuller device card needs a little more room, so
 	// use a terminal tall enough to show the device card and the hint box.
-	a.height = 46
+	a.height = 52
 	view := a.View().Content
 	for _, want := range []string{
 		i18n.Chinese.T("panel_device"),
@@ -378,6 +380,11 @@ func TestMouseWheelOnlyOnTaskScreen(t *testing.T) {
 	if got := a.View().MouseMode; got != tea.MouseModeCellMotion {
 		t.Fatalf("task screen should enable mouse wheel, got %v", got)
 	}
+	// Releasing the mouse restores click-drag selection on the task screen.
+	p.mouse = false
+	if got := a.View().MouseMode; got != tea.MouseModeNone {
+		t.Fatalf("released task mouse should not capture, got %v", got)
+	}
 }
 
 func TestPublishSubscriptionNeedsHost(t *testing.T) {
@@ -406,5 +413,77 @@ func TestValidHopRange(t *testing.T) {
 		if got := validHopRange(in); got != want {
 			t.Errorf("validHopRange(%q) = %v, want %v", in, got, want)
 		}
+	}
+}
+
+func TestMenuCursorKeepsUniformWidth(t *testing.T) {
+	// The selection bar spans the full inner width so it stays one size as the
+	// cursor moves through rows with different length descriptions.
+	a := New("test", i18n.Chinese)
+	a.width, a.height = 100, 34
+	a.sized = true
+	a.status = sysinfo.Collect("test")
+	a.ready = true
+
+	inner := a.width - 4
+	descCol := a.menuDescColumn(inner, a.menuLabelColumn())
+	cursorWidth := a.menuCursorWidth(inner)
+	if cursorWidth != inner {
+		t.Fatalf("cursor width = %d, want inner %d", cursorWidth, inner)
+	}
+	for i, n := range a.current().nodes {
+		bar := a.menuRow(true, n, inner, descCol, cursorWidth)
+		if got := lipgloss.Width(bar); got != cursorWidth {
+			t.Fatalf("row %d bar width = %d, want %d", i, got, cursorWidth)
+		}
+	}
+}
+
+func TestSubmenuShowsDescriptions(t *testing.T) {
+	a := New("test", i18n.Chinese)
+	a.width, a.height = 100, 46
+	a.sized = true
+	a.status = sysinfo.Collect("test")
+	a.ready = true
+
+	a.push(buildSubscribe())
+	view := a.View().Content
+	for _, key := range []string{"desc_sub_regen", "desc_sub_url", "desc_sub_qr", "desc_sub_links"} {
+		if !strings.Contains(view, i18n.Chinese.T(key)) {
+			t.Fatalf("subscription submenu missing description %q:\n%s", key, view)
+		}
+	}
+}
+
+func TestPaletteFollowsTerminalBackground(t *testing.T) {
+	a := New("test", i18n.Chinese)
+	if !a.themeAuto {
+		t.Fatal("the built-in theme should auto-detect the terminal background")
+	}
+	m, _ := a.Update(tea.BackgroundColorMsg{Color: color.White})
+	a = m.(*App)
+	if a.palette.Primary != theme.Light().Primary {
+		t.Fatal("a light terminal background should select the light palette")
+	}
+	m, _ = a.Update(tea.BackgroundColorMsg{Color: color.Black})
+	a = m.(*App)
+	if a.palette.Primary != theme.Dark().Primary {
+		t.Fatal("a dark terminal background should select the dark palette")
+	}
+}
+
+func TestThemeEnvOverrideWins(t *testing.T) {
+	t.Setenv("EASYSB_THEME", "light")
+	a := New("test", i18n.Chinese)
+	if a.themeAuto {
+		t.Fatal("a forced theme should disable background auto-detection")
+	}
+	if a.palette.Primary != theme.Light().Primary {
+		t.Fatal("EASYSB_THEME=light should start on the light palette")
+	}
+	m, _ := a.Update(tea.BackgroundColorMsg{Color: color.Black})
+	a = m.(*App)
+	if a.palette.Primary != theme.Light().Primary {
+		t.Fatal("a forced theme must ignore the detected background")
 	}
 }

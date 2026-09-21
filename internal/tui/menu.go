@@ -60,10 +60,10 @@ func buildKernel() *menu {
 		id:    "kernel",
 		title: tk("kernel_title"),
 		nodes: []*node{
-			leaf("kernel-install-stable", "kernel_install_stable", "kernel_source", kernelAction("install-stable")),
-			leaf("kernel-install-alpha", "kernel_install_alpha", "kernel_source", kernelAction("install-alpha")),
-			leaf("kernel-switch", "kernel_switch", "kernel_switch_hint", kernelAction("switch")),
-			leaf("kernel-update", "kernel_update", "kernel_source", kernelAction("update")),
+			leaf("kernel-install-stable", "kernel_install_stable", "desc_kernel_install_stable", kernelAction("install-stable")),
+			leaf("kernel-install-alpha", "kernel_install_alpha", "desc_kernel_install_alpha", kernelAction("install-alpha")),
+			leaf("kernel-switch", "kernel_switch", "desc_kernel_switch", kernelAction("switch")),
+			leaf("kernel-update", "kernel_update", "desc_kernel_update", kernelAction("update")),
 		},
 	}
 }
@@ -73,9 +73,9 @@ func buildNode() *menu {
 		id:    "node",
 		title: tk("node_title"),
 		nodes: []*node{
-			iconLeaf("node-deploy", "node_deploy", "node_deploying", func(s icons.Set) string { return s.Rocket }, deployNode()),
-			{id: "node-protocols", label: tk("node_protocols"), desc: tk("node_select_protos"), icon: func(s icons.Set) string { return s.Service }, sub: buildProtocols()},
-			iconLeaf("node-params", "node_params", "param_ports", func(s icons.Set) string { return s.Tool }, func(a *App) tea.Cmd {
+			iconLeaf("node-deploy", "node_deploy", "desc_node_deploy", func(s icons.Set) string { return s.Rocket }, deployNode()),
+			{id: "node-protocols", label: tk("node_protocols"), desc: tk("desc_node_protocols"), icon: func(s icons.Set) string { return s.Service }, sub: buildProtocols()},
+			iconLeaf("node-params", "node_params", "desc_node_params", func(s icons.Set) string { return s.Tool }, func(a *App) tea.Cmd {
 				a.push(buildParams())
 				return nil
 			}),
@@ -98,7 +98,7 @@ func buildProtocols() *menu {
 				}
 				return mark + " " + state.Labels[key]
 			},
-			desc:   tk("node_select_protos"),
+			desc:   tk("desc_proto_toggle"),
 			action: toggleProtocol(key),
 		})
 	}
@@ -110,13 +110,13 @@ func buildParams() *menu {
 		id:    "params",
 		title: tk("node_params"),
 		nodes: []*node{
-			leaf("param-uuid", "param_uuid", "param_uuid_prompt", editUUID()),
-			leaf("param-password", "param_password", "param_pw_prompt", editPassword()),
-			leaf("param-hop", "param_hop", "param_hop_prompt", editHop()),
-			{id: "param-ports", label: tk("param_ports"), desc: tk("param_port_prompt"), sub: buildPorts()},
-			{id: "param-sni", label: tk("param_sni"), desc: tk("param_sni_preset"), sub: buildSNI()},
-			leaf("param-privkey", "param_privkey", "param_install_core_first", regenRealityKeys()),
-			leaf("param-shortid", "param_shortid", "param_regen_shortid", regenShortID()),
+			leaf("param-uuid", "param_uuid", "desc_param_uuid", editUUID()),
+			leaf("param-password", "param_password", "desc_param_password", editPassword()),
+			leaf("param-hop", "param_hop", "desc_param_hop", editHop()),
+			{id: "param-ports", label: tk("param_ports"), desc: tk("desc_param_ports"), sub: buildPorts()},
+			{id: "param-sni", label: tk("param_sni"), desc: tk("desc_param_sni"), sub: buildSNI()},
+			leaf("param-privkey", "param_privkey", "desc_param_privkey", regenRealityKeys()),
+			leaf("param-shortid", "param_shortid", "desc_param_shortid", regenShortID()),
 		},
 	}
 }
@@ -131,7 +131,7 @@ func buildPorts() *menu {
 				port := state.Load().Ports[key]
 				return state.Labels[key] + " : " + port
 			},
-			desc:   tk("param_port_prompt"),
+			desc:   tk("desc_port_edit"),
 			action: editPort(key),
 		})
 	}
@@ -146,11 +146,11 @@ func buildSNI() *menu {
 		nodes = append(nodes, &node{
 			id:     "sni-" + preset,
 			label:  func(i18n.Lang) string { return preset },
-			desc:   tk("param_sni_preset"),
+			desc:   tk("desc_sni_use"),
 			action: setSNI(preset),
 		})
 	}
-	nodes = append(nodes, leaf("sni-custom", "param_sni_custom", "param_sni_prompt", editSNI()))
+	nodes = append(nodes, leaf("sni-custom", "param_sni_custom", "desc_sni_custom", editSNI()))
 	return &menu{id: "sni", title: tk("param_sni"), nodes: nodes}
 }
 
@@ -159,10 +159,10 @@ func buildDomain() *menu {
 		id:    "domain",
 		title: tk("domain_title"),
 		nodes: []*node{
-			leaf("domain-issue", "domain_issue", "domain_prompt", issueCertAction()),
-			leaf("domain-list", "domain_list", "domain_empty", listCerts()),
-			leaf("domain-switch", "domain_switch", "domain_select", switchCertAction()),
-			leaf("domain-remove", "domain_remove", "domain_remove_confirm", removeCertAction()),
+			leaf("domain-issue", "domain_issue", "desc_domain_issue", issueCertAction()),
+			leaf("domain-list", "domain_list", "desc_domain_list", listCerts()),
+			leaf("domain-switch", "domain_switch", "desc_domain_switch", switchCertAction()),
+			leaf("domain-remove", "domain_remove", "desc_domain_remove", removeCertAction()),
 		},
 	}
 }
@@ -172,10 +172,10 @@ func buildSubscribe() *menu {
 		id:    "subscribe",
 		title: tk("sub_title"),
 		nodes: []*node{
-			leaf("sub-regen", "sub_regen", "sub_generated", regenerateSubscription()),
-			leaf("sub-url", "sub_url", "sub_need_domain", showSubscriptionURL()),
-			leaf("sub-qr", "sub_qr", "sub_no_qrencode", showSubscriptionQR()),
-			leaf("sub-links", "sub_links", "sub_need_deploy", showShareLinks()),
+			leaf("sub-regen", "sub_regen", "desc_sub_regen", regenerateSubscription()),
+			leaf("sub-url", "sub_url", "desc_sub_url", showSubscriptionURL()),
+			leaf("sub-qr", "sub_qr", "desc_sub_qr", showSubscriptionQR()),
+			leaf("sub-links", "sub_links", "desc_sub_links", showShareLinks()),
 		},
 	}
 }
@@ -185,14 +185,14 @@ func buildService() *menu {
 		id:    "service",
 		title: tk("svc_title"),
 		nodes: []*node{
-			leaf("svc-start", "svc_start", "svc_running", serviceAction("start")),
-			leaf("svc-stop", "svc_stop", "svc_stopped", serviceAction("stop")),
-			leaf("svc-restart", "svc_restart", "svc_running", serviceAction("restart")),
-			leaf("svc-status", "svc_status", "svc_title", serviceAction("status")),
-			leaf("svc-enable", "svc_enable", "svc_enabled", serviceAction("enable")),
-			leaf("svc-disable", "svc_disable", "svc_disabled", serviceAction("disable")),
-			leaf("svc-fw-apply", "fw_apply", "fw_added", firewallApply()),
-			leaf("svc-fw-remove", "fw_remove", "fw_removed", firewallRemove()),
+			leaf("svc-start", "svc_start", "desc_svc_start", serviceAction("start")),
+			leaf("svc-stop", "svc_stop", "desc_svc_stop", serviceAction("stop")),
+			leaf("svc-restart", "svc_restart", "desc_svc_restart", serviceAction("restart")),
+			leaf("svc-status", "svc_status", "desc_svc_status", serviceAction("status")),
+			leaf("svc-enable", "svc_enable", "desc_svc_enable", serviceAction("enable")),
+			leaf("svc-disable", "svc_disable", "desc_svc_disable", serviceAction("disable")),
+			leaf("svc-fw-apply", "fw_apply", "desc_svc_fw_apply", firewallApply()),
+			leaf("svc-fw-remove", "fw_remove", "desc_svc_fw_remove", firewallRemove()),
 		},
 	}
 }

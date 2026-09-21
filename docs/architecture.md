@@ -60,13 +60,13 @@ editing.
 | `internal/subscribe` | subscription URLs, per-protocol share links, QR payloads, sing-box JSON plus mihomo YAML and v2rayN base64 renders |
 | `internal/secret` | random UUID / password / Reality keypair generation |
 | `internal/service` | systemd and OpenRC detection, install, start/stop, status |
-| `internal/sysinfo` | host/device/core/service status collected for the dashboard |
-| `internal/netutil` | small network helpers (public IP, host resolution) |
+| `internal/sysinfo` | host/device/core/service status for the dashboard: local IPv4/IPv6, CPU cores, load, memory, swap, disk and uptime |
+| `internal/netutil` | small network helpers (public IPv4-first IP detection, host resolution) |
 | `internal/uninstall` | remove the deployment while keeping acme certificates |
 | `internal/update` | self-update from the GitHub release tag `v<version>` |
 | `internal/i18n` | `C` / `E` bilingual string table |
 | `internal/icons` | Nerd Font icon sets, disabled with `EASYSB_ICONS=0` |
-| `internal/theme` | color palette and frame/column layout helpers |
+| `internal/theme` | dark / light color palettes and frame/column layout helpers |
 
 ## Program flow
 
@@ -106,8 +106,15 @@ at comes from `subscribe.ClientFile`.
 | :--- | :--- | :--- | :--- |
 | `/subscribe` | `subscribe.json` | `application/json` | legacy sing-box |
 | `/singbox/<uuid>` | `subscribe.json` | `application/json` | sing-box (SFM / SFA / SFI) |
-| `/mihomo/<uuid>` | `mihomo.yaml` | `text/yaml` | mihomo / Clash Meta |
-| `/v2ray/<uuid>` | `v2ray.txt` | `text/plain` | v2rayN |
+| `/mihomo/<uuid>` | `mihomo.yaml` | `text/yaml` | mihomo / Clash Meta, luci-app-nikki |
+| `/v2ray/<uuid>` | `v2ray.txt` | `text/plain` | v2rayN, passwall, passwall2, homeproxy |
+
+The `/v2ray/<uuid>` document is the universal format: every client above either
+reads the Base64 share links directly or base64-decodes the document first.
+`luci-app-nikki` runs the mihomo core and validates the subscription for a
+top-level `proxies` key, so it consumes the `/mihomo/<uuid>` YAML profile.
+Share links keep the canonical hyphenated UUID because homeproxy rejects the
+32-character hyphen-less form through its LuCI `uuid` validation.
 
 `subscribe.ClientLink` builds the QR payload. sing-box wraps the URL in its
 deep link (`sing-box://import-remote-profile?url=`) because that is what its

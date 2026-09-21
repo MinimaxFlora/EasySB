@@ -59,20 +59,25 @@ EasySB is a 5-in-1 sing-box deployment script for Linux VPS. It brings protocol 
 .
 ├── main.go                       # Go entrypoint (TUI)
 ├── install.sh                    # One-click installer (deps / binary / Nerd Font)
+├── VERSION                       # Single source of truth for the release tag
 ├── AGENTS.md                     # Guide for AI agents and contributors
-├── internal/                     # Go packages: i18n / theme / icons / sysinfo / state / subscribe / tui
 ├── go.mod                        # Go module definition
+├── internal/                     # Go packages, mapped in docs/architecture.md
 ├── templates/                    # Subscription and protocol config templates
 │   ├── config/
-│   │   └── tun-fakeip.json       # TUN global proxy + FakeIP template
+│   │   ├── tun-fakeip.json       # sing-box TUN + FakeIP subscription template
+│   │   └── mihomo.yaml           # mihomo / Clash Meta profile (readable mirror)
 │   ├── anytls/                   # AnyTLS client / server samples
 │   ├── hysteria2/                # Hysteria2 client / server samples
 │   ├── tuic/                     # TUIC client / server samples
 │   ├── vmess-websocket-tls/      # VMess + WebSocket + TLS samples
 │   └── vless-vision-reality/     # VLESS + Vision + Reality samples
+├── assets/                       # README banners
 ├── docs/                         # Engineering docs for agents and contributors
 └── .github/                      # CI workflows and community health files
 ```
+
+The protocol samples under `templates/` are readable JSONC; strip the comments and they work as sing-box server / client configs as-is.
 
 ---
 
@@ -125,8 +130,10 @@ Supports Debian / Ubuntu (systemd) and Alpine (OpenRC); run as root.
 | 5-in-1 deployment | One shared UUID and password, generated at install; ports allocated one by one |
 | Core management | Install, replace or remove stable and alpha builds; replace keeps the existing config |
 | Version panel | Script version, local core, stable and alpha versions on top of the menu with update markers |
+| Device panel | Local IPv4/IPv6, swap, uptime, CPU cores and load, memory, disk, host, kernel, OS and timezone |
+| Copy and mouse | On task screens `C` copies the log to the system clipboard (OSC52) and `M` releases the mouse for click-drag selection |
 | Certificates | acme.sh `--standalone` issue and renew, list, switch active, remove; handles 80 / 443 occupancy |
-| Subscription | Renders `templates/config/tun-fakeip.json`, outputs files, QR codes and share links, hosted by nginx |
+| Subscription | Renders `templates/config/tun-fakeip.json` (sing-box) and `templates/config/mihomo.yaml` (mihomo), outputs files, QR codes and share links, hosted by nginx |
 | Port hopping | Hysteria2 defaults to `2080:3000`, auto-applies iptables / nftables DNAT and a boot restore unit |
 | Service control | Start, stop, restart, status and enable-on-boot |
 | Self-update | Pulls the latest script from this repository and replaces it after validation |
@@ -137,19 +144,17 @@ Supports Debian / Ubuntu (systemd) and Alpine (OpenRC); run as root.
 ## Interactive Menu
 
 ```text
-[1] Install / switch sing-box core (stable / alpha)
-[2] Uninstall sing-box core
-[3] Replace sing-box core (keep config)
-[4] Certificate management (acme.sh)
-[5] Subscription management (sing-box / share links / QR)
-[6] Protocol parameters (ports / password / UUID)
-[7] Service management (start / stop / restart / status)
-[8] Versions and updates
-[9] Fully uninstall EasySB
-[0] Exit
+Main menu
+├── Core management      Install stable / alpha, switch channel, update current channel
+├── Node management      One-click deploy, enable protocols, parameters (UUID / password / hop / ports / SNI / Reality keys)
+├── Domain management    Issue / renew, list, switch active and remove certificates
+├── Subscription         Regenerate, subscription URL, QR code and per-protocol share links
+├── Service management   Start, stop, restart, status, enable / disable and port-hopping rules
+├── Update version       Pull the latest EasySB release
+└── Uninstall script     Remove EasySB completely
 ```
 
-Files: server config `/etc/sing-box/config.json`, state `/etc/sing-box/easysb.conf`, shortcut `/usr/bin/sb`.
+Files: server config `/etc/sing-box/config.json`, state `/etc/sing-box/easysb.conf`, shortcut `/usr/local/bin/sb`.
 
 ---
 
@@ -159,6 +164,7 @@ Files: server config `/etc/sing-box/config.json`, state `/etc/sing-box/easysb.co
 | :--- | :--- |
 | `--language C\|E` | Preset the UI language, then open the menu |
 | `--icons on\|off` | Override the Nerd Font icon detection result |
+| `--theme auto\|dark\|light` | Override the terminal background detection (default `auto`) |
 | `--apply-firewall` | Restore port-hopping rules only, used by the boot unit |
 | `--render --width N --height N` | Render the dashboard once and exit (debug) |
 | `--version` | Print the version and build hash |
@@ -199,8 +205,12 @@ It is also hosted by nginx as a lightweight static site on port `8443`. The lega
 | Client | Endpoint | Content |
 | :--- | :--- | :--- |
 | sing-box (SFM / SFA / SFI) | `/singbox/<uuid>` | JSON profile |
-| mihomo / Clash Meta | `/mihomo/<uuid>` | Complete YAML profile |
-| v2rayN | `/v2ray/<uuid>` | Base64 share-link document |
+| mihomo / Clash Meta / luci-app-nikki | `/mihomo/<uuid>` | Complete YAML profile |
+| v2rayN / passwall / passwall2 / homeproxy | `/v2ray/<uuid>` | Base64 share-link document |
+
+The `/v2ray/<uuid>` document is the universal format. v2rayN imports it directly, and the OpenWrt proxy clients `passwall`, `passwall2` and `homeproxy` base64-decode the same document before parsing it, so a single endpoint covers all of them. `luci-app-nikki` uses the mihomo core, so it consumes the `/mihomo/<uuid>` YAML profile, which carries the top-level `proxies` key it validates for.
+
+Every share link keeps the canonical hyphenated UUID. `homeproxy` validates the node UUID with the LuCI `uuid` check and rejects the 32-character hyphen-less form, so the compact form must not be emitted.
 
 The UUID acts as the access token, so treat the URLs as secrets. The sing-box QR payload is wrapped as `sing-box://import-remote-profile?url=...` for one-scan import; mihomo and v2rayN QR payloads are the plain subscription URL, because Clash-family scanners fetch the scanned text directly as a profile URL (the `clash://install-config?url=...` deep link only works when clicked from a browser). sing-box listens for WebSocket directly; nginx only serves static files and never reverse-proxies.
 
@@ -247,7 +257,7 @@ The unit restores rules via `easysb --apply-firewall`. It is not created when Hy
 
 ## Developers: Build and Test
 
-Go implementation (primary, requires Go 1.27.1; `go.mod` declares `go 1.27.1`, and `GOTOOLCHAIN=auto` fetches that toolchain automatically):
+Go implementation (primary, requires Go 1.27.1; `go.mod` declares `go 1.27.1`, and `GOTOOLCHAIN=auto` fetches that toolchain automatically). `internal/tui/` holds the TUI shell and interaction logic; the other packages under `internal/` cover the core, certificate, service, subscription and firewall modules, mapped in `docs/architecture.md`:
 
 ```bash
 # Build the binary
@@ -259,24 +269,8 @@ go test ./...
 # Render the dashboard once without interaction (preview / screenshot / debug)
 ./easysb --render --width 100 --height 34
 
-# Switch language and icon mode
-./easysb --language E --icons off
-```
-
-`internal/tui/` holds the TUI shell and interaction logic; the other packages under `internal/` cover the core, certificate, service, subscription and firewall modules:
-
-```bash
-# Build the binary
-go build -o easysb .
-
-# Run tests
-go test ./...
-
-# Render the dashboard once without interaction (preview / screenshot / debug)
-./easysb --render --width 100 --height 34
-
-# Switch language and icon mode
-./easysb --language E --icons off
+# Switch language, icon mode and theme
+./easysb --language E --icons off --theme dark
 ```
 
 ---

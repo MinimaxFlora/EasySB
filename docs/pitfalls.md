@@ -33,14 +33,27 @@ Traps already hit in this repository. Each entry names the symptom and the fix.
   (`sing-box://import-remote-profile?url=...`, `subscribe.ImportScheme`); a bare
   URL is not recognized and this is what broke sing-box QR scanning before.
   Clash-family clients are the opposite: their scanners feed the decoded text to
-  an HTTP client, so mihomo (and v2rayN) must carry the plain endpoint URL.
-  `clash://install-config?url=...` (`subscribe.ClashImportScheme`) only works as
-  an OS deep link, never from a scanned QR.
+  an HTTP client, so mihomo (and v2rayN) must carry the plain endpoint URL. A
+  `clash://install-config?url=...` link only works as an OS deep link, never from
+  a scanned QR.
 - **AnyTLS and Hysteria2 URIs need a slash before the query.** Emitting
   `anytls://pass@host:port?query` makes clients reject the link; the spec form is
   `anytls://pass@host:port/?query`. Credentials must also be percent-encoded
   (`url.User` / `url.UserPassword`), otherwise an `@` or `/` in a generated
-  password truncates the URI.
+  password truncates the URI. Generated passwords avoid the problem by staying
+  alphanumeric (`secret.Password`, alphabet `[A-Za-z0-9]`), the intersection
+  every target parser accepts. OpenWrt's homeproxy drops userinfo containing a
+  `%`, so a standard base64 password (`+`/`/`/`=`) silently loses the password;
+  staying alphanumeric avoids that.
+- **Share links keep the canonical UUID.** Emitting the 32 character hyphen-less
+  form makes homeproxy flag the node as an invalid UUID through its LuCI `uuid`
+  validation, even though sing-box's gofrs parser accepts it. Keep the
+  hyphenated form in every share link.
+- **`/v2ray/<uuid>` is the universal Base64 document.** v2rayN reads it
+  directly; passwall, passwall2 and homeproxy base64-decode it first. No
+  separate "base" format is needed. `luci-app-nikki` runs the mihomo core and
+  validates for a top-level `proxies` key, so it uses the `/mihomo/<uuid>` YAML
+  profile instead.
 - **Template actions in comments are still expanded.** `text/template` executes
   `{{ ... }}` even inside YAML/JSON comments. A `{{ .Proxies }}` in a mihomo
   header comment injects uncommented proxy entries above the document root and
@@ -92,5 +105,11 @@ Traps already hit in this repository. Each entry names the symptom and the fix.
   Use it to catch overflow and alignment regressions.
 - **Icons assume a Nerd Font.** Users without one set `EASYSB_ICONS=0` or pass
   `--icons off`. Never make layout depend on icons being present.
+- **Mouse reporting steals click-drag selection.** While the task/QR screen
+  enables `MouseModeCellMotion` for wheel scrolling, the terminal stops
+  selecting text on drag, so users cannot copy a subscription URL the usual way.
+  The screen therefore offers `C` (OSC52 clipboard copy of the whole log) and
+  `M` (release the mouse, restoring native selection). If you add mouse capture
+  anywhere else, provide the same escape hatch.
 - **After `git filter-branch`, `refs/original/*` remains.** It is a local backup
   of the pre-rewrite refs. Leave it or clean it deliberately; do not push it.

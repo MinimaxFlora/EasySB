@@ -8,13 +8,25 @@
 
 ### 新增
 
+- 设备信息面板扩充：本机 IPv4 与 IPv6 分列显示，新增运行时间、CPU 型号与核心数、系统负载、内存与磁盘占用。
+- 任务/二维码页新增复制与鼠标控制：按 `C` 通过 OSC52 将整段日志复制到系统剪贴板，按 `M` 释放鼠标以便拖拽选择文本。
+- 新增 `--theme auto|dark|light`（环境变量 `EASYSB_THEME`）：启动时自动探测终端背景色，亮色背景自动切换为浅色配色，也可手动强制指定，避免在白色终端下界面几乎不可读。
 - 订阅支持多客户端：新增 mihomo / Clash Meta 完整配置（`mihomo.yaml`）与 v2rayN 分享链接文档（`v2ray.txt`），nginx 分别以 `/singbox/<uuid>`、`/mihomo/<uuid>`、`/v2ray/<uuid>` 端点提供，旧 `/subscribe` 路径保留。
+- 适配 OpenWrt 客户端：`passwall`、`passwall2`、`homeproxy` 使用 `/v2ray/<uuid>` 的 Base64 分享链接文档；`luci-app-nikki` 使用 mihomo 内核，订阅需要含顶层 `proxies`，使用 `/mihomo/<uuid>` 的 YAML 配置。
 - 订阅二维码按客户端分别生成导入链接：sing-box 使用 `sing-box://import-remote-profile?url=`，mihomo 与 v2rayN 使用纯订阅地址（Clash 系客户端的扫码导入会把二维码内容直接当作订阅 URL 抓取，`clash://install-config?url=` 仅适用于系统级深链点击）。
 - 新增 `templates/config/mihomo.yaml` 可读样例，与内嵌模板 `internal/subscribe/mihomo.yaml` 保持同步。
 - mihomo 配置对齐完整桌面方案：新增 `external-controller`（`0.0.0.0:9090`）、`secret`、`external-ui`、`external-ui-url`（Zashboard）、`unified-delay`，补全 fake-ip DNS 与 `fake-ip-filter`，策略组改为 `负载均衡` / `自动选择` / `🌍选择代理节点`，规则新增 `GEOIP,LAN,DIRECT` 与 `GEOSITE,CN,DIRECT`。
 
 ### 修复
 
+- 修复生成的 sing-box 订阅 JSON 被编码为字母序的问题：现在保留模板中的顶层分区顺序与节点内参数顺序，与 `templates/config/tun-fakeip.json` 可读样例一致。
+- 修复任务页启用鼠标捕获后无法用鼠标选中并复制订阅链接的问题：现可用 `C` 直接复制，或按 `M` 释放鼠标后原生选择。
+- 修复公网 IP 探测在双栈主机上返回 IPv6 的问题：探测端点改为优先使用仅 IPv4 的接口。
+- 修复 OpenWrt 客户端订阅后节点丢失密码：homeproxy 会丢弃含百分号转义的 userinfo，标准 Base64 密码（`+` `/` `=`）会静默丢失密码。生成密码现改为纯字母数字（22 字符），v2rayN、passwall、passwall2 与 homeproxy 均可正常读取。
+- 修复部分解析器读取 VMess 节点加密方式为空的问题：分享链接在 `scy` 之外同时写出 `security`，兼容只读 `security` 的解析器。
+- 修复 homeproxy 报「请输入有效 uuid」：VLESS 分享链接保持带连字符的标准 UUID，不再输出 32 位紧凑形式（homeproxy 会用 LuCI 的 `uuid` 校验节点）。
+- 订阅界面按插件列出兼容客户端：`/mihomo/<uuid>` 标注 mihomo / Clash Meta / luci-app-nikki，`/v2ray/<uuid>` 标注 v2rayN / passwall / passwall2 / homeproxy，并分别说明 YAML 与 Base64 两种格式。
+- 修复主菜单选中行光标长度随行内描述长短变化的问题：选中条现在统一填充到面板内宽。
 - 修复分享链接生成失败：AnyTLS 与 Hysteria2 URI 在查询串前缺少 `/`，且密码未做百分号编码，导致客户端拒绝导入。
 - 修复 mihomo 二维码无法被 FlClash 等 Clash 系客户端识别：二维码改为纯订阅地址，不再包装 `clash://install-config?url=`。
 - 修复任务/二维码页无法用鼠标滚轮滚动：仅在任务页开启鼠标上报，并将滚轮与 ↑/↓ 的滚动步长统一为 3 行，同时支持 PgUp/PgDn 翻页。
@@ -23,6 +35,11 @@
 
 ### 变更
 
+- 设备面板用「交换空间」替换「公网 IP」，CPU 仅显示核心数，系统仅显示发行版名称，面板更精简。
+- 运行概况首行改为「服务 / 节点」，版本与内核下移到第二行，常用状态更靠前。
+- 二级菜单每项后补上功能概述，与主菜单的展示风格保持一致。
+- 任务页按键提示去掉 `PgUp/PgDn 翻页` 文案，翻页快捷键仍可用。
+- 生成密码由标准 Base64（24 字符，可能含 `+` `/` `=`）改为 URL-safe Base64，再改为纯字母数字（22 字符），兼容 v2rayN、passwall、passwall2 与 homeproxy。旧实例的密码若含 `+` `/` `=` `-` `_`，部分客户端仍会丢失密码，需重新生成密码或重新部署后生效。
 - 目录名统一小写：`Templates/` → `templates/`，子目录改为 `anytls`、`hysteria2`、`tuic`、`vmess-websocket-tls`、`vless-vision-reality`、`config`。
 - README 主文档改为英文 `README.md`，中文版迁移到 `README_ZH.md`。
 - 新增 `docs/` 面向其他 Agent 与协作者的工程文档，并在根目录提供 `AGENTS.md` 索引。

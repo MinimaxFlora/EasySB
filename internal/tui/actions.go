@@ -172,9 +172,7 @@ func showSubscriptionURL() actionFunc {
 				log(lang.T("sub_need_domain"))
 				return nil
 			}
-			for _, client := range subscribe.Clients {
-				log(clientLabel(lang, client) + ": " + subscribe.ClientURL(cfg, client))
-			}
+			logSubscriptionURLs(cfg, lang, log)
 			return nil
 		})
 	}

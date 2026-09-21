@@ -28,6 +28,31 @@ func clientLabel(lang i18n.Lang, client subscribe.Client) string {
 	}
 }
 
+// clientDescription returns an optional localized note listing the clients a
+// subscription format serves. The v2ray and mihomo documents are each shared by
+// several OpenWrt plugins, so the note names them explicitly.
+func clientDescription(lang i18n.Lang, client subscribe.Client) string {
+	switch client {
+	case subscribe.ClientV2Ray:
+		return lang.T("sub_client_v2ray_desc")
+	case subscribe.ClientMihomo:
+		return lang.T("sub_client_mihomo_desc")
+	default:
+		return ""
+	}
+}
+
+// logSubscriptionURLs prints each client label, its subscription URL and any
+// applicable description note.
+func logSubscriptionURLs(cfg state.Config, lang i18n.Lang, log func(string)) {
+	for _, client := range subscribe.Clients {
+		log(clientLabel(lang, client) + ": " + subscribe.ClientURL(cfg, client))
+		if note := clientDescription(lang, client); note != "" {
+			log("  " + note)
+		}
+	}
+}
+
 // publishSubscription installs nginx when it is missing, renders subscribe.json
 // plus the nginx site, and reports the public subscription URL. It is shared by
 // node deployment and the manual regenerate action.
@@ -50,9 +75,7 @@ func publishSubscription(ctx context.Context, cfg state.Config, log func(string)
 		return err
 	}
 	log(lang.T("svc_nginx_ok"))
-	for _, client := range subscribe.Clients {
-		log(clientLabel(lang, client) + ": " + subscribe.ClientURL(cfg, client))
-	}
+	logSubscriptionURLs(cfg, lang, log)
 	return nil
 }
 

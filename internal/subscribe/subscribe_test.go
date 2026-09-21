@@ -20,15 +20,6 @@ func sample() state.Config {
 	return c
 }
 
-func TestURLUsesHTTPSchemeWithoutCert(t *testing.T) {
-	c := sample()
-	got := URL(c)
-	want := "http://203.0.113.10:8443/subscribe"
-	if got != want {
-		t.Fatalf("URL = %q, want %q", got, want)
-	}
-}
-
 func TestDeepLinkEncodesURL(t *testing.T) {
 	link := DeepLink("http://example.com:8443/subscribe")
 	if !strings.HasPrefix(link, ImportScheme) {
@@ -69,6 +60,10 @@ func TestShareLinks(t *testing.T) {
 	if payload["add"] != "203.0.113.10" || payload["id"] != c.UUID {
 		t.Fatalf("unexpected vmess payload: %v", payload)
 	}
+	// Some parsers read only "security"; v2rayN and mihomo read "scy".
+	if payload["scy"] != "auto" || payload["security"] != "auto" {
+		t.Fatalf("vmess encryption must be set under both keys: %v", payload)
+	}
 }
 
 func TestShareLinksRespectsDisabled(t *testing.T) {
@@ -79,6 +74,21 @@ func TestShareLinksRespectsDisabled(t *testing.T) {
 	links := ShareLinks(c)
 	if len(links) != 1 || !strings.HasPrefix(links[0], "vless://") {
 		t.Fatalf("expected only vless link, got %v", links)
+	}
+}
+
+func TestVLESSShareLinkKeepsCanonicalUUID(t *testing.T) {
+	c := sample()
+	var vless string
+	for _, l := range ShareLinks(c) {
+		if strings.HasPrefix(l, "vless://") {
+			vless = l
+		}
+	}
+	// homeproxy validates the node UUID with the LuCI uuid check and rejects
+	// the 32 character form, so the share link must keep the canonical UUID.
+	if !strings.HasPrefix(vless, "vless://"+c.UUID+"@") {
+		t.Fatalf("vless link should carry the canonical UUID: %s", vless)
 	}
 }
 

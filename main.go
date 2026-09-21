@@ -34,6 +34,7 @@ func versionLine() string {
 func main() {
 	langFlag := flag.String("language", "", "界面语言 / UI language: C (中文) or E (English)")
 	iconsFlag := flag.String("icons", "", "图标模式 / icon mode: on, off")
+	themeFlag := flag.String("theme", "", "配色方案 / color theme: auto, dark, light")
 	showVersion := flag.Bool("version", false, "显示版本 / show version")
 	render := flag.Bool("render", false, "渲染一次仪表盘后退出 / render once and exit")
 	applyFirewall := flag.Bool("apply-firewall", false, "应用端口跳跃防火墙规则 / apply port-hopping firewall rules")
@@ -52,6 +53,7 @@ func main() {
 	}
 
 	applyIcons(*iconsFlag)
+	applyTheme(*themeFlag)
 	lang := i18n.Parse(firstNonEmpty(*langFlag, os.Getenv("EASYSB_LANG")))
 
 	app := tui.New(resolveVersion(), lang)
@@ -89,6 +91,15 @@ func applyIcons(mode string) {
 		_ = os.Setenv("EASYSB_ICONS", "1")
 	case "off", "0", "false", "no":
 		_ = os.Setenv("EASYSB_ICONS", "0")
+	}
+}
+
+// applyTheme forwards the requested palette to the TUI. An empty or unknown
+// value leaves EASYSB_THEME untouched so the TUI keeps auto-detecting.
+func applyTheme(mode string) {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "auto", "dark", "light":
+		_ = os.Setenv("EASYSB_THEME", strings.ToLower(strings.TrimSpace(mode)))
 	}
 }
 

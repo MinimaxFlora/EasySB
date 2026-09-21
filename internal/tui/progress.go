@@ -34,6 +34,7 @@ type progressModel struct {
 	vp     viewport.Model
 	done   bool
 	err    error
+	mouse  bool
 	width  int
 	height int
 }
@@ -44,6 +45,7 @@ func newProgress(title string, fn taskFunc) progressModel {
 		fn:    fn,
 		ch:    make(chan string, 256),
 		errCh: make(chan error, 1),
+		mouse: true,
 	}
 	p.spin = spinner.New(spinner.WithSpinner(spinner.Line))
 	p.vp = viewport.New()
@@ -113,12 +115,27 @@ func (p *progressModel) handle(msg tea.Msg) tea.Cmd {
 	return nil
 }
 
-func (p *progressModel) handleKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
+func (p *progressModel) handleKey(msg tea.KeyPressMsg, lang i18n.Lang) (tea.Cmd, bool) {
 	key := strings.ToLower(msg.String())
+	// Mouse capture is only needed for wheel scrolling; turning it off restores
+	// the terminal's own click-drag text selection.
+	if key == "m" {
+		p.mouse = !p.mouse
+		if p.mouse {
+			p.appendLog(lang.T("mouse_on"))
+		} else {
+			p.appendLog(lang.T("mouse_off"))
+		}
+		return nil, false
+	}
 	if p.done {
 		switch key {
 		case "enter", "esc", "q", "backspace":
 			return nil, true
+		case "c":
+			text := strings.Join(p.logs, "\n")
+			p.appendLog("✓ " + lang.T("copied"))
+			return tea.SetClipboard(text), false
 		case "up", "k":
 			p.vp.ScrollUp(progressScrollStep)
 			return nil, false
@@ -192,9 +209,10 @@ func (p *progressModel) View(w, h int, pal theme.Palette, lang i18n.Lang, ic ico
 
 	header := " " + status + "  " + pal.Dim(theme.Truncate(p.title, width-24))
 	body := theme.Box(lang.T("task_running"), p.vp.View(), width, pal.Border, pal.Primary)
-	footer := pal.Dim(" " + lang.T("task_scroll") + "  " + lang.T("task_press_enter"))
+	plain := " " + lang.T("task_scroll") + "  " + lang.T("task_copy") + "  " + lang.T("task_mouse") + "  " + lang.T("task_press_enter")
 	if !p.done {
-		footer = pal.Dim(" " + lang.T("hint_back") + "  " + lang.T("cancelled"))
+		plain = " " + lang.T("hint_back") + "  " + lang.T("cancelled")
 	}
+	footer := pal.Dim(theme.Truncate(plain, width))
 	return header + "\n\n" + body + "\n" + footer
 }

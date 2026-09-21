@@ -1,10 +1,9 @@
 package tui
 
 import (
-	"context"
 	"fmt"
+	"os"
 	"strings"
-	"time"
 
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
@@ -12,20 +11,18 @@ import (
 
 	"github.com/MinimaxFlora/EasySB/internal/i18n"
 	"github.com/MinimaxFlora/EasySB/internal/icons"
-	"github.com/MinimaxFlora/EasySB/internal/netutil"
 	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
 	"github.com/MinimaxFlora/EasySB/internal/theme"
 )
 
 type statusMsg sysinfo.Status
 
-type publicIPMsg string
-
 type App struct {
 	scriptVersion string
 	lang          i18n.Lang
 	iconSet       icons.Set
 	palette       theme.Palette
+	themeAuto     bool
 	stack         []*menu
 	index         int
 	width         int
@@ -41,18 +38,44 @@ type App struct {
 }
 
 func New(scriptVersion string, lang i18n.Lang) *App {
+	palette, auto := paletteFromEnv()
 	return &App{
 		scriptVersion: scriptVersion,
 		lang:          lang,
 		iconSet:       icons.Detect(),
-		palette:       theme.Dark(),
+		palette:       palette,
+		themeAuto:     auto,
 		stack:         []*menu{buildRoot()},
 		quote:         lang.Hitokoto(),
 	}
 }
 
+// paletteFromEnv picks the starting palette. EASYSB_THEME, set by --theme,
+// forces dark or light; otherwise the palette follows the terminal background
+// detected on startup.
+func paletteFromEnv() (theme.Palette, bool) {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("EASYSB_THEME"))) {
+	case "light":
+		return theme.Light(), false
+	case "dark":
+		return theme.Dark(), false
+	default:
+		return theme.Dark(), true
+	}
+}
+
 func (a *App) Init() tea.Cmd {
-	return tea.Batch(collectStatus(a.scriptVersion), fetchPublicIP())
+	cmds := []tea.Cmd{collectStatus(a.scriptVersion)}
+	if a.themeAuto {
+		cmds = append(cmds, requestBackground())
+	}
+	return tea.Batch(cmds...)
+}
+
+// requestBackground asks the terminal for its background color; the reply
+// drives the light/dark palette choice.
+func requestBackground() tea.Cmd {
+	return func() tea.Msg { return tea.RequestBackgroundColor() }
 }
 
 func (a *App) Snapshot(width, height int) string {
@@ -66,20 +89,6 @@ func (a *App) Snapshot(width, height int) string {
 func collectStatus(version string) tea.Cmd {
 	return func() tea.Msg {
 		return statusMsg(sysinfo.Collect(version))
-	}
-}
-
-// fetchPublicIP probes the public IP in the background so the dashboard never
-// blocks on the network. The result only fills a gap left by the state file.
-func fetchPublicIP() tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		defer cancel()
-		ip, err := netutil.PublicIP(ctx)
-		if err != nil {
-			return publicIPMsg("")
-		}
-		return publicIPMsg(ip)
 	}
 }
 
@@ -233,6 +242,16 @@ func (a *App) handleFormKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.BackgroundColorMsg:
+		// Follow the terminal background unless --theme pinned a palette.
+		if a.themeAuto {
+			if msg.IsDark() {
+				a.palette = theme.Dark()
+			} else {
+				a.palette = theme.Light()
+			}
+		}
+		return a, nil
 	case tea.WindowSizeMsg:
 		a.width, a.height = msg.Width, msg.Height
 		a.sized = true
@@ -246,11 +265,6 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case statusMsg:
 		a.status = sysinfo.Status(msg)
 		a.ready = true
-		return a, nil
-	case publicIPMsg:
-		if a.status.PublicIP == "" && msg != "" {
-			a.status.PublicIP = string(msg)
-		}
 		return a, nil
 	}
 
@@ -294,7 +308,7 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if key == "ctrl+c" {
 			return a, quit()
 		}
-		cmd, done := a.task.handleKey(msg)
+		cmd, done := a.task.handleKey(msg, a.lang)
 		if done {
 			a.task = nil
 		}
@@ -342,7 +356,7 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		a.lang = a.lang.Toggle()
 		a.quote = a.lang.Hitokoto()
 	case "r":
-		return a, tea.Batch(collectStatus(a.scriptVersion), fetchPublicIP())
+		return a, collectStatus(a.scriptVersion)
 	}
 	return a, nil
 }
@@ -367,9 +381,9 @@ func (a *App) View() tea.View {
 	// stacking cannot happen.
 	v.AltScreen = true
 	// Mouse wheel scrolling is enabled only on the task screen (subscription
-	// URLs and QR codes). Keeping it off elsewhere preserves click-drag text
-	// selection in the menus.
-	if a.task != nil {
+	// URLs and QR codes) and only while the user has not released it. Keeping it
+	// off elsewhere, or after `M`, preserves click-drag text selection.
+	if a.task != nil && a.task.mouse {
 		v.MouseMode = tea.MouseModeCellMotion
 	}
 	return v
@@ -492,10 +506,10 @@ func (a *App) dashboard() string {
 			v += 2
 		}
 		if l.overview {
-			v += 3
+			v += len(overviewRows)
 		}
 		if l.device {
-			v += 3
+			v += len(deviceLines)
 		}
 		if l.node {
 			v += 3
@@ -615,7 +629,8 @@ func (a *App) dashboard() string {
 	divider()
 	menuTitle := "  " + a.palette.Bold(a.palette.Primary, a.current().title(a.lang))
 	descCol := a.menuDescColumn(inner, a.menuLabelColumn())
-	items, hidden := a.menuViewport(l.items, inner, descCol)
+	cursorWidth := a.menuCursorWidth(inner)
+	items, hidden := a.menuViewport(l.items, inner, descCol, cursorWidth)
 	if hidden > 0 {
 		menuTitle += a.palette.Dim(fmt.Sprintf("  (+%d)", hidden))
 	}
@@ -631,7 +646,7 @@ func (a *App) dashboard() string {
 	}
 	if nav {
 		blank()
-		add(a.rowLine(a.onNavRow(), a.iconSet.Arrow+" "+a.navLabel(), inner))
+		add(a.rowLine(a.onNavRow(), a.iconSet.Arrow+" "+a.navLabel(), inner, cursorWidth))
 	}
 
 	if l.quote {
@@ -759,7 +774,7 @@ func (a *App) menuDescColumn(inner, labelCol int) int {
 
 // menuViewport renders at most limit menu rows, keeping the cursor visible, and
 // reports how many items are currently out of view.
-func (a *App) menuViewport(limit, inner, descCol int) ([]string, int) {
+func (a *App) menuViewport(limit, inner, descCol, cursorWidth int) ([]string, int) {
 	nodes := a.current().nodes
 	n := len(nodes)
 	if n == 0 {
@@ -784,56 +799,57 @@ func (a *App) menuViewport(limit, inner, descCol int) ([]string, int) {
 	}
 	rows := make([]string, 0, end-top)
 	for i := top; i < end; i++ {
-		rows = append(rows, a.menuRow(i == a.index, nodes[i], inner, descCol))
+		rows = append(rows, a.menuRow(i == a.index, nodes[i], inner, descCol, cursorWidth))
 	}
 	return rows, n - len(rows)
 }
 
+// menuRowParts lays out one entry's static text: the label padded out to the
+// description column (or truncated on compact submenu rows) and the description
+// itself. The selection marker is added by menuRow.
+func (a *App) menuRowParts(n *node, inner, descCol int) (string, string) {
+	label := a.nodeLabel(n)
+	desc := ""
+	if n.desc != nil {
+		desc = n.desc(a.lang)
+	}
+	if desc != "" {
+		gap := descCol - 3 - lipgloss.Width(label)
+		if gap < 2 {
+			gap = 2
+		}
+		descWidth := inner - 3 - lipgloss.Width(label) - gap
+		if descWidth >= 4 {
+			return label + strings.Repeat(" ", gap), theme.Truncate(desc, descWidth)
+		}
+	}
+	return theme.Truncate(label, inner-3), ""
+}
+
+// menuCursorWidth returns the length every selection bar is padded to. The bar
+// spans the full inner width so the cursor keeps one size while moving.
+func (a *App) menuCursorWidth(inner int) int {
+	return inner
+}
+
 // menuRow renders one menu entry. The main menu pads its labels into a column
 // and follows them with a short one-line description; submenus stay compact.
-func (a *App) menuRow(selected bool, n *node, inner, descCol int) string {
+func (a *App) menuRow(selected bool, n *node, inner, descCol, cursorWidth int) string {
 	marker := "  "
 	if selected {
 		marker = "▌ "
 	}
-	label := a.nodeLabel(n)
-
-	desc := ""
-	if a.current().id == "root" && n.desc != nil {
-		desc = n.desc(a.lang)
+	head, desc := a.menuRowParts(n, inner, descCol)
+	line := " " + marker + head
+	if selected {
+		// The bar spans the whole row and is padded to the longest entry, so the
+		// cursor does not change length as it moves through the menu.
+		return a.palette.SelectedRow(theme.Pad(line+desc, cursorWidth))
 	}
-
-	compact := func() string {
-		line := " " + marker + theme.Truncate(label, inner-3)
-		if selected {
-			return a.palette.SelectedRow(theme.Pad(line, inner))
-		}
+	if desc == "" {
 		return a.palette.Bold(a.palette.Text, line)
 	}
-
-	if desc == "" {
-		return compact()
-	}
-
-	gap := descCol - 3 - lipgloss.Width(label)
-	if gap < 2 {
-		gap = 2
-	}
-	descWidth := inner - 3 - lipgloss.Width(label) - gap
-	if descWidth < 4 {
-		// No room for a description next to this label; drop to the compact form
-		// so the row never spills past the panel border.
-		return compact()
-	}
-	line := " " + marker + label + strings.Repeat(" ", gap)
-	d := theme.Truncate(desc, descWidth)
-	if selected {
-		// The cursor bar covers the description too: on the root menu the
-		// label alone used to be highlighted, which made the selection look
-		// like it stopped at the label column.
-		return a.palette.SelectedRow(line + d)
-	}
-	return a.palette.Bold(a.palette.Text, line) + a.palette.Dim(d)
+	return a.palette.Bold(a.palette.Text, line) + a.palette.Dim(desc)
 }
 
 // nodeLabel prefixes a menu entry with its icon, falling back to a bullet for
@@ -845,14 +861,14 @@ func (a *App) nodeLabel(n *node) string {
 	return a.iconSet.Bullet + " " + n.label(a.lang)
 }
 
-func (a *App) rowLine(selected bool, label string, inner int) string {
+func (a *App) rowLine(selected bool, label string, inner, cursorWidth int) string {
 	marker := "  "
 	if selected {
 		marker = "▌ "
 	}
 	line := " " + marker + theme.Truncate(label, inner-3)
 	if selected {
-		return a.palette.SelectedRow(theme.Pad(line, inner))
+		return a.palette.SelectedRow(theme.Pad(line, cursorWidth))
 	}
 	return a.palette.Value(line)
 }

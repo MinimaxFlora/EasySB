@@ -1,7 +1,9 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
+	"time"
 
 	"charm.land/lipgloss/v2"
 
@@ -30,8 +32,8 @@ func (a *App) sectionTitle(key string) string {
 	return "  " + a.palette.Bold(a.palette.Primary, a.lang.T(key))
 }
 
-// overviewRows renders the runtime overview: version and core, service and node
-// state, then domain and listening ports.
+// overviewRows renders the runtime overview: service and node state, version
+// and core, then domain and listening ports.
 func (a *App) overviewRows(width int) []string {
 	s := a.status
 
@@ -66,11 +68,11 @@ func (a *App) overviewRows(width int) []string {
 	versionStyle := func(v string) string { return a.palette.Colored(a.palette.OK, v) }
 
 	return []string{
-		a.styledTwoCols(width, a.lang.T("ov_version"), a.scriptVersion, versionStyle,
-			a.lang.T("ov_core"), corePlain, coreStyle),
 		a.styledTwoCols(width,
 			a.lang.T("ov_service"), "● "+a.lang.T(svcKey), svcStyle,
 			a.lang.T("ov_node"), "● "+a.lang.T(nodeKey), nodeStyle),
+		a.styledTwoCols(width, a.lang.T("ov_version"), a.scriptVersion, versionStyle,
+			a.lang.T("ov_core"), corePlain, coreStyle),
 		a.styledTwoCols(width, a.lang.T("status_domain"), a.panelValue(s.Domain), a.palette.Value,
 			a.lang.T("status_ports"), a.panelValue(enabledPorts(s.Ports)), a.palette.Value),
 	}
@@ -92,8 +94,8 @@ func (a *App) stateValue(text string, ok, warn, known bool) string {
 	return a.palette.State(text, ok, warn)
 }
 
-// deviceSection renders the host description: public IP, hostname and OS on the
-// left, architecture, kernel and timezone on the right.
+// deviceSection renders the host description: local IPv4/IPv6, swap and uptime,
+// CPU and load, memory and disk, then hostname, kernel, OS and timezone.
 func (a *App) deviceSection(width int) []string {
 	s := a.status
 	if !a.ready {
@@ -101,10 +103,72 @@ func (a *App) deviceSection(width int) []string {
 	}
 	return []string{
 		a.sectionTitle("panel_device"),
-		a.twoCols(width, "device_public_ip", s.PublicIP, "device_arch", s.Arch),
+		a.twoCols(width, "device_local_ipv4", s.LocalIPv4, "device_local_ipv6", s.LocalIPv6),
+		a.twoCols(width, "device_swap", usageCell(s.SwapTotal, s.SwapFree), "device_uptime", humanDuration(s.Uptime)),
+		a.twoCols(width, "device_cpu", a.cpuSummary(), "device_load", s.LoadAvg),
+		a.twoCols(width, "device_memory", usageCell(s.MemTotal, s.MemAvail), "device_disk", usageCell(s.DiskTotal, s.DiskFree)),
 		a.twoCols(width, "device_host", s.Hostname, "device_kernel", s.Kernel),
 		a.twoCols(width, "device_os", s.OS, "device_timezone", s.Timezone),
 	}
+}
+
+// cpuSummary renders the processor core count, e.g. "8 cores".
+func (a *App) cpuSummary() string {
+	if a.status.CPUCores <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d %s", a.status.CPUCores, a.lang.T("unit_cores"))
+}
+
+// usageCell formats a used/total pair with its usage percentage, or an empty
+// string when the total is unknown.
+func usageCell(total, free uint64) string {
+	if total == 0 {
+		return ""
+	}
+	if free > total {
+		free = total
+	}
+	used := total - free
+	return fmt.Sprintf("%s / %s (%d%%)", humanBytes(used), humanBytes(total), used*100/total)
+}
+
+// humanBytes renders a byte count with a binary unit and one decimal.
+func humanBytes(n uint64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	units := []string{"KiB", "MiB", "GiB", "TiB", "PiB"}
+	value := float64(n)
+	i := -1
+	for value >= unit && i < len(units)-1 {
+		value /= unit
+		i++
+	}
+	return fmt.Sprintf("%.1f %s", value, units[i])
+}
+
+// humanDuration renders an uptime as "3d 4h 5m", dropping leading units that
+// are zero. Anything below a minute reads as "0m".
+func humanDuration(d time.Duration) string {
+	if d <= 0 {
+		return ""
+	}
+	days := int(d / (24 * time.Hour))
+	d -= time.Duration(days) * 24 * time.Hour
+	hours := int(d / time.Hour)
+	d -= time.Duration(hours) * time.Hour
+	mins := int(d / time.Minute)
+	var b strings.Builder
+	if days > 0 {
+		fmt.Fprintf(&b, "%dd ", days)
+	}
+	if days > 0 || hours > 0 {
+		fmt.Fprintf(&b, "%dh ", hours)
+	}
+	fmt.Fprintf(&b, "%dm", mins)
+	return b.String()
 }
 
 // nodeSection renders every node parameter, shown inside node management.

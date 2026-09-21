@@ -176,19 +176,6 @@ func (c Config) AnyEnabled() bool {
 	return false
 }
 
-// NeedsDomain reports whether any enabled protocol requires a certificate.
-func (c Config) NeedsDomain() bool {
-	for _, k := range Keys {
-		if k == ProtoVLESSReality {
-			continue
-		}
-		if c.Enabled[k] {
-			return true
-		}
-	}
-	return false
-}
-
 // Host returns the public host used by subscriptions and share links.
 func (c Config) Host() string {
 	if c.Domain != "" {
