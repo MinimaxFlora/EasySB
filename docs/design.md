@@ -46,8 +46,12 @@ The TUI calls the same package functions.
 
 ## Dark, quiet terminal UI
 
-The palette is dark with cyan as the primary accent. The UI uses the alternate
-screen, one border, and one accent per state (ok / warn / error). Spacing is
+The default palette is dark with cyan as the primary accent. On startup the TUI
+asks the terminal for its background color and switches to a darkened light
+palette when the background is light, so the near-white body text of the dark
+palette never lands on white; `--theme` (or `EASYSB_THEME`) forces `dark` or
+`light`. The UI uses the alternate screen, one border, and one accent per state
+(ok / warn / error). Spacing is
 explicit: dividers and menu items each get exactly one blank line, and the
 dashboard drops low-priority panels before it overflows a short terminal.
 

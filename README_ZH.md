@@ -129,6 +129,8 @@ sb --language E
 | 五协议部署 | 五协议共享一个 UUID 与一个密码，安装时统一生成，端口逐一编排 |
 | 内核版本管理 | 正式版 stable 与 alpha 内测版随时安装、替换、卸载，替换保留现有配置 |
 | 版本面板 | 菜单顶部常驻脚本版本、本地内核、正式版与 alpha 版，并标注可更新状态 |
+| 设备面板 | 本机 IPv4/IPv6、公网 IP、运行时间、CPU 与负载、内存、磁盘、主机、内核、系统与时区 |
+| 复制与鼠标 | 任务页按 `C` 将日志复制到系统剪贴板（OSC52），按 `M` 释放鼠标以拖拽选择文本 |
 | 证书管理 | acme.sh `--standalone` 申请与续期，支持列表、切换激活、删除，自动处理 80 / 443 占用 |
 | 订阅生成 | 渲染 `templates/config/tun-fakeip.json`，输出订阅文件、二维码与分享链接，nginx 静态托管 |
 | 端口跳跃 | Hysteria2 默认 `2080:3000`，自动下发 iptables / nftables DNAT，并生成开机恢复单元 |
@@ -163,6 +165,7 @@ sb --language E
 | :--- | :--- |
 | `--language C\|E` | 预设界面语言后进入菜单 |
 | `--icons on\|off` | 覆盖 Nerd Font 图标检测结果 |
+| `--theme auto\|dark\|light` | 覆盖终端背景检测（默认 `auto`，亮色终端自动换用浅色配色） |
 | `--apply-firewall` | 仅恢复端口跳跃规则，供开机单元调用 |
 | `--render --width N --height N` | 渲染一次仪表盘后退出（调试用） |
 | `--version` | 显示版本与构建短哈希 |
@@ -263,8 +266,8 @@ go test ./...
 # 无交互渲染一次仪表盘（用于预览 / 截图 / 排错）
 ./easysb --render --width 100 --height 34
 
-# 切换语言与图标模式
-./easysb --language E --icons off
+# 切换语言、图标模式与配色
+./easysb --language E --icons off --theme dark
 ```
 
 `internal/tui/` 是 TUI 主界面与交互逻辑，`internal/` 下其余包各自负责内核、证书、服务、订阅、防火墙等模块：
@@ -279,8 +282,8 @@ go test ./...
 # 无交互渲染一次仪表盘（用于预览 / 截图 / 排错）
 ./easysb --render --width 100 --height 34
 
-# 切换语言与图标模式
-./easysb --language E --icons off
+# 切换语言、图标模式与配色
+./easysb --language E --icons off --theme dark
 ```
 
 ---

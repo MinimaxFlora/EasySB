@@ -4,11 +4,14 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"net"
 	"os"
 	"os/exec"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -49,6 +52,23 @@ type Status struct {
 	Kernel   string
 	Timezone string
 	PublicIP string
+
+	// LocalIPv4 and LocalIPv6 are the host's own addresses on its network
+	// interfaces, kept apart so both families are visible at a glance.
+	LocalIPv4 string
+	LocalIPv6 string
+
+	CPUModel string
+	CPUCores int
+	LoadAvg  string
+
+	MemTotal uint64
+	MemAvail uint64
+
+	DiskTotal uint64
+	DiskFree  uint64
+
+	Uptime time.Duration
 }
 
 type PortInfo struct {
@@ -115,7 +135,8 @@ func portKey(proto string) string {
 }
 
 // collectDevice fills the host description shown on the dashboard: hostname,
-// distribution name, CPU architecture, kernel release and total memory.
+// distribution name, CPU architecture, kernel release, timezone, local
+// addresses, CPU, memory, disk and uptime.
 func collectDevice(st *Status) {
 	if h, err := os.Hostname(); err == nil {
 		st.Hostname = strings.TrimSpace(h)
@@ -124,6 +145,179 @@ func collectDevice(st *Status) {
 	st.Arch = runtime.GOARCH
 	st.Kernel = kernelRelease()
 	st.Timezone = timezone()
+	st.LocalIPv4, st.LocalIPv6 = localIPs()
+	st.CPUModel, st.CPUCores = cpuInfo()
+	st.LoadAvg = loadAvg()
+	st.MemTotal, st.MemAvail = memory()
+	st.DiskTotal, st.DiskFree = diskUsage("/")
+	st.Uptime = uptime()
+}
+
+// localIPs returns the first usable IPv4 and IPv6 address on an up, non-loopback
+// interface. A globally routable IPv6 address wins over a unique-local one.
+func localIPs() (string, string) {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return "", ""
+	}
+	var v4, v6, v6Global string
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			ipnet, ok := addr.(*net.IPNet)
+			if !ok {
+				continue
+			}
+			ip := ipnet.IP
+			if ip.IsLoopback() || ip.IsLinkLocalUnicast() {
+				continue
+			}
+			if ip4 := ip.To4(); ip4 != nil {
+				if v4 == "" {
+					v4 = ip4.String()
+				}
+				continue
+			}
+			if v6 == "" {
+				v6 = ip.String()
+			}
+			if v6Global == "" && !ip.IsPrivate() {
+				v6Global = ip.String()
+			}
+		}
+	}
+	if v6Global != "" {
+		v6 = v6Global
+	}
+	return v4, v6
+}
+
+func cpuInfo() (string, int) {
+	model := ""
+	if data, err := os.ReadFile("/proc/cpuinfo"); err == nil {
+		model = parseCPUModel(data)
+	}
+	return model, runtime.NumCPU()
+}
+
+// parseCPUModel reads the human-readable processor name from /proc/cpuinfo.
+// x86 uses "model name"; ARM boards use "Model" or "Hardware". The lowercase
+// x86 "model" field is a number, so it is deliberately ignored.
+func parseCPUModel(data []byte) string {
+	for _, line := range strings.Split(string(data), "\n") {
+		k, v, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		switch strings.TrimSpace(k) {
+		case "model name", "Model", "Hardware":
+			if model := strings.TrimSpace(v); model != "" {
+				return model
+			}
+		}
+	}
+	return ""
+}
+
+func loadAvg() string {
+	data, err := os.ReadFile("/proc/loadavg")
+	if err != nil {
+		return ""
+	}
+	return parseLoadAvg(data)
+}
+
+func parseLoadAvg(data []byte) string {
+	fields := strings.Fields(string(data))
+	if len(fields) < 3 {
+		return ""
+	}
+	out := make([]string, 0, 3)
+	for _, f := range fields[:3] {
+		v, err := strconv.ParseFloat(f, 64)
+		if err != nil {
+			return ""
+		}
+		out = append(out, strconv.FormatFloat(v, 'f', 2, 64))
+	}
+	return strings.Join(out, " ")
+}
+
+func memory() (uint64, uint64) {
+	data, err := os.ReadFile("/proc/meminfo")
+	if err != nil {
+		return 0, 0
+	}
+	return parseMeminfo(data)
+}
+
+// parseMeminfo returns total and available memory in bytes. MemAvailable is
+// preferred; MemFree is the fallback on kernels that predate it.
+func parseMeminfo(data []byte) (uint64, uint64) {
+	var total, avail uint64
+	for _, line := range strings.Split(string(data), "\n") {
+		k, v, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		switch strings.TrimSpace(k) {
+		case "MemTotal":
+			total = parseKB(v)
+		case "MemAvailable":
+			avail = parseKB(v)
+		case "MemFree":
+			if avail == 0 {
+				avail = parseKB(v)
+			}
+		}
+	}
+	return total, avail
+}
+
+func parseKB(s string) uint64 {
+	fields := strings.Fields(strings.TrimSpace(s))
+	if len(fields) == 0 {
+		return 0
+	}
+	n, err := strconv.ParseUint(fields[0], 10, 64)
+	if err != nil {
+		return 0
+	}
+	return n * 1024
+}
+
+func diskUsage(path string) (uint64, uint64) {
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(path, &st); err != nil {
+		return 0, 0
+	}
+	return st.Blocks * uint64(st.Bsize), st.Bavail * uint64(st.Bsize)
+}
+
+func uptime() time.Duration {
+	data, err := os.ReadFile("/proc/uptime")
+	if err != nil {
+		return 0
+	}
+	return parseUptime(data)
+}
+
+func parseUptime(data []byte) time.Duration {
+	fields := strings.Fields(string(data))
+	if len(fields) == 0 {
+		return 0
+	}
+	secs, err := strconv.ParseFloat(fields[0], 64)
+	if err != nil || secs <= 0 {
+		return 0
+	}
+	return time.Duration(secs * float64(time.Second))
 }
 
 func osName() string {

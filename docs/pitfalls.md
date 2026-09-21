@@ -40,7 +40,12 @@ Traps already hit in this repository. Each entry names the symptom and the fix.
   `anytls://pass@host:port?query` makes clients reject the link; the spec form is
   `anytls://pass@host:port/?query`. Credentials must also be percent-encoded
   (`url.User` / `url.UserPassword`), otherwise an `@` or `/` in a generated
-  password truncates the URI.
+  password truncates the URI. Generated passwords avoid this entirely by using
+  URL-safe base64 (`secret.Password`, alphabet `[A-Za-z0-9_-]`, no padding), so
+  there is nothing to escape. That matters for clients which reject escaped
+  userinfo: OpenWrt's homeproxy drops the whole credential when it sees a `%`,
+  which silently stripped the password from every node built from a standard
+  base64 password.
 - **Template actions in comments are still expanded.** `text/template` executes
   `{{ ... }}` even inside YAML/JSON comments. A `{{ .Proxies }}` in a mihomo
   header comment injects uncommented proxy entries above the document root and
@@ -92,5 +97,11 @@ Traps already hit in this repository. Each entry names the symptom and the fix.
   Use it to catch overflow and alignment regressions.
 - **Icons assume a Nerd Font.** Users without one set `EASYSB_ICONS=0` or pass
   `--icons off`. Never make layout depend on icons being present.
+- **Mouse reporting steals click-drag selection.** While the task/QR screen
+  enables `MouseModeCellMotion` for wheel scrolling, the terminal stops
+  selecting text on drag, so users cannot copy a subscription URL the usual way.
+  The screen therefore offers `C` (OSC52 clipboard copy of the whole log) and
+  `M` (release the mouse, restoring native selection). If you add mouse capture
+  anywhere else, provide the same escape hatch.
 - **After `git filter-branch`, `refs/original/*` remains.** It is a local backup
   of the pre-rewrite refs. Leave it or clean it deliberately; do not push it.

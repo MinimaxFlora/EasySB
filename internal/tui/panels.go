@@ -1,7 +1,9 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
+	"time"
 
 	"charm.land/lipgloss/v2"
 
@@ -92,19 +94,98 @@ func (a *App) stateValue(text string, ok, warn, known bool) string {
 	return a.palette.State(text, ok, warn)
 }
 
-// deviceSection renders the host description: public IP, hostname and OS on the
-// left, architecture, kernel and timezone on the right.
+// deviceSection renders the host description: local IPv4/IPv6, public IP and
+// uptime, CPU and load, memory and disk, then hostname, kernel, OS and timezone.
 func (a *App) deviceSection(width int) []string {
 	s := a.status
 	if !a.ready {
 		return []string{"  " + a.palette.Dim(a.lang.T("loading")+"…")}
 	}
+	osText := s.OS
+	switch {
+	case s.Arch != "" && osText != "":
+		osText += " · " + s.Arch
+	case s.Arch != "":
+		osText = s.Arch
+	}
 	return []string{
 		a.sectionTitle("panel_device"),
-		a.twoCols(width, "device_public_ip", s.PublicIP, "device_arch", s.Arch),
+		a.twoCols(width, "device_local_ipv4", s.LocalIPv4, "device_local_ipv6", s.LocalIPv6),
+		a.twoCols(width, "device_public_ip", s.PublicIP, "device_uptime", humanDuration(s.Uptime)),
+		a.twoCols(width, "device_cpu", a.cpuSummary(), "device_load", s.LoadAvg),
+		a.twoCols(width, "device_memory", usageCell(s.MemTotal, s.MemAvail), "device_disk", usageCell(s.DiskTotal, s.DiskFree)),
 		a.twoCols(width, "device_host", s.Hostname, "device_kernel", s.Kernel),
-		a.twoCols(width, "device_os", s.OS, "device_timezone", s.Timezone),
+		a.twoCols(width, "device_os", osText, "device_timezone", s.Timezone),
 	}
+}
+
+// cpuSummary combines the core count with the processor name, e.g.
+// "8 cores · AMD Ryzen 7 5800X". The model is dropped when it is unknown.
+func (a *App) cpuSummary() string {
+	s := a.status
+	cores := ""
+	if s.CPUCores > 0 {
+		cores = fmt.Sprintf("%d %s", s.CPUCores, a.lang.T("unit_cores"))
+	}
+	switch {
+	case s.CPUModel == "":
+		return cores
+	case cores == "":
+		return s.CPUModel
+	default:
+		return cores + " · " + s.CPUModel
+	}
+}
+
+// usageCell formats a used/total pair with its usage percentage, or an empty
+// string when the total is unknown.
+func usageCell(total, free uint64) string {
+	if total == 0 {
+		return ""
+	}
+	if free > total {
+		free = total
+	}
+	used := total - free
+	return fmt.Sprintf("%s / %s (%d%%)", humanBytes(used), humanBytes(total), used*100/total)
+}
+
+// humanBytes renders a byte count with a binary unit and one decimal.
+func humanBytes(n uint64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	units := []string{"KiB", "MiB", "GiB", "TiB", "PiB"}
+	value := float64(n)
+	i := -1
+	for value >= unit && i < len(units)-1 {
+		value /= unit
+		i++
+	}
+	return fmt.Sprintf("%.1f %s", value, units[i])
+}
+
+// humanDuration renders an uptime as "3d 4h 5m", dropping leading units that
+// are zero. Anything below a minute reads as "0m".
+func humanDuration(d time.Duration) string {
+	if d <= 0 {
+		return ""
+	}
+	days := int(d / (24 * time.Hour))
+	d -= time.Duration(days) * 24 * time.Hour
+	hours := int(d / time.Hour)
+	d -= time.Duration(hours) * time.Hour
+	mins := int(d / time.Minute)
+	var b strings.Builder
+	if days > 0 {
+		fmt.Fprintf(&b, "%dd ", days)
+	}
+	if days > 0 || hours > 0 {
+		fmt.Fprintf(&b, "%dh ", hours)
+	}
+	fmt.Fprintf(&b, "%dm", mins)
+	return b.String()
 }
 
 // nodeSection renders every node parameter, shown inside node management.

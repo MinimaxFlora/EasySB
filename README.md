@@ -125,6 +125,8 @@ Supports Debian / Ubuntu (systemd) and Alpine (OpenRC); run as root.
 | 5-in-1 deployment | One shared UUID and password, generated at install; ports allocated one by one |
 | Core management | Install, replace or remove stable and alpha builds; replace keeps the existing config |
 | Version panel | Script version, local core, stable and alpha versions on top of the menu with update markers |
+| Device panel | Local IPv4/IPv6, public IP, uptime, CPU and load, memory, disk, host, kernel, OS and timezone |
+| Copy and mouse | On task screens `C` copies the log to the system clipboard (OSC52) and `M` releases the mouse for click-drag selection |
 | Certificates | acme.sh `--standalone` issue and renew, list, switch active, remove; handles 80 / 443 occupancy |
 | Subscription | Renders `templates/config/tun-fakeip.json`, outputs files, QR codes and share links, hosted by nginx |
 | Port hopping | Hysteria2 defaults to `2080:3000`, auto-applies iptables / nftables DNAT and a boot restore unit |
@@ -159,6 +161,7 @@ Files: server config `/etc/sing-box/config.json`, state `/etc/sing-box/easysb.co
 | :--- | :--- |
 | `--language C\|E` | Preset the UI language, then open the menu |
 | `--icons on\|off` | Override the Nerd Font icon detection result |
+| `--theme auto\|dark\|light` | Override the terminal background detection (default `auto`) |
 | `--apply-firewall` | Restore port-hopping rules only, used by the boot unit |
 | `--render --width N --height N` | Render the dashboard once and exit (debug) |
 | `--version` | Print the version and build hash |
@@ -259,8 +262,8 @@ go test ./...
 # Render the dashboard once without interaction (preview / screenshot / debug)
 ./easysb --render --width 100 --height 34
 
-# Switch language and icon mode
-./easysb --language E --icons off
+# Switch language, icon mode and theme
+./easysb --language E --icons off --theme dark
 ```
 
 `internal/tui/` holds the TUI shell and interaction logic; the other packages under `internal/` cover the core, certificate, service, subscription and firewall modules:
@@ -275,8 +278,8 @@ go test ./...
 # Render the dashboard once without interaction (preview / screenshot / debug)
 ./easysb --render --width 100 --height 34
 
-# Switch language and icon mode
-./easysb --language E --icons off
+# Switch language, icon mode and theme
+./easysb --language E --icons off --theme dark
 ```
 
 ---

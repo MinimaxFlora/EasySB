@@ -60,13 +60,13 @@ editing.
 | `internal/subscribe` | subscription URLs, per-protocol share links, QR payloads, sing-box JSON plus mihomo YAML and v2rayN base64 renders |
 | `internal/secret` | random UUID / password / Reality keypair generation |
 | `internal/service` | systemd and OpenRC detection, install, start/stop, status |
-| `internal/sysinfo` | host/device/core/service status collected for the dashboard |
-| `internal/netutil` | small network helpers (public IP, host resolution) |
+| `internal/sysinfo` | host/device/core/service status for the dashboard: local IPv4/IPv6, CPU, load, memory, disk and uptime |
+| `internal/netutil` | small network helpers (public IPv4-first IP detection, host resolution) |
 | `internal/uninstall` | remove the deployment while keeping acme certificates |
 | `internal/update` | self-update from the GitHub release tag `v<version>` |
 | `internal/i18n` | `C` / `E` bilingual string table |
 | `internal/icons` | Nerd Font icon sets, disabled with `EASYSB_ICONS=0` |
-| `internal/theme` | color palette and frame/column layout helpers |
+| `internal/theme` | dark / light color palettes and frame/column layout helpers |
 
 ## Program flow
 

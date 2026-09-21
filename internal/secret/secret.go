@@ -8,13 +8,17 @@ import (
 	"io"
 )
 
-// Password returns a base64 encoded 16 byte random password (24 chars).
+// Password returns a URL-safe base64 encoded 16 byte random password (22
+// chars). The alphabet is [A-Za-z0-9_-] with no padding so the value needs no
+// percent-encoding inside a share link; some clients (for example OpenWrt's
+// homeproxy) reject userinfo that contains escaped characters and would drop
+// the password from the node.
 func Password() string {
 	b := make([]byte, 16)
 	if _, err := io.ReadFull(rand.Reader, b); err != nil {
 		return ""
 	}
-	return base64.StdEncoding.EncodeToString(b)
+	return base64.RawURLEncoding.EncodeToString(b)
 }
 
 // ShortID returns an 8 character hex Reality short id.

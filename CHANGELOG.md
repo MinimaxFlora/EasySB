@@ -8,6 +8,9 @@
 
 ### 新增
 
+- 设备信息面板扩充：本机 IPv4 与 IPv6 分列显示，新增运行时间、CPU 型号与核心数、系统负载、内存与磁盘占用。
+- 任务/二维码页新增复制与鼠标控制：按 `C` 通过 OSC52 将整段日志复制到系统剪贴板，按 `M` 释放鼠标以便拖拽选择文本。
+- 新增 `--theme auto|dark|light`（环境变量 `EASYSB_THEME`）：启动时自动探测终端背景色，亮色背景自动切换为浅色配色，也可手动强制指定，避免在白色终端下界面几乎不可读。
 - 订阅支持多客户端：新增 mihomo / Clash Meta 完整配置（`mihomo.yaml`）与 v2rayN 分享链接文档（`v2ray.txt`），nginx 分别以 `/singbox/<uuid>`、`/mihomo/<uuid>`、`/v2ray/<uuid>` 端点提供，旧 `/subscribe` 路径保留。
 - 订阅二维码按客户端分别生成导入链接：sing-box 使用 `sing-box://import-remote-profile?url=`，mihomo 与 v2rayN 使用纯订阅地址（Clash 系客户端的扫码导入会把二维码内容直接当作订阅 URL 抓取，`clash://install-config?url=` 仅适用于系统级深链点击）。
 - 新增 `templates/config/mihomo.yaml` 可读样例，与内嵌模板 `internal/subscribe/mihomo.yaml` 保持同步。
@@ -15,6 +18,10 @@
 
 ### 修复
 
+- 修复任务页启用鼠标捕获后无法用鼠标选中并复制订阅链接的问题：现可用 `C` 直接复制，或按 `M` 释放鼠标后原生选择。
+- 修复公网 IP 探测在双栈主机上返回 IPv6 的问题：探测端点改为优先使用仅 IPv4 的接口。
+- 修复 OpenWrt homeproxy 等客户端订阅后节点丢失密码：homeproxy 会丢弃含百分号转义的 userinfo，生成密码现改用 URL-safe Base64（字母表 `[A-Za-z0-9_-]`，无 `+` `/` `=`，无需转义）。
+- 修复主菜单选中行光标长度随行内描述长短变化的问题：选中条现在统一填充到当前菜单最长行的宽度。
 - 修复分享链接生成失败：AnyTLS 与 Hysteria2 URI 在查询串前缺少 `/`，且密码未做百分号编码，导致客户端拒绝导入。
 - 修复 mihomo 二维码无法被 FlClash 等 Clash 系客户端识别：二维码改为纯订阅地址，不再包装 `clash://install-config?url=`。
 - 修复任务/二维码页无法用鼠标滚轮滚动：仅在任务页开启鼠标上报，并将滚轮与 ↑/↓ 的滚动步长统一为 3 行，同时支持 PgUp/PgDn 翻页。
@@ -23,6 +30,7 @@
 
 ### 变更
 
+- 生成密码由标准 Base64（24 字符，可能含 `+` `/` `=`）改为 URL-safe Base64（22 字符）。旧实例的密码若含这些字符，部分客户端仍会拒绝导入，需重新生成密码或重新部署后生效。
 - 目录名统一小写：`Templates/` → `templates/`，子目录改为 `anytls`、`hysteria2`、`tuic`、`vmess-websocket-tls`、`vless-vision-reality`、`config`。
 - README 主文档改为英文 `README.md`，中文版迁移到 `README_ZH.md`。
 - 新增 `docs/` 面向其他 Agent 与协作者的工程文档，并在根目录提供 `AGENTS.md` 索引。
