@@ -7,6 +7,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 
+	"github.com/MinimaxFlora/EasySB/internal/i18n"
 	"github.com/MinimaxFlora/EasySB/internal/state"
 	"github.com/MinimaxFlora/EasySB/internal/theme"
 )
@@ -15,10 +16,109 @@ import (
 // the two columns of a two-column row aligned.
 const keyColumn = 13
 
-// hintBox renders the key hints as their own box below the dashboard.
-func (a *App) hintBox(width int) []string {
-	box := theme.Box(a.lang.T("panel_hints"), a.statusBar(width-4), width, a.palette.Border, a.palette.Primary)
+// hintRows is the height of the pinned hint box, or zero when the terminal is
+// too short to spare the rows. Every screen shares this so the box keeps one
+// position and size.
+func hintRows(h int) int {
+	if h >= 14 {
+		return 3
+	}
+	return 0
+}
+
+// hintBox renders the key hints as their own box below the frame. hint is the
+// already-styled left side; the language code stays pinned to the right.
+func (a *App) hintBox(hint string, width int) []string {
+	return hintBoxFor(a.palette, a.lang, hint, width)
+}
+
+// hintLine pads an already-styled hint to width and pins the language code to
+// the right edge, so every screen shows it at the same place.
+func (a *App) hintLine(hint string, width int) string {
+	return hintLineFor(a.palette, a.lang, hint, width)
+}
+
+// hintLineFor is hintLine for callers that only hold a palette and language.
+func hintLineFor(pal theme.Palette, lang i18n.Lang, hint string, width int) string {
+	right := pal.Label(lang.Code() + " ")
+	rightW := lipgloss.Width(right)
+	availLeft := width - rightW - 1
+	if availLeft < 1 {
+		availLeft = 1
+	}
+	left := " " + theme.Truncate(hint, maxInt(0, availLeft-1))
+	gap := width - lipgloss.Width(left) - rightW
+	if gap < 1 {
+		gap = 1
+	}
+	return left + strings.Repeat(" ", gap) + right
+}
+
+// hintBoxFor is hintBox for callers that only hold a palette and language.
+func hintBoxFor(pal theme.Palette, lang i18n.Lang, hint string, width int) []string {
+	box := theme.Box(lang.T("panel_hints"), hintLineFor(pal, lang, hint, width-4), width, pal.Border, pal.Primary)
 	return strings.Split(box, "\n")
+}
+
+// panelWidth is the shared panel width: the terminal width capped at 100 so
+// every screen lines up with the main dashboard. It never exceeds the terminal
+// width, so a narrow SSH window keeps both borders on screen.
+func panelWidth(w int) int {
+	if w <= 0 {
+		w = 96
+	}
+	if w > 100 {
+		w = 100
+	}
+	if w < 8 {
+		w = 8
+	}
+	return w
+}
+
+// panelBodyHeight is the number of inner content rows shared by every screen:
+// the terminal height minus the borders and the bottom hints (box or line).
+func panelBodyHeight(h int) int {
+	chrome := hintRows(h)
+	if chrome == 0 {
+		chrome = 1
+	}
+	b := h - chrome - 2
+	if b < 1 {
+		b = 1
+	}
+	return b
+}
+
+// framePanel draws inner body lines inside the shared panel frame and pins the
+// hint to the bottom. The body is clipped or padded to the frame's fixed
+// height, so the panel is exactly the same size as the main dashboard.
+func framePanel(pal theme.Palette, lang i18n.Lang, w, h int, body []string, hint string) string {
+	if h < 3 {
+		h = 3
+	}
+	rows := hintRows(h)
+	bodyH := panelBodyHeight(h)
+	out := make([]string, 0, h)
+	out = append(out, theme.TopRule(w, pal.Border))
+	for i := 0; i < bodyH; i++ {
+		s := ""
+		if i < len(body) {
+			s = body[i]
+		}
+		out = append(out, theme.FrameLine(s, w, pal.Border))
+	}
+	out = append(out, theme.BottomRule(w, pal.Border))
+	if rows > 0 {
+		out = append(out, hintBoxFor(pal, lang, hint, w)...)
+	} else {
+		out = append(out, " "+theme.Truncate(hint, maxInt(0, w-2)))
+	}
+	// Degenerate terminals: never emit more rows than the window can show.
+	if len(out) > h {
+		out = out[:h]
+	}
+	return strings.Join(out, "\n")
 }
 
 func (a *App) panelValue(v string) string {

@@ -131,7 +131,7 @@ Supports Debian / Ubuntu (systemd) and Alpine (OpenRC); run as root.
 | Core management | Install, replace or remove stable and alpha builds; replace keeps the existing config |
 | Version panel | Script version, local core, stable and alpha versions on top of the menu with update markers |
 | Device panel | Local IPv4/IPv6, swap, uptime, CPU cores and load, memory, disk, host, kernel, OS and timezone |
-| Copy and mouse | On task screens `C` copies the log to the system clipboard (OSC52) and `M` releases the mouse for click-drag selection |
+| Copy links | Subscription and share-link results render as a card grid inside the same fixed panel as the main menu. Each card is titled by subscription name (sing-box / mihomo / Base64) and shows only `host:port`; the full URL is never drawn. Select with `↑`/`↓`/`←`/`→` (or a number key), `Enter` copies the card, `C` copies all; `Esc` returns. A copied card turns green and copy-all reports in the header. Narrow or short windows reflow the grid and truncate content, never overflowing the panel. On log screens `C` copies the log (OSC52) |
 | Certificates | acme.sh `--standalone` issue and renew, list, switch active, remove; handles 80 / 443 occupancy |
 | Subscription | Renders `templates/config/tun-fakeip.json` (sing-box) and `templates/config/mihomo.yaml` (mihomo), outputs files, QR codes and share links, hosted by nginx |
 | Port hopping | Hysteria2 defaults to `2080:3000`, auto-applies iptables / nftables DNAT and a boot restore unit |

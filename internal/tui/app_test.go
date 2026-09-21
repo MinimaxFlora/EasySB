@@ -369,7 +369,7 @@ func TestDashboardFitsNarrowWidths(t *testing.T) {
 	}
 }
 
-func TestMouseWheelOnlyOnTaskScreen(t *testing.T) {
+func TestNoScreenCapturesTheMouse(t *testing.T) {
 	a := newTestApp(t)
 	if got := a.View().MouseMode; got != tea.MouseModeNone {
 		t.Fatalf("dashboard should not capture the mouse, got %v", got)
@@ -377,13 +377,49 @@ func TestMouseWheelOnlyOnTaskScreen(t *testing.T) {
 	p := newProgress("qr", func(context.Context, func(string)) error { return nil })
 	p.resize(a.width, a.height)
 	a.task = &p
-	if got := a.View().MouseMode; got != tea.MouseModeCellMotion {
-		t.Fatalf("task screen should enable mouse wheel, got %v", got)
-	}
-	// Releasing the mouse restores click-drag selection on the task screen.
-	p.mouse = false
 	if got := a.View().MouseMode; got != tea.MouseModeNone {
-		t.Fatalf("released task mouse should not capture, got %v", got)
+		t.Fatalf("task screen should not capture the mouse, got %v", got)
+	}
+}
+
+func TestEveryScreenUsesOneFixedFrame(t *testing.T) {
+	// The whole point of the layout: the dashboard and every subpage render at
+	// exactly the same size, so moving between them never resizes the panel and
+	// the hint box never moves.
+	lines := func(s string) int { return strings.Count(s, "\n") + 1 }
+	screens := func(a *App) map[string]string {
+		out := map[string]string{"dashboard": a.dashboard()}
+		a.links = newLinksModel("t", sampleLinks())
+		out["links"] = a.View().Content
+		a.links = nil
+		p := newProgress("t", func(context.Context, func(string)) error { return nil })
+		a.task = &p
+		out["task"] = a.View().Content
+		a.task = nil
+		a.openForm("t", "p", "", "", nil)
+		out["form"] = a.View().Content
+		return out
+	}
+	for _, w := range []int{20, 32, 60, 100, 140} {
+		for _, h := range []int{6, 8, 10, 12, 14, 20, 34, 60} {
+			a := New("test", i18n.Chinese)
+			a.width, a.height = w, h
+			a.sized = true
+			a.status = sysinfo.Collect("test")
+			a.ready = true
+
+			limit := panelWidth(w)
+			for name, content := range screens(a) {
+				if got := lines(content); got != h {
+					t.Fatalf("%dx%d %s: drew %d lines", w, h, name, got)
+				}
+				for _, line := range strings.Split(content, "\n") {
+					if got := lipgloss.Width(line); got > limit {
+						t.Fatalf("%dx%d %s: line is %d cells (limit %d): %q", w, h, name, got, limit, line)
+					}
+				}
+			}
+		}
 	}
 }
 

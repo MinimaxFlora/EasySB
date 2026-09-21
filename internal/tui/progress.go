@@ -15,8 +15,8 @@ import (
 
 type taskFunc func(ctx context.Context, log func(string)) error
 
-// progressScrollStep is how many lines one arrow key or mouse-wheel notch
-// scrolls the finished log. Three matches the feel of a browser wheel.
+// progressScrollStep is how many lines one arrow key scrolls the finished log.
+// Three matches the feel of a browser wheel.
 const progressScrollStep = 3
 
 type logLineMsg string
@@ -34,9 +34,11 @@ type progressModel struct {
 	vp     viewport.Model
 	done   bool
 	err    error
-	mouse  bool
-	width  int
-	height int
+	// afterLinks swaps the finished log for the copyable link grid. It is used
+	// by subscription tasks, whose only interesting output is the endpoints.
+	afterLinks bool
+	width      int
+	height     int
 }
 
 func newProgress(title string, fn taskFunc) progressModel {
@@ -45,12 +47,10 @@ func newProgress(title string, fn taskFunc) progressModel {
 		fn:    fn,
 		ch:    make(chan string, 256),
 		errCh: make(chan error, 1),
-		mouse: true,
 	}
 	p.spin = spinner.New(spinner.WithSpinner(spinner.Line))
 	p.vp = viewport.New()
 	p.vp.SoftWrap = true
-	p.vp.MouseWheelDelta = progressScrollStep
 	return p
 }
 
@@ -97,12 +97,6 @@ func (p *progressModel) handle(msg tea.Msg) tea.Cmd {
 		return waitLog(p.ch)
 	case logsClosedMsg:
 		return waitErr(p.errCh)
-	case tea.MouseWheelMsg:
-		// Mouse mode is only enabled while a task is on screen, so wheel
-		// events belong to the log viewport.
-		var cmd tea.Cmd
-		p.vp, cmd = p.vp.Update(m)
-		return cmd
 	case taskDoneMsg:
 		p.done = true
 		p.err = m.err
@@ -117,17 +111,6 @@ func (p *progressModel) handle(msg tea.Msg) tea.Cmd {
 
 func (p *progressModel) handleKey(msg tea.KeyPressMsg, lang i18n.Lang) (tea.Cmd, bool) {
 	key := strings.ToLower(msg.String())
-	// Mouse capture is only needed for wheel scrolling; turning it off restores
-	// the terminal's own click-drag text selection.
-	if key == "m" {
-		p.mouse = !p.mouse
-		if p.mouse {
-			p.appendLog(lang.T("mouse_on"))
-		} else {
-			p.appendLog(lang.T("mouse_off"))
-		}
-		return nil, false
-	}
 	if p.done {
 		switch key {
 		case "enter", "esc", "q", "backspace":
@@ -160,14 +143,17 @@ func (p *progressModel) handleKey(msg tea.KeyPressMsg, lang i18n.Lang) (tea.Cmd,
 }
 
 func (p *progressModel) resize(w, h int) {
+	w = panelWidth(w)
 	p.width, p.height = w, h
 	inner := w - 4
 	if inner < 10 {
 		inner = 10
 	}
-	vh := h - 9
-	if vh < 3 {
-		vh = 3
+	// The viewport fills the frame between the top/bottom borders, the header
+	// row and its trailing blank.
+	vh := panelBodyHeight(h) - 2
+	if vh < 1 {
+		vh = 1
 	}
 	p.vp.SetWidth(inner)
 	p.vp.SetHeight(vh)
@@ -188,12 +174,9 @@ func (p *progressModel) refresh() {
 }
 
 func (p *progressModel) View(w, h int, pal theme.Palette, lang i18n.Lang, ic icons.Set) string {
-	width := w
-	if width < 44 {
-		width = 44
-	}
-	if w != p.width || h != p.height {
-		p.resize(w, h)
+	width := panelWidth(w)
+	if width != p.width || h != p.height {
+		p.resize(width, h)
 	}
 
 	var status string
@@ -208,11 +191,13 @@ func (p *progressModel) View(w, h int, pal theme.Palette, lang i18n.Lang, ic ico
 	}
 
 	header := " " + status + "  " + pal.Dim(theme.Truncate(p.title, width-24))
-	body := theme.Box(lang.T("task_running"), p.vp.View(), width, pal.Border, pal.Primary)
-	plain := " " + lang.T("task_scroll") + "  " + lang.T("task_copy") + "  " + lang.T("task_mouse") + "  " + lang.T("task_press_enter")
+	body := make([]string, 0, p.vp.Height()+2)
+	body = append(body, header, "")
+	body = append(body, strings.Split(p.vp.View(), "\n")...)
+
+	hint := lang.T("task_scroll") + "  " + lang.T("task_copy") + "  " + lang.T("task_press_enter")
 	if !p.done {
-		plain = " " + lang.T("hint_back") + "  " + lang.T("cancelled")
+		hint = lang.T("hint_back") + "  " + lang.T("cancelled")
 	}
-	footer := pal.Dim(theme.Truncate(plain, width))
-	return header + "\n\n" + body + "\n" + footer
+	return framePanel(pal, lang, width, h, body, pal.Dim(hint))
 }
