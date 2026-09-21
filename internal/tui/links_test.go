@@ -33,41 +33,56 @@ func TestLinksViewHidesValues(t *testing.T) {
 	}
 }
 
-func TestLinksClickCopiesCard(t *testing.T) {
+func TestLinksArrowsMoveCursor(t *testing.T) {
 	l := newLinksModel("t", sampleLinks())
 	l.View(100, 40, theme.Dark(), i18n.Chinese, icons.Plain())
-	if len(l.boxes) != 3 {
-		t.Fatalf("expected 3 hit boxes, got %d", len(l.boxes))
+
+	l.handleKey(press(tea.KeyDown), i18n.Chinese)
+	if l.cursor != 2 {
+		t.Fatalf("down should move one grid row (clamped to the last item), got %d", l.cursor)
 	}
-	b := l.boxes[2]
-	if cmd := l.handleClick(b.x+1, b.y+1); cmd == nil {
-		t.Fatal("clicking a card should return a clipboard command")
+	l.handleKey(press(tea.KeyUp), i18n.Chinese)
+	if l.cursor != 0 {
+		t.Fatalf("up should return to the first card, got %d", l.cursor)
 	}
-	if l.copied != 2 {
-		t.Fatalf("expected card 2 copied, got %d", l.copied)
+	l.handleKey(press(tea.KeyRight), i18n.Chinese)
+	if l.cursor != 1 {
+		t.Fatalf("right should move one card, got %d", l.cursor)
 	}
 }
 
-func TestLinksClickOutsideIsNoop(t *testing.T) {
-	l := newLinksModel("t", sampleLinks())
-	l.View(100, 40, theme.Dark(), i18n.Chinese, icons.Plain())
-	if cmd := l.handleClick(0, 0); cmd != nil {
-		t.Fatal("clicking the header should not copy")
+func TestLinksGridScrollsToCursor(t *testing.T) {
+	items := make([]linkItem, 9)
+	for i := range items {
+		items[i] = linkItem{label: "c", meta: "host", value: "v"}
 	}
-	if l.copied != -1 {
-		t.Fatalf("copied should stay unset, got %d", l.copied)
+	l := newLinksModel("t", items)
+	l.cursor = 8
+	l.View(60, 20, theme.Dark(), i18n.Chinese, icons.Plain())
+	if l.topRow == 0 {
+		t.Fatalf("an off-screen cursor should scroll the grid, topRow=%d", l.topRow)
 	}
 }
 
-func TestLinksNumberKeyCopies(t *testing.T) {
+func TestLinksViewFitsPanelHeight(t *testing.T) {
+	for _, h := range []int{20, 30, 40} {
+		l := newLinksModel("t", sampleLinks())
+		view := l.View(100, h, theme.Dark(), i18n.Chinese, icons.Plain())
+		if got := strings.Count(view, "\n") + 1; got != h {
+			t.Fatalf("height %d: panel drew %d lines", h, got)
+		}
+	}
+}
+
+func TestLinksNumberKeySelects(t *testing.T) {
 	l := newLinksModel("t", sampleLinks())
 	l.View(100, 40, theme.Dark(), i18n.Chinese, icons.Plain())
 	cmd, done := l.handleKey(press('2'), i18n.Chinese)
 	if done {
 		t.Fatal("number key must not close the panel")
 	}
-	if cmd == nil || l.copied != 1 {
-		t.Fatalf("digit 2 should copy card 1, copied=%d", l.copied)
+	if cmd != nil || l.cursor != 1 || l.copied != -1 {
+		t.Fatalf("digit 2 should select card 1 without copying, cursor=%d copied=%d", l.cursor, l.copied)
 	}
 }
 
@@ -89,14 +104,10 @@ func TestLinksEscCloses(t *testing.T) {
 	}
 }
 
-func TestLinksMouseToggle(t *testing.T) {
+func TestLinksStrayKeyIsNoop(t *testing.T) {
 	l := newLinksModel("t", sampleLinks())
-	if !l.mouse {
-		t.Fatal("panel should start with mouse capture on")
-	}
-	l.handleKey(press('m'), i18n.Chinese)
-	if l.mouse {
-		t.Fatal("m should release the mouse")
+	if _, done := l.handleKey(press('m'), i18n.Chinese); done {
+		t.Fatal("a stray key must not close the panel")
 	}
 }
 

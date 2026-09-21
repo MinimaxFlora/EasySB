@@ -369,7 +369,7 @@ func TestDashboardFitsNarrowWidths(t *testing.T) {
 	}
 }
 
-func TestMouseWheelOnlyOnTaskScreen(t *testing.T) {
+func TestNoScreenCapturesTheMouse(t *testing.T) {
 	a := newTestApp(t)
 	if got := a.View().MouseMode; got != tea.MouseModeNone {
 		t.Fatalf("dashboard should not capture the mouse, got %v", got)
@@ -377,13 +377,44 @@ func TestMouseWheelOnlyOnTaskScreen(t *testing.T) {
 	p := newProgress("qr", func(context.Context, func(string)) error { return nil })
 	p.resize(a.width, a.height)
 	a.task = &p
-	if got := a.View().MouseMode; got != tea.MouseModeCellMotion {
-		t.Fatalf("task screen should enable mouse wheel, got %v", got)
-	}
-	// Releasing the mouse restores click-drag selection on the task screen.
-	p.mouse = false
 	if got := a.View().MouseMode; got != tea.MouseModeNone {
-		t.Fatalf("released task mouse should not capture, got %v", got)
+		t.Fatalf("task screen should not capture the mouse, got %v", got)
+	}
+}
+
+func TestEveryScreenUsesOneFixedFrame(t *testing.T) {
+	// The whole point of the layout: the dashboard and every subpage render at
+	// exactly the same size, so moving between them never resizes the panel and
+	// the hint box never moves.
+	lines := func(s string) int { return strings.Count(s, "\n") + 1 }
+	for _, h := range []int{12, 14, 20, 34, 60} {
+		a := New("test", i18n.Chinese)
+		a.width, a.height = 100, h
+		a.sized = true
+		a.status = sysinfo.Collect("test")
+		a.ready = true
+
+		if got := lines(a.dashboard()); got != h {
+			t.Fatalf("height %d: dashboard drew %d lines", h, got)
+		}
+
+		a.links = newLinksModel("t", sampleLinks())
+		if got := lines(a.View().Content); got != h {
+			t.Fatalf("height %d: links panel drew %d lines", h, got)
+		}
+
+		p := newProgress("t", func(context.Context, func(string)) error { return nil })
+		a.links = nil
+		a.task = &p
+		if got := lines(a.View().Content); got != h {
+			t.Fatalf("height %d: task panel drew %d lines", h, got)
+		}
+
+		a.task = nil
+		a.openForm("t", "p", "", "", nil)
+		if got := lines(a.View().Content); got != h {
+			t.Fatalf("height %d: form panel drew %d lines", h, got)
+		}
 	}
 }
 

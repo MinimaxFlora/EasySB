@@ -46,7 +46,7 @@ func TestProgressFollowsTailWhileRunning(t *testing.T) {
 	}
 }
 
-func TestProgressWheelScrollsFinishedLog(t *testing.T) {
+func TestProgressArrowsScrollFinishedLog(t *testing.T) {
 	p := newProgress("qr", func(context.Context, func(string)) error { return nil })
 	p.resize(80, 20)
 	for i := 0; i < 100; i++ {
@@ -58,14 +58,16 @@ func TestProgressWheelScrollsFinishedLog(t *testing.T) {
 	if before == 0 {
 		t.Fatalf("expected finished task to start at the bottom")
 	}
-	p.handle(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
+	if _, closed := p.handleKey(press(tea.KeyUp), i18n.Chinese); closed {
+		t.Fatal("arrow up should scroll, not close the task")
+	}
 	up := p.vp.YOffset()
 	if up >= before {
-		t.Fatalf("wheel up did not scroll: before=%d after=%d", before, up)
+		t.Fatalf("arrow up did not scroll: before=%d after=%d", before, up)
 	}
-	p.handle(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	p.handleKey(press(tea.KeyDown), i18n.Chinese)
 	if got := p.vp.YOffset(); got <= up {
-		t.Fatalf("wheel down did not scroll back: up=%d down=%d", up, got)
+		t.Fatalf("arrow down did not scroll back: up=%d down=%d", up, got)
 	}
 }
 
@@ -91,20 +93,10 @@ func TestProgressCopiesLogToClipboard(t *testing.T) {
 	}
 }
 
-func TestProgressMouseToggle(t *testing.T) {
+func TestProgressIgnoresMouseToggleKey(t *testing.T) {
 	p := newProgress("t", func(context.Context, func(string)) error { return nil })
 	p.resize(80, 20)
-	if !p.mouse {
-		t.Fatal("task screen should start with mouse capture on")
-	}
 	if _, closed := p.handleKey(press('m'), i18n.Chinese); closed {
-		t.Fatal("mouse toggle must not close the task")
-	}
-	if p.mouse {
-		t.Fatal("M should turn mouse capture off so text can be selected")
-	}
-	p.handleKey(press('m'), i18n.Chinese)
-	if !p.mouse {
-		t.Fatal("M should turn mouse capture back on")
+		t.Fatal("a stray key must not close the task")
 	}
 }

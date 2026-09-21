@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -11,8 +12,8 @@ import (
 	"github.com/MinimaxFlora/EasySB/internal/theme"
 )
 
-// linkCardHeight is the number of terminal rows one card occupies. Cards are
-// fixed height so the mouse hit boxes stay stable across renders.
+// linkCardHeight is the number of terminal rows one card occupies, including
+// its two border rows.
 const linkCardHeight = 5
 
 // linkCardGap is the blank gap between two card columns in cells.
@@ -23,8 +24,8 @@ const linkCardGap = 2
 const linkCardMin = 26
 
 // linkItem is one copyable entry shown as a card. The URL/value is never
-// rendered; only label, meta and desc are visible, and the value is what a
-// click or key press puts on the clipboard.
+// rendered; only label, meta and desc are visible, and the value is what Enter
+// puts on the clipboard.
 type linkItem struct {
 	label string
 	meta  string
@@ -32,28 +33,25 @@ type linkItem struct {
 	value string
 }
 
-// linkBox is the on-screen rectangle of a card, used for mouse hit testing.
-type linkBox struct {
-	x, y, w, h int
-	index      int
-}
-
 // linksModel is a grid of copyable cards, used for subscription endpoints and
-// share links. Unlike the task log it never prints the full URL: clicking a card
-// copies its value through OSC52.
+// share links. Unlike the task log it never prints the full URL: selecting a
+// card and pressing Enter copies its value through OSC52.
 type linksModel struct {
 	title  string
 	items  []linkItem
-	boxes  []linkBox
 	cursor int
 	copied int
 	cols   int
 	cardW  int
-	mouse  bool
+	// topRow is the first grid row currently on screen; the grid scrolls with
+	// the arrow keys to keep the cursor visible.
+	topRow int
+	// visibleRows is the number of grid rows the last render could fit.
+	visibleRows int
 }
 
 func newLinksModel(title string, items []linkItem) *linksModel {
-	return &linksModel{title: title, items: items, copied: -1, mouse: true}
+	return &linksModel{title: title, items: items, copied: -1}
 }
 
 // copy stores text on the system clipboard and remembers which card produced it.
@@ -102,9 +100,6 @@ func gridDims(width, count int) (int, int) {
 func (l *linksModel) handleKey(msg tea.KeyPressMsg, lang i18n.Lang) (tea.Cmd, bool) {
 	key := strings.ToLower(msg.String())
 	switch key {
-	case "m":
-		l.mouse = !l.mouse
-		return nil, false
 	case "esc", "q", "backspace":
 		return nil, true
 	case "enter":
@@ -117,16 +112,15 @@ func (l *linksModel) handleKey(msg tea.KeyPressMsg, lang i18n.Lang) (tea.Cmd, bo
 	case "right":
 		l.move(1)
 		return nil, false
-	case "up":
+	case "up", "k":
 		l.move(-l.rowStep())
 		return nil, false
-	case "down":
+	case "down", "j":
 		l.move(l.rowStep())
 		return nil, false
 	}
 	if n, err := strconv.Atoi(key); err == nil && n >= 1 && n <= len(l.items) {
 		l.cursor = n - 1
-		return l.copy(n - 1), false
 	}
 	return nil, false
 }
@@ -154,57 +148,72 @@ func (l *linksModel) move(d int) {
 	}
 }
 
-// handleClick copies the card under the pointer, if any.
-func (l *linksModel) handleClick(x, y int) tea.Cmd {
-	for _, b := range l.boxes {
-		if x >= b.x && x < b.x+b.w && y >= b.y && y < b.y+b.h {
-			l.cursor = b.index
-			return l.copy(b.index)
-		}
-	}
-	return nil
-}
-
 // card renders one card. The value is deliberately absent from the content.
 func (l *linksModel) card(item linkItem, index, width int, pal theme.Palette, lang i18n.Lang, ic icons.Set) string {
 	inner := width - 4
 	meta := pal.Value(theme.Truncate(item.meta, inner))
 	desc := pal.Dim(theme.Truncate(item.desc, inner))
 
-	chip := ic.Link + " " + lang.T("links_copy")
-	if l.copied == index {
-		chip = ic.OK + " " + lang.T("links_copied")
-	}
-	var chipLine string
-	if l.cursor == index {
-		chipLine = pal.SelectedRow(" " + theme.Truncate(chip, inner-2) + " ")
-	} else {
-		chipLine = pal.Colored(pal.Primary, theme.Truncate(chip, inner))
+	var chip string
+	switch {
+	case l.copied == index:
+		chip = pal.Colored(pal.OK, ic.OK+" "+lang.T("links_copied"))
+	case l.cursor == index:
+		chip = pal.Bold(pal.Primary, ic.Link+" "+lang.T("links_copy"))
+	default:
+		chip = pal.Dim(theme.Truncate(ic.Link+" "+lang.T("links_copy"), inner))
 	}
 
 	border := pal.Border
+	label := item.label
 	if l.cursor == index {
 		border = pal.Primary
+		if len(l.items) <= 9 {
+			label = fmt.Sprintf("%d %s", index+1, item.label)
+		}
 	}
-	content := meta + "\n" + desc + "\n" + chipLine
-	return theme.Box(item.label, content, width, border, pal.Primary)
+	return theme.Box(label, meta+"\n"+desc+"\n"+chip, width, border, pal.Primary)
 }
 
-// render lays the cards out in a grid and records their hit boxes.
-func (l *linksModel) render(width int, pal theme.Palette, lang i18n.Lang, ic icons.Set) string {
-	cols, cardW := gridDims(width, len(l.items))
-	l.cols, l.cardW = cols, cardW
-
-	const startY = 2 // header line plus a blank line
-
-	header := pal.Bold(pal.Primary, " "+ic.Link+" "+theme.Truncate(l.title, width-6))
-
-	boxes := l.boxes[:0]
-	var out []string
-
+// gridLines renders the visible grid rows and records how many fit. Each row
+// block is linkCardHeight lines tall, with one blank line between rows.
+func (l *linksModel) gridLines(cols, cardW, gridH int, pal theme.Palette, lang i18n.Lang, ic icons.Set) []string {
+	if len(l.items) == 0 {
+		l.topRow, l.visibleRows = 0, 0
+		return nil
+	}
 	rows := (len(l.items) + cols - 1) / cols
-	for row := 0; row < rows; row++ {
-		y := startY + row*(linkCardHeight+1)
+	visible := (gridH + 1) / (linkCardHeight + 1)
+	if visible < 1 {
+		visible = 1
+	}
+	cursorRow := l.cursor / cols
+	if cursorRow < l.topRow {
+		l.topRow = cursorRow
+	}
+	if cursorRow >= l.topRow+visible {
+		l.topRow = cursorRow - visible + 1
+	}
+	if l.topRow > rows-visible {
+		l.topRow = rows - visible
+	}
+	if l.topRow < 0 {
+		l.topRow = 0
+	}
+	l.visibleRows = visible
+	if visible > rows {
+		l.visibleRows = rows
+	}
+
+	end := l.topRow + visible
+	if end > rows {
+		end = rows
+	}
+	var out []string
+	for row := l.topRow; row < end; row++ {
+		if row > l.topRow {
+			out = append(out, "")
+		}
 		cards := make([]string, cols)
 		for col := 0; col < cols; col++ {
 			index := row*cols + col
@@ -225,20 +234,36 @@ func (l *linksModel) render(width int, pal theme.Palette, lang i18n.Lang, ic ico
 			}
 			out = append(out, strings.Join(parts, strings.Repeat(" ", linkCardGap)))
 		}
-		for col := 0; col < cols; col++ {
-			index := row*cols + col
-			if index >= len(l.items) {
-				break
-			}
-			boxes = append(boxes, linkBox{x: col * (cardW + linkCardGap), y: y, w: cardW, h: linkCardHeight, index: index})
-		}
-		if row != rows-1 {
-			out = append(out, "")
-		}
 	}
-	l.boxes = boxes
+	return out
+}
 
-	return header + "\n\n" + strings.Join(out, "\n") + "\n" + l.footer(width, pal, lang, ic)
+// render lays the cards out in a grid sized to the shared panel frame.
+func (l *linksModel) render(width, height int, pal theme.Palette, lang i18n.Lang, ic icons.Set) string {
+	cols, cardW := gridDims(width-4, len(l.items))
+	l.cols, l.cardW = cols, cardW
+
+	bodyH := panelBodyHeight(height)
+	if bodyH < 1 {
+		bodyH = 1
+	}
+
+	grid := l.gridLines(cols, cardW, bodyH-2, pal, lang, ic)
+
+	header := pal.Bold(pal.Primary, " "+ic.Link+" "+theme.Truncate(l.title, width-6))
+	rows := 0
+	if len(l.items) > 0 {
+		rows = (len(l.items) + cols - 1) / cols
+	}
+	if rows > 1 {
+		header += pal.Dim(fmt.Sprintf("  %d/%d", l.topRow+1, rows))
+	}
+
+	body := make([]string, 0, len(grid)+2)
+	body = append(body, header, "")
+	body = append(body, grid...)
+
+	return framePanel(pal, lang, width, height, body, pal.Dim(lang.T("links_hint")))
 }
 
 // blankCard keeps empty grid cells the same width as a real card.
@@ -247,18 +272,6 @@ func blankCard(width int) string {
 	return strings.Join([]string{line, line, line, line, line}, "\n")
 }
 
-func (l *linksModel) footer(width int, pal theme.Palette, lang i18n.Lang, ic icons.Set) string {
-	if l.copied >= 0 && l.copied < len(l.items) {
-		status := pal.Colored(pal.OK, " "+ic.OK+" "+lang.T("links_copied")+": ") + l.items[l.copied].label
-		return theme.Truncate(status, width)
-	}
-	return pal.Dim(theme.Truncate(" "+lang.T("links_hint"), width))
-}
-
 func (l *linksModel) View(w, h int, pal theme.Palette, lang i18n.Lang, ic icons.Set) string {
-	width := w
-	if width < 32 {
-		width = 32
-	}
-	return l.render(width, pal, lang, ic)
+	return l.render(panelWidth(w), h, pal, lang, ic)
 }

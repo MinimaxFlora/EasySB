@@ -361,16 +361,6 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return a, tea.Batch(cmd, collectStatus(a.scriptVersion))
 		}
-	case tea.MouseClickMsg:
-		if a.links != nil {
-			return a, a.links.handleClick(msg.X, msg.Y)
-		}
-	case tea.MouseWheelMsg:
-		// Wheel scrolling is only wired up for the finished-task log/QR view,
-		// which is also the only screen that turns the mouse on.
-		if a.task != nil {
-			return a, a.task.handle(msg)
-		}
 	}
 	return a, nil
 }
@@ -467,36 +457,23 @@ func (a *App) View() tea.View {
 	// are hidden while the dashboard runs, and the inline renderer's stale-frame
 	// stacking cannot happen.
 	v.AltScreen = true
-	// Mouse wheel scrolling is enabled only on the task screen (subscription
-	// URLs and QR codes) and only while the user has not released it. Keeping it
-	// off elsewhere, or after `M`, preserves click-drag text selection.
-	if a.task != nil && a.task.mouse {
-		v.MouseMode = tea.MouseModeCellMotion
-	}
-	if a.links != nil && a.links.mouse {
-		v.MouseMode = tea.MouseModeCellMotion
-	}
 	return v
 }
 
 func (a *App) formScreen() string {
-	w := a.width
-	if w <= 0 {
-		w = 96
-	}
-	if w > 100 {
-		w = 100
-	}
-	h := a.height
+	w, h := a.frameWidth(), a.height
 	if h <= 0 {
 		h = 24
 	}
-	out := strings.Split(a.form.View(w, a.palette, a.lang), "\n")
-	for len(out) < h-1 {
-		out = append(out, "")
-	}
-	out = append(out, a.statusBar(w))
-	return strings.Join(out, "\n")
+	body := strings.Split(a.form.View(w, a.palette, a.lang), "\n")
+	hint := a.lang.T("form_confirm") + "  " + a.lang.T("form_cancel")
+	return framePanel(a.palette, a.lang, w, h, body, a.palette.Dim(hint))
+}
+
+// frameWidth is the shared panel width: the terminal width capped at 100 so
+// every screen lines up with the main dashboard.
+func (a *App) frameWidth() int {
+	return panelWidth(a.width)
 }
 
 // dashboard renders the dashboard inside a single framed panel with full-width
@@ -504,16 +481,7 @@ func (a *App) formScreen() string {
 // sections drop out as the terminal shrinks, and the menu scrolls, so the panel
 // never grows taller than the screen.
 func (a *App) dashboard() string {
-	w := a.width
-	if w <= 0 {
-		w = 96
-	}
-	if w > 100 {
-		w = 100
-	}
-	if w < 24 {
-		w = 24
-	}
+	w := a.frameWidth()
 	h := a.height
 	if h <= 0 {
 		h = 24
@@ -590,25 +558,6 @@ func (a *App) dashboard() string {
 		}
 		return n
 	}
-	value := func(l layout) int {
-		v := l.items * 4
-		if l.logo {
-			v += 2
-		}
-		if l.overview {
-			v += len(overviewRows)
-		}
-		if l.device {
-			v += len(deviceLines)
-		}
-		if l.node {
-			v += 3
-		}
-		if l.quote {
-			v += 1
-		}
-		return v
-	}
 	// solve drops the least critical blocks first until the layout fits, then
 	// trims menu entries as a last resort.
 	solve := func(budget int) layout {
@@ -644,31 +593,19 @@ func (a *App) dashboard() string {
 		return l
 	}
 
-	boxBudget, inlineBudget := h-5, h-3
-	if a.toast != "" {
-		boxBudget--
-		inlineBudget--
-	}
-	if boxBudget < 3 {
-		boxBudget = 3
-	}
-	if inlineBudget < 3 {
-		inlineBudget = 3
-	}
-
-	useHintBox := h >= 14
-	var l layout
-	box := solve(boxBudget)
-	if useHintBox && value(box) >= value(solve(inlineBudget)) {
-		l = box
-	} else {
-		useHintBox = false
-		l = solve(inlineBudget)
-	}
-	budget := boxBudget
+	// Every screen renders the same fixed frame: the body keeps a constant
+	// height and the hint box is pinned to the bottom, so moving between the
+	// menu and a subpage never resizes the panel. On terminals too short to
+	// spare the box, the hints fall back to a single bottom line.
+	useHintBox := hintRows(h) > 0
+	budget := h - 5
 	if !useHintBox {
-		budget = inlineBudget
+		budget = h - 3
 	}
+	if budget < 3 {
+		budget = 3
+	}
+	l := solve(budget)
 
 	type row struct {
 		text  string
@@ -760,40 +697,33 @@ func (a *App) dashboard() string {
 		rows = append(rows[:idx], rows[idx+1:]...)
 	}
 
-	// The quote block is last; spare rows are parked just above it so it stays
-	// pinned to the closing border.
+	// Spare rows are parked just above the quote, which keeps it pinned near the
+	// closing border; the remainder fills the bottom of the frame. The body is
+	// always padded to the exact height so no screen changes the panel size.
 	padBefore := -1
-	if l.quote {
+	if l.quote && len(rows) > 0 {
 		padBefore = len(rows) - 1
 		if padBefore > 0 && rows[padBefore-1].blank {
 			padBefore--
 		}
 	}
-	leftover := budget - len(rows)
-	if leftover < 0 {
-		leftover = 0
-	}
-	// Cap the spare rows so a tall terminal never opens a big gap before the
-	// quote; the remaining space simply stays below the panel.
-	spare := 2
-	if l.quote {
-		spare = 1
-	}
-	if leftover > spare {
-		leftover = spare
+	spare := budget - len(rows)
+	if spare < 0 {
+		spare = 0
 	}
 
 	out := []string{theme.TopRule(w, a.palette.Border)}
+	pad := func() { out = append(out, theme.FrameLine("", w, a.palette.Border)) }
 	for i, r := range rows {
 		if i == padBefore {
-			for n := 0; n < leftover; n++ {
-				out = append(out, theme.FrameLine("", w, a.palette.Border))
+			for n := 0; n < spare; n++ {
+				pad()
 			}
-			leftover = 0
+			spare = 0
 		}
 		switch {
 		case r.blank:
-			out = append(out, theme.FrameLine("", w, a.palette.Border))
+			pad()
 		case r.sep:
 			out = append(out, theme.SectionRule(w, a.palette.Border))
 		case r.rule:
@@ -802,16 +732,21 @@ func (a *App) dashboard() string {
 			out = append(out, theme.FrameLine(r.text, w, a.palette.Border))
 		}
 	}
-	for n := 0; n < leftover; n++ {
-		out = append(out, theme.FrameLine("", w, a.palette.Border))
+	for n := 0; n < spare; n++ {
+		pad()
+	}
+	// Keep the frame rectangular even when the tightest layout still overflows.
+	if len(out) > budget+1 {
+		out = out[:budget+1]
 	}
 	out = append(out, theme.BottomRule(w, a.palette.Border))
 
+	hint := a.palette.Dim(a.dashboardHint())
 	if a.toast != "" {
-		out = append(out, " "+a.renderToast(w))
+		hint = a.renderToast(w - 4)
 	}
 	if useHintBox {
-		out = append(out, a.hintBox(w)...)
+		out = append(out, a.hintBox(hint, w)...)
 		return strings.Join(out, "\n")
 	}
 	// Fullscreen: pad so the hint sits on the last row, leaving the rest of the
@@ -819,7 +754,7 @@ func (a *App) dashboard() string {
 	for len(out) < h-1 {
 		out = append(out, "")
 	}
-	out = append(out, a.statusBar(w))
+	out = append(out, a.hintLine(hint, w))
 	return strings.Join(out, "\n")
 }
 
@@ -973,24 +908,13 @@ func (a *App) renderToast(w int) string {
 	return " " + a.palette.Colored(col, icon+" "+theme.Truncate(a.toast, w-4))
 }
 
-func (a *App) statusBar(w int) string {
-	keys := strings.Join([]string{
+// dashboardHint is the key list shown in the pinned hint box on the main menu.
+func (a *App) dashboardHint() string {
+	return strings.Join([]string{
 		a.lang.T("hint_navigate"),
 		a.lang.T("hint_enter"),
 		a.lang.T("hint_back"),
 		a.lang.T("hint_lang"),
 		a.lang.T("hint_quit"),
 	}, "  ")
-	right := a.palette.Label(a.lang.Code()) + " "
-	rightW := lipgloss.Width(right)
-	availLeft := w - rightW - 1
-	if availLeft < 1 {
-		availLeft = 1
-	}
-	left := " " + a.palette.Dim(theme.Truncate(keys, maxInt(0, availLeft-1)))
-	gap := w - lipgloss.Width(left) - rightW
-	if gap < 1 {
-		gap = 1
-	}
-	return left + strings.Repeat(" ", gap) + right
 }
