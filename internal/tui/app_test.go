@@ -387,33 +387,38 @@ func TestEveryScreenUsesOneFixedFrame(t *testing.T) {
 	// exactly the same size, so moving between them never resizes the panel and
 	// the hint box never moves.
 	lines := func(s string) int { return strings.Count(s, "\n") + 1 }
-	for _, h := range []int{12, 14, 20, 34, 60} {
-		a := New("test", i18n.Chinese)
-		a.width, a.height = 100, h
-		a.sized = true
-		a.status = sysinfo.Collect("test")
-		a.ready = true
-
-		if got := lines(a.dashboard()); got != h {
-			t.Fatalf("height %d: dashboard drew %d lines", h, got)
-		}
-
+	screens := func(a *App) map[string]string {
+		out := map[string]string{"dashboard": a.dashboard()}
 		a.links = newLinksModel("t", sampleLinks())
-		if got := lines(a.View().Content); got != h {
-			t.Fatalf("height %d: links panel drew %d lines", h, got)
-		}
-
-		p := newProgress("t", func(context.Context, func(string)) error { return nil })
+		out["links"] = a.View().Content
 		a.links = nil
+		p := newProgress("t", func(context.Context, func(string)) error { return nil })
 		a.task = &p
-		if got := lines(a.View().Content); got != h {
-			t.Fatalf("height %d: task panel drew %d lines", h, got)
-		}
-
+		out["task"] = a.View().Content
 		a.task = nil
 		a.openForm("t", "p", "", "", nil)
-		if got := lines(a.View().Content); got != h {
-			t.Fatalf("height %d: form panel drew %d lines", h, got)
+		out["form"] = a.View().Content
+		return out
+	}
+	for _, w := range []int{20, 32, 60, 100, 140} {
+		for _, h := range []int{6, 8, 10, 12, 14, 20, 34, 60} {
+			a := New("test", i18n.Chinese)
+			a.width, a.height = w, h
+			a.sized = true
+			a.status = sysinfo.Collect("test")
+			a.ready = true
+
+			limit := panelWidth(w)
+			for name, content := range screens(a) {
+				if got := lines(content); got != h {
+					t.Fatalf("%dx%d %s: drew %d lines", w, h, name, got)
+				}
+				for _, line := range strings.Split(content, "\n") {
+					if got := lipgloss.Width(line); got > limit {
+						t.Fatalf("%dx%d %s: line is %d cells (limit %d): %q", w, h, name, got, limit, line)
+					}
+				}
+			}
 		}
 	}
 }

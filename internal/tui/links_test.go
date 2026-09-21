@@ -104,6 +104,60 @@ func TestLinksEscCloses(t *testing.T) {
 	}
 }
 
+func TestLinksCopyAllShowsFeedback(t *testing.T) {
+	l := newLinksModel("t", sampleLinks())
+	l.View(100, 40, theme.Dark(), i18n.Chinese, icons.Plain())
+	cmd, done := l.handleKey(press('c'), i18n.Chinese)
+	if done || cmd == nil {
+		t.Fatalf("c should copy every link, done=%v cmd=%v", done, cmd)
+	}
+	if l.status != i18n.Chinese.T("links_copied_all") {
+		t.Fatalf("copy-all should surface a visible status, got %q", l.status)
+	}
+	if !strings.Contains(l.View(100, 40, theme.Dark(), i18n.Chinese, icons.Plain()), l.status) {
+		t.Fatal("the copy-all status should be rendered in the header")
+	}
+	l.move(1)
+	if l.status != "" {
+		t.Fatalf("moving should clear the transient status, got %q", l.status)
+	}
+}
+
+func TestLinksCardSignalsCopyByColor(t *testing.T) {
+	lang := i18n.Chinese
+	pal := theme.Dark()
+	l := newLinksModel("t", sampleLinks())
+	l.View(100, 40, pal, lang, icons.Plain())
+
+	card := func() string { return l.card(l.items[1], 1, 30, pal) }
+	idle := card()
+	if got := strings.Count(idle, "\n") + 1; got != linkCardHeight {
+		t.Fatalf("card should be %d rows, got %d", linkCardHeight, got)
+	}
+	if !strings.Contains(idle, l.items[1].label) || !strings.Contains(idle, l.items[1].meta) {
+		t.Fatalf("card should show its label and host, got %q", idle)
+	}
+
+	l.cursor = 1
+	selected := card()
+	l.copied = 1
+	copied := card()
+	if selected == idle {
+		t.Fatal("the cursor card should render differently from an idle card")
+	}
+	if copied == selected || copied == idle {
+		t.Fatal("a copied card should render unlike both idle and selected cards")
+	}
+	okCode := pal.Colored(pal.OK, "X")
+	okPrefix := okCode[:strings.Index(okCode, "X")]
+	if !strings.Contains(copied, okPrefix) {
+		t.Fatal("a copied card should use the success color")
+	}
+	if strings.Contains(idle, okPrefix) {
+		t.Fatal("an idle card should not use the success color")
+	}
+}
+
 func TestLinksStrayKeyIsNoop(t *testing.T) {
 	l := newLinksModel("t", sampleLinks())
 	if _, done := l.handleKey(press('m'), i18n.Chinese); done {

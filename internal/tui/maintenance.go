@@ -28,18 +28,6 @@ func clientLabel(lang i18n.Lang, client subscribe.Client) string {
 	}
 }
 
-// clientShortLabel returns a compact client name for a card title.
-func clientShortLabel(lang i18n.Lang, client subscribe.Client) string {
-	switch client {
-	case subscribe.ClientMihomo:
-		return lang.T("links_client_mihomo")
-	case subscribe.ClientV2Ray:
-		return lang.T("links_client_v2ray")
-	default:
-		return lang.T("links_client_singbox")
-	}
-}
-
 // clientDescription returns an optional localized note listing the clients a
 // subscription format serves. The v2ray and mihomo documents are each shared by
 // several OpenWrt plugins, so the note names them explicitly.

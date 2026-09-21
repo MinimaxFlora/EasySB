@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 type Palette struct {
@@ -91,6 +92,9 @@ func (p Palette) State(s string, ok bool, warn bool) string {
 	}
 }
 
+// Truncate clips s to at most w display cells, appending an ellipsis. It is
+// ANSI-aware, so already-styled text can be clipped without leaving a dangling
+// escape sequence or counting it toward the width.
 func Truncate(s string, w int) string {
 	if w <= 0 {
 		return ""
@@ -98,17 +102,7 @@ func Truncate(s string, w int) string {
 	if lipgloss.Width(s) <= w {
 		return s
 	}
-	var b strings.Builder
-	cur := 0
-	for _, r := range s {
-		rw := lipgloss.Width(string(r))
-		if cur+rw > w-1 {
-			break
-		}
-		b.WriteRune(r)
-		cur += rw
-	}
-	return b.String() + "…"
+	return ansi.Truncate(s, w, "…")
 }
 
 func Pad(s string, w int) string {
@@ -141,7 +135,7 @@ func Box(title, content string, width int, border color.Color, titleColor color.
 	var body strings.Builder
 	for _, ln := range lines {
 		body.WriteString(lipgloss.NewStyle().Foreground(border).Render("│ "))
-		body.WriteString(Pad(ln, inner))
+		body.WriteString(Pad(Truncate(ln, inner), inner))
 		body.WriteString(lipgloss.NewStyle().Foreground(border).Render(" │"))
 		body.WriteString("\n")
 	}
@@ -201,5 +195,5 @@ func FrameLine(s string, width int, c color.Color) string {
 	if inner < 0 {
 		inner = 0
 	}
-	return lipgloss.NewStyle().Foreground(c).Render("│ ") + Pad(s, inner) + lipgloss.NewStyle().Foreground(c).Render(" │")
+	return lipgloss.NewStyle().Foreground(c).Render("│ ") + Pad(Truncate(s, inner), inner) + lipgloss.NewStyle().Foreground(c).Render(" │")
 }

@@ -232,13 +232,26 @@ func (a *App) openSubscriptionLinks() {
 	items := make([]linkItem, 0, len(subscribe.Clients))
 	for _, client := range subscribe.Clients {
 		items = append(items, linkItem{
-			label: clientShortLabel(a.lang, client),
+			label: subscriptionTitle(a.lang, client),
 			meta:  host,
 			desc:  clientDescription(a.lang, client),
 			value: subscribe.ClientURL(cfg, client),
 		})
 	}
 	a.links = newLinksModel(a.lang.T("sub_url"), items)
+}
+
+// subscriptionTitle is the card title for a subscription endpoint, e.g.
+// "sing-box 订阅".
+func subscriptionTitle(lang i18n.Lang, client subscribe.Client) string {
+	switch client {
+	case subscribe.ClientSingBox:
+		return lang.T("links_sub_singbox")
+	case subscribe.ClientMihomo:
+		return lang.T("links_sub_mihomo")
+	default:
+		return lang.T("links_sub_v2ray")
+	}
 }
 
 // openShareLinks builds the share-link card grid for the enabled protocols.
@@ -751,6 +764,9 @@ func (a *App) dashboard() string {
 	}
 	// Fullscreen: pad so the hint sits on the last row, leaving the rest of the
 	// screen blank instead of letting old shell output show through.
+	if len(out) > h-1 {
+		out = out[:h-1]
+	}
 	for len(out) < h-1 {
 		out = append(out, "")
 	}

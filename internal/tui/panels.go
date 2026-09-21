@@ -61,7 +61,8 @@ func hintBoxFor(pal theme.Palette, lang i18n.Lang, hint string, width int) []str
 }
 
 // panelWidth is the shared panel width: the terminal width capped at 100 so
-// every screen lines up with the main dashboard.
+// every screen lines up with the main dashboard. It never exceeds the terminal
+// width, so a narrow SSH window keeps both borders on screen.
 func panelWidth(w int) int {
 	if w <= 0 {
 		w = 96
@@ -69,8 +70,8 @@ func panelWidth(w int) int {
 	if w > 100 {
 		w = 100
 	}
-	if w < 24 {
-		w = 24
+	if w < 8 {
+		w = 8
 	}
 	return w
 }
@@ -93,6 +94,9 @@ func panelBodyHeight(h int) int {
 // hint to the bottom. The body is clipped or padded to the frame's fixed
 // height, so the panel is exactly the same size as the main dashboard.
 func framePanel(pal theme.Palette, lang i18n.Lang, w, h int, body []string, hint string) string {
+	if h < 3 {
+		h = 3
+	}
 	rows := hintRows(h)
 	bodyH := panelBodyHeight(h)
 	out := make([]string, 0, h)
@@ -109,6 +113,10 @@ func framePanel(pal theme.Palette, lang i18n.Lang, w, h int, body []string, hint
 		out = append(out, hintBoxFor(pal, lang, hint, w)...)
 	} else {
 		out = append(out, " "+theme.Truncate(hint, maxInt(0, w-2)))
+	}
+	// Degenerate terminals: never emit more rows than the window can show.
+	if len(out) > h {
+		out = out[:h]
 	}
 	return strings.Join(out, "\n")
 }

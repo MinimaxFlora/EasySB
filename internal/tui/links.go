@@ -12,9 +12,9 @@ import (
 	"github.com/MinimaxFlora/EasySB/internal/theme"
 )
 
-// linkCardHeight is the number of terminal rows one card occupies, including
-// its two border rows.
-const linkCardHeight = 5
+// linkCardHeight is the number of terminal rows one card occupies: two border
+// rows plus the meta and type lines.
+const linkCardHeight = 4
 
 // linkCardGap is the blank gap between two card columns in cells.
 const linkCardGap = 2
@@ -43,6 +43,9 @@ type linksModel struct {
 	copied int
 	cols   int
 	cardW  int
+	// status is transient feedback for copy-all, shown in the header because no
+	// single card can carry the cue.
+	status string
 	// topRow is the first grid row currently on screen; the grid scrolls with
 	// the arrow keys to keep the cursor visible.
 	topRow int
@@ -54,12 +57,14 @@ func newLinksModel(title string, items []linkItem) *linksModel {
 	return &linksModel{title: title, items: items, copied: -1}
 }
 
-// copy stores text on the system clipboard and remembers which card produced it.
+// copy stores text on the system clipboard and remembers which card produced
+// it; the copied card turns green on the next render.
 func (l *linksModel) copy(index int) tea.Cmd {
 	if index < 0 || index >= len(l.items) {
 		return nil
 	}
 	l.copied = index
+	l.status = ""
 	return tea.SetClipboard(l.items[index].value)
 }
 
@@ -105,7 +110,9 @@ func (l *linksModel) handleKey(msg tea.KeyPressMsg, lang i18n.Lang) (tea.Cmd, bo
 	case "enter":
 		return l.copy(l.cursor), false
 	case "c":
-		return l.copyAll(), false
+		cmd := l.copyAll()
+		l.status = lang.T("links_copied_all")
+		return cmd, false
 	case "left":
 		l.move(-1)
 		return nil, false
@@ -121,6 +128,7 @@ func (l *linksModel) handleKey(msg tea.KeyPressMsg, lang i18n.Lang) (tea.Cmd, bo
 	}
 	if n, err := strconv.Atoi(key); err == nil && n >= 1 && n <= len(l.items) {
 		l.cursor = n - 1
+		l.status = ""
 	}
 	return nil, false
 }
@@ -139,6 +147,7 @@ func (l *linksModel) move(d int) {
 	if len(l.items) == 0 {
 		return
 	}
+	l.status = ""
 	l.cursor += d
 	if l.cursor < 0 {
 		l.cursor = 0
@@ -148,36 +157,28 @@ func (l *linksModel) move(d int) {
 	}
 }
 
-// card renders one card. The value is deliberately absent from the content.
-func (l *linksModel) card(item linkItem, index, width int, pal theme.Palette, lang i18n.Lang, ic icons.Set) string {
+// card renders one card. The value is deliberately absent from the content:
+// only the host and the subscription type are drawn, and the frame color is the
+// copy state.
+func (l *linksModel) card(item linkItem, index, width int, pal theme.Palette) string {
 	inner := width - 4
 	meta := pal.Value(theme.Truncate(item.meta, inner))
 	desc := pal.Dim(theme.Truncate(item.desc, inner))
 
-	var chip string
+	border := pal.Border
+	title := pal.Text
 	switch {
 	case l.copied == index:
-		chip = pal.Colored(pal.OK, ic.OK+" "+lang.T("links_copied"))
+		border, title = pal.OK, pal.OK
 	case l.cursor == index:
-		chip = pal.Bold(pal.Primary, ic.Link+" "+lang.T("links_copy"))
-	default:
-		chip = pal.Dim(theme.Truncate(ic.Link+" "+lang.T("links_copy"), inner))
+		border, title = pal.Primary, pal.Primary
 	}
-
-	border := pal.Border
-	label := item.label
-	if l.cursor == index {
-		border = pal.Primary
-		if len(l.items) <= 9 {
-			label = fmt.Sprintf("%d %s", index+1, item.label)
-		}
-	}
-	return theme.Box(label, meta+"\n"+desc+"\n"+chip, width, border, pal.Primary)
+	return theme.Box(item.label, meta+"\n"+desc, width, border, title)
 }
 
 // gridLines renders the visible grid rows and records how many fit. Each row
 // block is linkCardHeight lines tall, with one blank line between rows.
-func (l *linksModel) gridLines(cols, cardW, gridH int, pal theme.Palette, lang i18n.Lang, ic icons.Set) []string {
+func (l *linksModel) gridLines(cols, cardW, gridH int, pal theme.Palette) []string {
 	if len(l.items) == 0 {
 		l.topRow, l.visibleRows = 0, 0
 		return nil
@@ -218,7 +219,7 @@ func (l *linksModel) gridLines(cols, cardW, gridH int, pal theme.Palette, lang i
 		for col := 0; col < cols; col++ {
 			index := row*cols + col
 			if index < len(l.items) {
-				cards[col] = l.card(l.items[index], index, cardW, pal, lang, ic)
+				cards[col] = l.card(l.items[index], index, cardW, pal)
 			} else {
 				cards[col] = blankCard(cardW)
 			}
@@ -248,9 +249,12 @@ func (l *linksModel) render(width, height int, pal theme.Palette, lang i18n.Lang
 		bodyH = 1
 	}
 
-	grid := l.gridLines(cols, cardW, bodyH-2, pal, lang, ic)
+	grid := l.gridLines(cols, cardW, bodyH-2, pal)
 
 	header := pal.Bold(pal.Primary, " "+ic.Link+" "+theme.Truncate(l.title, width-6))
+	if l.status != "" {
+		header += "  " + pal.Colored(pal.OK, ic.OK+" "+l.status)
+	}
 	rows := 0
 	if len(l.items) > 0 {
 		rows = (len(l.items) + cols - 1) / cols
@@ -269,7 +273,7 @@ func (l *linksModel) render(width, height int, pal theme.Palette, lang i18n.Lang
 // blankCard keeps empty grid cells the same width as a real card.
 func blankCard(width int) string {
 	line := strings.Repeat(" ", width)
-	return strings.Join([]string{line, line, line, line, line}, "\n")
+	return strings.Join([]string{line, line, line, line}, "\n")
 }
 
 func (l *linksModel) View(w, h int, pal theme.Palette, lang i18n.Lang, ic icons.Set) string {
