@@ -10,9 +10,8 @@ func TestPassword(t *testing.T) {
 	if len(p) != 22 {
 		t.Fatalf("password length = %d, want 22", len(p))
 	}
-	// Several share-link parsers only accept alphanumeric userinfo (for example
-	// luci-app-ssr-plus via neturl), so the password may not use any other
-	// character even if URL-safe.
+	// Passwords stay alphanumeric so url.User introduces no percent-encoding:
+	// some share-link parsers drop a userinfo that contains a `%`.
 	for _, r := range p {
 		if !strings.ContainsRune("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789", r) {
 			t.Fatalf("password %q contains a non-alphanumeric character", p)

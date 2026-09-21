@@ -202,10 +202,12 @@ It is also hosted by nginx as a lightweight static site on port `8443`. The lega
 | Client | Endpoint | Content |
 | :--- | :--- | :--- |
 | sing-box (SFM / SFA / SFI) | `/singbox/<uuid>` | JSON profile |
-| mihomo / Clash Meta | `/mihomo/<uuid>` | Complete YAML profile |
-| v2rayN | `/v2ray/<uuid>` | Base64 share-link document |
+| mihomo / Clash Meta / luci-app-nikki | `/mihomo/<uuid>` | Complete YAML profile |
+| v2rayN / passwall / passwall2 / homeproxy | `/v2ray/<uuid>` | Base64 share-link document |
 
-The `/v2ray/<uuid>` document is the universal format. v2rayN imports it directly, and the OpenWrt proxy clients `passwall`, `passwall2`, `homeproxy` and `luci-app-ssr-plus` base64-decode the same document before parsing it, so a single endpoint covers all of them. The VLESS share link carries a 32-character hyphen-less UUID because the `neturl` bundled with `luci-app-ssr-plus` only accepts alphanumeric userinfo; the other clients decode it back to the same UUID.
+The `/v2ray/<uuid>` document is the universal format. v2rayN imports it directly, and the OpenWrt proxy clients `passwall`, `passwall2` and `homeproxy` base64-decode the same document before parsing it, so a single endpoint covers all of them. `luci-app-nikki` uses the mihomo core, so it consumes the `/mihomo/<uuid>` YAML profile, which carries the top-level `proxies` key it validates for.
+
+Every share link keeps the canonical hyphenated UUID. `homeproxy` validates the node UUID with the LuCI `uuid` check and rejects the 32-character hyphen-less form, so the compact form must not be emitted.
 
 The UUID acts as the access token, so treat the URLs as secrets. The sing-box QR payload is wrapped as `sing-box://import-remote-profile?url=...` for one-scan import; mihomo and v2rayN QR payloads are the plain subscription URL, because Clash-family scanners fetch the scanned text directly as a profile URL (the `clash://install-config?url=...` deep link only works when clicked from a browser). sing-box listens for WebSocket directly; nginx only serves static files and never reverse-proxies.
 

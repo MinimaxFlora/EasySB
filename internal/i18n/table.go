@@ -207,9 +207,10 @@ var table = []entry{
 	{"sub_need_deploy", "请先部署节点", "Deploy the node first"},
 	{"sub_import_link", "导入链接", "Import link"},
 	{"sub_client_singbox", "sing-box 订阅", "sing-box subscription"},
-	{"sub_client_mihomo", "mihomo / Clash 订阅", "mihomo / Clash subscription"},
-	{"sub_client_v2ray", "v2rayN / OpenWrt 通用订阅（Base64）", "v2rayN / OpenWrt universal subscription (Base64)"},
-	{"sub_client_v2ray_desc", "响应体即 Base64 分享链接文档，v2rayN、passwall、passwall2、homeproxy、luci-app-ssr-plus 通用", "The response body is the Base64 share-link document, shared by v2rayN, passwall, passwall2, homeproxy and luci-app-ssr-plus"},
+	{"sub_client_mihomo", "mihomo / Clash Meta / luci-app-nikki（YAML）", "mihomo / Clash Meta / luci-app-nikki (YAML)"},
+	{"sub_client_mihomo_desc", "完整 YAML 配置，mihomo、Clash Meta、luci-app-nikki 通用", "Complete YAML profile, shared by mihomo, Clash Meta and luci-app-nikki"},
+	{"sub_client_v2ray", "v2rayN / passwall / passwall2 / homeproxy（Base64）", "v2rayN / passwall / passwall2 / homeproxy (Base64)"},
+	{"sub_client_v2ray_desc", "Base64 分享链接文档，v2rayN、passwall、passwall2、homeproxy 通用", "Base64 share-link document, shared by v2rayN, passwall, passwall2 and homeproxy"},
 
 	{"svc_title", "服务管理", "Service management"},
 	{"svc_start", "启动服务", "Start service"},

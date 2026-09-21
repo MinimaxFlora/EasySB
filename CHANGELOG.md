@@ -12,6 +12,7 @@
 - 任务/二维码页新增复制与鼠标控制：按 `C` 通过 OSC52 将整段日志复制到系统剪贴板，按 `M` 释放鼠标以便拖拽选择文本。
 - 新增 `--theme auto|dark|light`（环境变量 `EASYSB_THEME`）：启动时自动探测终端背景色，亮色背景自动切换为浅色配色，也可手动强制指定，避免在白色终端下界面几乎不可读。
 - 订阅支持多客户端：新增 mihomo / Clash Meta 完整配置（`mihomo.yaml`）与 v2rayN 分享链接文档（`v2ray.txt`），nginx 分别以 `/singbox/<uuid>`、`/mihomo/<uuid>`、`/v2ray/<uuid>` 端点提供，旧 `/subscribe` 路径保留。
+- 适配 OpenWrt 客户端：`passwall`、`passwall2`、`homeproxy` 使用 `/v2ray/<uuid>` 的 Base64 分享链接文档；`luci-app-nikki` 使用 mihomo 内核，订阅需要含顶层 `proxies`，使用 `/mihomo/<uuid>` 的 YAML 配置。
 - 订阅二维码按客户端分别生成导入链接：sing-box 使用 `sing-box://import-remote-profile?url=`，mihomo 与 v2rayN 使用纯订阅地址（Clash 系客户端的扫码导入会把二维码内容直接当作订阅 URL 抓取，`clash://install-config?url=` 仅适用于系统级深链点击）。
 - 新增 `templates/config/mihomo.yaml` 可读样例，与内嵌模板 `internal/subscribe/mihomo.yaml` 保持同步。
 - mihomo 配置对齐完整桌面方案：新增 `external-controller`（`0.0.0.0:9090`）、`secret`、`external-ui`、`external-ui-url`（Zashboard）、`unified-delay`，补全 fake-ip DNS 与 `fake-ip-filter`，策略组改为 `负载均衡` / `自动选择` / `🌍选择代理节点`，规则新增 `GEOIP,LAN,DIRECT` 与 `GEOSITE,CN,DIRECT`。
@@ -21,10 +22,10 @@
 - 修复生成的 sing-box 订阅 JSON 被编码为字母序的问题：现在保留模板中的顶层分区顺序与节点内参数顺序，与 `templates/config/tun-fakeip.json` 可读样例一致。
 - 修复任务页启用鼠标捕获后无法用鼠标选中并复制订阅链接的问题：现可用 `C` 直接复制，或按 `M` 释放鼠标后原生选择。
 - 修复公网 IP 探测在双栈主机上返回 IPv6 的问题：探测端点改为优先使用仅 IPv4 的接口。
-- 修复 OpenWrt 客户端订阅后节点丢失密码：homeproxy 会丢弃含百分号转义的 userinfo，luci-app-ssr-plus 用 neturl 解析 hysteria2 userinfo 时只接受 `[A-Za-z0-9+.]`，会丢弃含 `-` `_` 的 URL-safe Base64 密码。生成密码现改为纯字母数字（22 字符），v2rayN、passwall、passwall2、homeproxy 与 luci-app-ssr-plus 均可正常读取。
-- 修复 luci-app-ssr-plus 读取 VMess 节点加密方式为空的问题：分享链接在 `scy` 之外同时写出 `security`，兼容只读 `security` 的解析器。
-- 修复 luci-app-ssr-plus 解析 VLESS 节点 UUID 为空的问题：vless 分享链接改用 32 位无连字符 UUID，Xray、sing-box、mihomo 与 v2rayN 均解析为同一值。
-- 订阅界面明确 `/v2ray/<uuid>` 为通用格式：客户端标签改为「v2rayN / OpenWrt 通用订阅」，并补充说明 passwall、passwall2、homeproxy、luci-app-ssr-plus 共用同一份 Base64 文档。
+- 修复 OpenWrt 客户端订阅后节点丢失密码：homeproxy 会丢弃含百分号转义的 userinfo，标准 Base64 密码（`+` `/` `=`）会静默丢失密码。生成密码现改为纯字母数字（22 字符），v2rayN、passwall、passwall2 与 homeproxy 均可正常读取。
+- 修复部分解析器读取 VMess 节点加密方式为空的问题：分享链接在 `scy` 之外同时写出 `security`，兼容只读 `security` 的解析器。
+- 修复 homeproxy 报「请输入有效 uuid」：VLESS 分享链接保持带连字符的标准 UUID，不再输出 32 位紧凑形式（homeproxy 会用 LuCI 的 `uuid` 校验节点）。
+- 订阅界面按插件列出兼容客户端：`/mihomo/<uuid>` 标注 mihomo / Clash Meta / luci-app-nikki，`/v2ray/<uuid>` 标注 v2rayN / passwall / passwall2 / homeproxy，并分别说明 YAML 与 Base64 两种格式。
 - 修复主菜单选中行光标长度随行内描述长短变化的问题：选中条现在统一填充到面板内宽。
 - 修复分享链接生成失败：AnyTLS 与 Hysteria2 URI 在查询串前缺少 `/`，且密码未做百分号编码，导致客户端拒绝导入。
 - 修复 mihomo 二维码无法被 FlClash 等 Clash 系客户端识别：二维码改为纯订阅地址，不再包装 `clash://install-config?url=`。

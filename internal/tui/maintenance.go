@@ -28,15 +28,18 @@ func clientLabel(lang i18n.Lang, client subscribe.Client) string {
 	}
 }
 
-// clientDescription returns an optional localized note about which client
-// family a subscription format serves. Only the universal v2ray document has
-// one, because the same Base64 links are shared by v2rayN and the OpenWrt
-// proxy clients.
+// clientDescription returns an optional localized note listing the clients a
+// subscription format serves. The v2ray and mihomo documents are each shared by
+// several OpenWrt plugins, so the note names them explicitly.
 func clientDescription(lang i18n.Lang, client subscribe.Client) string {
-	if client == subscribe.ClientV2Ray {
+	switch client {
+	case subscribe.ClientV2Ray:
 		return lang.T("sub_client_v2ray_desc")
+	case subscribe.ClientMihomo:
+		return lang.T("sub_client_mihomo_desc")
+	default:
+		return ""
 	}
-	return ""
 }
 
 // logSubscriptionURLs prints each client label, its subscription URL and any

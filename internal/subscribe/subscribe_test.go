@@ -69,7 +69,7 @@ func TestShareLinks(t *testing.T) {
 	if payload["add"] != "203.0.113.10" || payload["id"] != c.UUID {
 		t.Fatalf("unexpected vmess payload: %v", payload)
 	}
-	// luci-app-ssr-plus reads only "security"; v2rayN and mihomo read "scy".
+	// Some parsers read only "security"; v2rayN and mihomo read "scy".
 	if payload["scy"] != "auto" || payload["security"] != "auto" {
 		t.Fatalf("vmess encryption must be set under both keys: %v", payload)
 	}
@@ -86,22 +86,18 @@ func TestShareLinksRespectsDisabled(t *testing.T) {
 	}
 }
 
-func TestVLESSShareLinkUsesCompactUUID(t *testing.T) {
+func TestVLESSShareLinkKeepsCanonicalUUID(t *testing.T) {
 	c := sample()
-	compact := strings.ReplaceAll(c.UUID, "-", "")
 	var vless string
 	for _, l := range ShareLinks(c) {
 		if strings.HasPrefix(l, "vless://") {
 			vless = l
 		}
 	}
-	// luci-app-ssr-plus neturl rejects hyphenated userinfo and leaves the node
-	// without a UUID, so the vless share link must carry the 32 character form.
-	if !strings.HasPrefix(vless, "vless://"+compact+"@") {
-		t.Fatalf("vless link should carry the compact UUID: %s", vless)
-	}
-	if strings.Contains(vless, c.UUID) {
-		t.Fatalf("vless link should not carry the hyphenated UUID: %s", vless)
+	// homeproxy validates the node UUID with the LuCI uuid check and rejects
+	// the 32 character form, so the share link must keep the canonical UUID.
+	if !strings.HasPrefix(vless, "vless://"+c.UUID+"@") {
+		t.Fatalf("vless link should carry the canonical UUID: %s", vless)
 	}
 }
 

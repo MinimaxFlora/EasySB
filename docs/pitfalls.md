@@ -42,20 +42,18 @@ Traps already hit in this repository. Each entry names the symptom and the fix.
   (`url.User` / `url.UserPassword`), otherwise an `@` or `/` in a generated
   password truncates the URI. Generated passwords avoid the problem by staying
   alphanumeric (`secret.Password`, alphabet `[A-Za-z0-9]`), the intersection
-  every target parser accepts. Two client behaviours set that alphabet: OpenWrt's
-  homeproxy drops userinfo containing a `%`, so a standard base64 password
-  (`+`/`/`/`=`) silently loses the password; `luci-app-ssr-plus` parses hysteria2
-  userinfo with the bundled neturl, whose character class is only
-  `[A-Za-z0-9+.]`, so URL-safe base64 (`-`/`_`) is dropped there instead.
-- **VLESS share links carry a hyphen-less UUID.** `luci-app-ssr-plus` reads the
-  vless userinfo through the same neturl, so a canonical UUID is dropped and the
-  node ends up with an empty UUID. `subscribe.compactUUID` strips the hyphens;
-  Xray, sing-box, mihomo and v2rayN parse the 32 character form to the same
-  value. The sing-box JSON and mihomo YAML keep the canonical form.
+  every target parser accepts. OpenWrt's homeproxy drops userinfo containing a
+  `%`, so a standard base64 password (`+`/`/`/`=`) silently loses the password;
+  staying alphanumeric avoids that.
+- **Share links keep the canonical UUID.** Emitting the 32 character hyphen-less
+  form makes homeproxy flag the node as an invalid UUID through its LuCI `uuid`
+  validation, even though sing-box's gofrs parser accepts it. Keep the
+  hyphenated form in every share link.
 - **`/v2ray/<uuid>` is the universal Base64 document.** v2rayN reads it
-  directly; passwall, passwall2, homeproxy and luci-app-ssr-plus base64-decode
-  it first. No separate "base" format is needed, only the per-client parsing
-  fixes above.
+  directly; passwall, passwall2 and homeproxy base64-decode it first. No
+  separate "base" format is needed. `luci-app-nikki` runs the mihomo core and
+  validates for a top-level `proxies` key, so it uses the `/mihomo/<uuid>` YAML
+  profile instead.
 - **Template actions in comments are still expanded.** `text/template` executes
   `{{ ... }}` even inside YAML/JSON comments. A `{{ .Proxies }}` in a mihomo
   header comment injects uncommented proxy entries above the document root and

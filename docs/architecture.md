@@ -106,12 +106,15 @@ at comes from `subscribe.ClientFile`.
 | :--- | :--- | :--- | :--- |
 | `/subscribe` | `subscribe.json` | `application/json` | legacy sing-box |
 | `/singbox/<uuid>` | `subscribe.json` | `application/json` | sing-box (SFM / SFA / SFI) |
-| `/mihomo/<uuid>` | `mihomo.yaml` | `text/yaml` | mihomo / Clash Meta |
-| `/v2ray/<uuid>` | `v2ray.txt` | `text/plain` | v2rayN, passwall, passwall2, homeproxy, luci-app-ssr-plus |
+| `/mihomo/<uuid>` | `mihomo.yaml` | `text/yaml` | mihomo / Clash Meta, luci-app-nikki |
+| `/v2ray/<uuid>` | `v2ray.txt` | `text/plain` | v2rayN, passwall, passwall2, homeproxy |
 
 The `/v2ray/<uuid>` document is the universal format: every client above either
-reads the Base64 share links directly or base64-decodes the document first. The
-VLESS link uses a hyphen-less UUID so `luci-app-ssr-plus`'s `neturl` accepts it.
+reads the Base64 share links directly or base64-decodes the document first.
+`luci-app-nikki` runs the mihomo core and validates the subscription for a
+top-level `proxies` key, so it consumes the `/mihomo/<uuid>` YAML profile.
+Share links keep the canonical hyphenated UUID because homeproxy rejects the
+32-character hyphen-less form through its LuCI `uuid` validation.
 
 `subscribe.ClientLink` builds the QR payload. sing-box wraps the URL in its
 deep link (`sing-box://import-remote-profile?url=`) because that is what its

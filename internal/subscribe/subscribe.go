@@ -24,8 +24,8 @@ const (
 	// ClientMihomo serves a complete mihomo / Clash Meta YAML profile.
 	ClientMihomo Client = "mihomo"
 	// ClientV2Ray serves the base64 share-link document. It is the universal
-	// format: v2rayN reads it directly, and passwall, passwall2, homeproxy and
-	// luci-app-ssr-plus all base64-decode the same document before parsing.
+	// format: v2rayN reads it directly, and passwall, passwall2 and homeproxy
+	// all base64-decode the same document before parsing.
 	ClientV2Ray Client = "v2ray"
 )
 
@@ -202,16 +202,7 @@ func vlessLink(cfg state.Config, host, name string) string {
 	q.Set("sid", cfg.RealitySID)
 	port := portOf(cfg, state.ProtoVLESSReality)
 	return fmt.Sprintf("vless://%s@%s:%s?%s#%s-VLESS-Reality",
-		url.User(compactUUID(cfg.UUID)).String(), host, port, q.Encode(), name)
-}
-
-// compactUUID strips the hyphens from a UUID for share links read by
-// luci-app-ssr-plus, whose bundled neturl only accepts alphanumeric userinfo
-// ([A-Za-z0-9+.]) and drops a canonical UUID, leaving the node without a UUID.
-// Xray, sing-box, mihomo and v2rayN all parse the 32 character hex form as the
-// same value.
-func compactUUID(uuid string) string {
-	return strings.ReplaceAll(uuid, "-", "")
+		url.User(cfg.UUID).String(), host, port, q.Encode(), name)
 }
 
 func portOf(cfg state.Config, key string) string {

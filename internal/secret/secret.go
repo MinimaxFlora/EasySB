@@ -7,11 +7,10 @@ import (
 	"io"
 )
 
-// passwordAlphabet is the intersection accepted by every share-link parser we
-// target: v2rayN, passwall, passwall2, homeproxy and luci-app-ssr-plus. The
-// last one parses hysteria2 userinfo with the bundled neturl, whose character
-// class is only [A-Za-z0-9+.]; anything else (including the '-' and '_' of
-// URL-safe base64) makes it drop the password, so the node shows up empty.
+// passwordAlphabet keeps share-link passwords readable by every client we
+// target: v2rayN, passwall, passwall2 and homeproxy. Staying alphanumeric means
+// url.User never percent-encodes the userinfo, and homeproxy drops a userinfo
+// that contains a `%`, which would otherwise leave the node without a password.
 const passwordAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
 
 // Password returns a 22 character alphanumeric password (about 131 bits of

@@ -206,10 +206,12 @@ sing-box check -c templates/vless-vision-reality/config_server.json
 | 客户端 | 订阅端点 | 内容 |
 | :--- | :--- | :--- |
 | sing-box（SFM / SFA / SFI） | `/singbox/<uuid>` | JSON 配置 |
-| mihomo / Clash Meta | `/mihomo/<uuid>` | 完整 YAML 配置 |
-| v2rayN | `/v2ray/<uuid>` | Base64 分享链接文档 |
+| mihomo / Clash Meta / luci-app-nikki | `/mihomo/<uuid>` | 完整 YAML 配置 |
+| v2rayN / passwall / passwall2 / homeproxy | `/v2ray/<uuid>` | Base64 分享链接文档 |
 
-`/v2ray/<uuid>` 文档即通用格式。v2rayN 可直接导入，OpenWrt 上的 `passwall`、`passwall2`、`homeproxy`、`luci-app-ssr-plus` 也会先对同一份文档做 Base64 解码再逐行解析，一个端点即可覆盖全部。VLESS 分享链接使用 32 位无连字符 UUID，因为 `luci-app-ssr-plus` 内置的 `neturl` 只接受字母数字 userinfo；其余客户端会将其还原为同一个 UUID。
+`/v2ray/<uuid>` 文档即通用格式。v2rayN 可直接导入，OpenWrt 上的 `passwall`、`passwall2`、`homeproxy` 也会先对同一份文档做 Base64 解码再逐行解析，一个端点即可覆盖。`luci-app-nikki` 使用 mihomo 内核，订阅必须含顶层 `proxies`，因此走 `/mihomo/<uuid>` 这份 YAML 配置。
+
+所有分享链接都保留标准的带连字符 UUID。`homeproxy` 会用 LuCI 的 `uuid` 校验节点，32 位无连字符形式会被判为无效，因此不能输出紧凑形式。
 
 UUID 即访问 token，请将订阅地址视为机密。sing-box 二维码会包装为 `sing-box://import-remote-profile?url=...` 以便扫码导入；mihomo 与 v2rayN 二维码使用纯订阅地址，因为 Clash 系客户端扫码后会把内容直接当作订阅 URL 抓取（`clash://install-config?url=...` 仅在浏览器点击深链时有效）。sing-box 直接监听 WebSocket，nginx 只负责静态文件，不做反向代理。
 
