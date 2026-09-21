@@ -32,8 +32,8 @@ func (a *App) sectionTitle(key string) string {
 	return "  " + a.palette.Bold(a.palette.Primary, a.lang.T(key))
 }
 
-// overviewRows renders the runtime overview: version and core, service and node
-// state, then domain and listening ports.
+// overviewRows renders the runtime overview: service and node state, version
+// and core, then domain and listening ports.
 func (a *App) overviewRows(width int) []string {
 	s := a.status
 
@@ -68,11 +68,11 @@ func (a *App) overviewRows(width int) []string {
 	versionStyle := func(v string) string { return a.palette.Colored(a.palette.OK, v) }
 
 	return []string{
-		a.styledTwoCols(width, a.lang.T("ov_version"), a.scriptVersion, versionStyle,
-			a.lang.T("ov_core"), corePlain, coreStyle),
 		a.styledTwoCols(width,
 			a.lang.T("ov_service"), "● "+a.lang.T(svcKey), svcStyle,
 			a.lang.T("ov_node"), "● "+a.lang.T(nodeKey), nodeStyle),
+		a.styledTwoCols(width, a.lang.T("ov_version"), a.scriptVersion, versionStyle,
+			a.lang.T("ov_core"), corePlain, coreStyle),
 		a.styledTwoCols(width, a.lang.T("status_domain"), a.panelValue(s.Domain), a.palette.Value,
 			a.lang.T("status_ports"), a.panelValue(enabledPorts(s.Ports)), a.palette.Value),
 	}

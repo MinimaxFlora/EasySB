@@ -629,7 +629,7 @@ func (a *App) dashboard() string {
 	divider()
 	menuTitle := "  " + a.palette.Bold(a.palette.Primary, a.current().title(a.lang))
 	descCol := a.menuDescColumn(inner, a.menuLabelColumn())
-	cursorWidth := a.menuCursorWidth(inner, descCol)
+	cursorWidth := a.menuCursorWidth(inner)
 	items, hidden := a.menuViewport(l.items, inner, descCol, cursorWidth)
 	if hidden > 0 {
 		menuTitle += a.palette.Dim(fmt.Sprintf("  (+%d)", hidden))
@@ -810,7 +810,7 @@ func (a *App) menuViewport(limit, inner, descCol, cursorWidth int) ([]string, in
 func (a *App) menuRowParts(n *node, inner, descCol int) (string, string) {
 	label := a.nodeLabel(n)
 	desc := ""
-	if a.current().id == "root" && n.desc != nil {
+	if n.desc != nil {
 		desc = n.desc(a.lang)
 	}
 	if desc != "" {
@@ -826,27 +826,10 @@ func (a *App) menuRowParts(n *node, inner, descCol int) (string, string) {
 	return theme.Truncate(label, inner-3), ""
 }
 
-// menuRowWidth measures a row exactly as menuRow renders it, so the cursor bar
-// can be sized to the longest entry.
-func (a *App) menuRowWidth(n *node, inner, descCol int) int {
-	head, desc := a.menuRowParts(n, inner, descCol)
-	return 3 + lipgloss.Width(head) + lipgloss.Width(desc)
-}
-
-// menuCursorWidth returns the length every selection bar is padded to, so the
-// cursor keeps one size while moving: the width of the longest row in the
-// current menu, capped at the panel's inner width.
-func (a *App) menuCursorWidth(inner, descCol int) int {
-	width := 0
-	for _, n := range a.current().nodes {
-		if w := a.menuRowWidth(n, inner, descCol); w > width {
-			width = w
-		}
-	}
-	if width < 1 || width > inner {
-		width = inner
-	}
-	return width
+// menuCursorWidth returns the length every selection bar is padded to. The bar
+// spans the full inner width so the cursor keeps one size while moving.
+func (a *App) menuCursorWidth(inner int) int {
+	return inner
 }
 
 // menuRow renders one menu entry. The main menu pads its labels into a column

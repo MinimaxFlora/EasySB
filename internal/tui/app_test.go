@@ -417,8 +417,8 @@ func TestValidHopRange(t *testing.T) {
 }
 
 func TestMenuCursorKeepsUniformWidth(t *testing.T) {
-	// The selection bar is padded to the longest entry so it does not grow and
-	// shrink as the cursor moves through rows with different length descriptions.
+	// The selection bar spans the full inner width so it stays one size as the
+	// cursor moves through rows with different length descriptions.
 	a := New("test", i18n.Chinese)
 	a.width, a.height = 100, 34
 	a.sized = true
@@ -427,21 +427,30 @@ func TestMenuCursorKeepsUniformWidth(t *testing.T) {
 
 	inner := a.width - 4
 	descCol := a.menuDescColumn(inner, a.menuLabelColumn())
-	cursorWidth := a.menuCursorWidth(inner, descCol)
-
-	longest := 0
-	for _, n := range a.current().nodes {
-		if w := a.menuRowWidth(n, inner, descCol); w > longest {
-			longest = w
-		}
-	}
-	if cursorWidth != longest {
-		t.Fatalf("cursor width = %d, want longest row %d", cursorWidth, longest)
+	cursorWidth := a.menuCursorWidth(inner)
+	if cursorWidth != inner {
+		t.Fatalf("cursor width = %d, want inner %d", cursorWidth, inner)
 	}
 	for i, n := range a.current().nodes {
 		bar := a.menuRow(true, n, inner, descCol, cursorWidth)
 		if got := lipgloss.Width(bar); got != cursorWidth {
 			t.Fatalf("row %d bar width = %d, want %d", i, got, cursorWidth)
+		}
+	}
+}
+
+func TestSubmenuShowsDescriptions(t *testing.T) {
+	a := New("test", i18n.Chinese)
+	a.width, a.height = 100, 46
+	a.sized = true
+	a.status = sysinfo.Collect("test")
+	a.ready = true
+
+	a.push(buildSubscribe())
+	view := a.View().Content
+	for _, key := range []string{"desc_sub_regen", "desc_sub_url", "desc_sub_qr", "desc_sub_links"} {
+		if !strings.Contains(view, i18n.Chinese.T(key)) {
+			t.Fatalf("subscription submenu missing description %q:\n%s", key, view)
 		}
 	}
 }
