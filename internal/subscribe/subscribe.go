@@ -215,19 +215,20 @@ func portOf(cfg state.Config, key string) string {
 func vmessLink(cfg state.Config, host, name string) string {
 	sni := host
 	payload := map[string]any{
-		"v":    "2",
-		"ps":   name + "-VMess",
-		"add":  host,
-		"port": portOf(cfg, state.ProtoVMessWSTLS),
-		"id":   cfg.UUID,
-		"aid":  "0",
-		"scy":  "auto",
-		"net":  "ws",
-		"type": "none",
-		"host": sni,
-		"path": "/vmess",
-		"tls":  "tls",
-		"sni":  sni,
+		"v":        "2",
+		"ps":       name + "-VMess",
+		"add":      host,
+		"port":     portOf(cfg, state.ProtoVMessWSTLS),
+		"id":       cfg.UUID,
+		"aid":      "0",
+		"scy":      "auto",
+		"security": "auto",
+		"net":      "ws",
+		"type":     "none",
+		"host":     sni,
+		"path":     "/vmess",
+		"tls":      "tls",
+		"sni":      sni,
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {

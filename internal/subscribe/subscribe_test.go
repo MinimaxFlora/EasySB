@@ -69,6 +69,10 @@ func TestShareLinks(t *testing.T) {
 	if payload["add"] != "203.0.113.10" || payload["id"] != c.UUID {
 		t.Fatalf("unexpected vmess payload: %v", payload)
 	}
+	// luci-app-ssr-plus reads only "security"; v2rayN and mihomo read "scy".
+	if payload["scy"] != "auto" || payload["security"] != "auto" {
+		t.Fatalf("vmess encryption must be set under both keys: %v", payload)
+	}
 }
 
 func TestShareLinksRespectsDisabled(t *testing.T) {

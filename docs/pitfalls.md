@@ -40,12 +40,13 @@ Traps already hit in this repository. Each entry names the symptom and the fix.
   `anytls://pass@host:port?query` makes clients reject the link; the spec form is
   `anytls://pass@host:port/?query`. Credentials must also be percent-encoded
   (`url.User` / `url.UserPassword`), otherwise an `@` or `/` in a generated
-  password truncates the URI. Generated passwords avoid this entirely by using
-  URL-safe base64 (`secret.Password`, alphabet `[A-Za-z0-9_-]`, no padding), so
-  there is nothing to escape. That matters for clients which reject escaped
-  userinfo: OpenWrt's homeproxy drops the whole credential when it sees a `%`,
-  which silently stripped the password from every node built from a standard
-  base64 password.
+  password truncates the URI. Generated passwords avoid the problem by staying
+  alphanumeric (`secret.Password`, alphabet `[A-Za-z0-9]`), the intersection
+  every target parser accepts. Two client behaviours set that alphabet: OpenWrt's
+  homeproxy drops userinfo containing a `%`, so a standard base64 password
+  (`+`/`/`/`=`) silently loses the password; `luci-app-ssr-plus` parses hysteria2
+  userinfo with the bundled neturl, whose character class is only
+  `[A-Za-z0-9+.]`, so URL-safe base64 (`-`/`_`) is dropped there instead.
 - **Template actions in comments are still expanded.** `text/template` executes
   `{{ ... }}` even inside YAML/JSON comments. A `{{ .Proxies }}` in a mihomo
   header comment injects uncommented proxy entries above the document root and

@@ -3,22 +3,35 @@ package secret
 
 import (
 	"crypto/rand"
-	"encoding/base64"
 	"encoding/hex"
 	"io"
 )
 
-// Password returns a URL-safe base64 encoded 16 byte random password (22
-// chars). The alphabet is [A-Za-z0-9_-] with no padding so the value needs no
-// percent-encoding inside a share link; some clients (for example OpenWrt's
-// homeproxy) reject userinfo that contains escaped characters and would drop
-// the password from the node.
+// passwordAlphabet is the intersection accepted by every share-link parser we
+// target: v2rayN, passwall, passwall2, homeproxy and luci-app-ssr-plus. The
+// last one parses hysteria2 userinfo with the bundled neturl, whose character
+// class is only [A-Za-z0-9+.]; anything else (including the '-' and '_' of
+// URL-safe base64) makes it drop the password, so the node shows up empty.
+const passwordAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+
+// Password returns a 22 character alphanumeric password (about 131 bits of
+// entropy) built only from passwordAlphabet.
 func Password() string {
-	b := make([]byte, 16)
-	if _, err := io.ReadFull(rand.Reader, b); err != nil {
-		return ""
+	const length = 22
+	const limit = byte(256 - 256%len(passwordAlphabet))
+	out := make([]byte, length)
+	buf := make([]byte, 1)
+	for i := 0; i < length; {
+		if _, err := io.ReadFull(rand.Reader, buf); err != nil {
+			return ""
+		}
+		if buf[0] >= limit {
+			continue
+		}
+		out[i] = passwordAlphabet[int(buf[0])%len(passwordAlphabet)]
+		i++
 	}
-	return base64.RawURLEncoding.EncodeToString(b)
+	return string(out)
 }
 
 // ShortID returns an 8 character hex Reality short id.
