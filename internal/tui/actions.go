@@ -165,16 +165,8 @@ func writeConfig(cfg state.Config) error {
 
 func showSubscriptionURL() actionFunc {
 	return func(a *App) tea.Cmd {
-		lang := a.lang
-		return a.startTask(lang.T("sub_url"), func(ctx context.Context, log func(string)) error {
-			cfg := state.Load()
-			if cfg.Host() == "" {
-				log(lang.T("sub_need_domain"))
-				return nil
-			}
-			logSubscriptionURLs(cfg, lang, log)
-			return nil
-		})
+		a.openSubscriptionLinks()
+		return nil
 	}
 }
 
@@ -210,18 +202,8 @@ func showSubscriptionQR() actionFunc {
 
 func showShareLinks() actionFunc {
 	return func(a *App) tea.Cmd {
-		lang := a.lang
-		return a.startTask(lang.T("sub_links"), func(ctx context.Context, log func(string)) error {
-			cfg := state.Load()
-			if !cfg.AnyEnabled() {
-				log(lang.T("node_all_disabled"))
-				return nil
-			}
-			for _, line := range subscribe.ShareLinks(cfg) {
-				log(line)
-			}
-			return nil
-		})
+		a.openShareLinks()
+		return nil
 	}
 }
 

@@ -35,8 +35,11 @@ type progressModel struct {
 	done   bool
 	err    error
 	mouse  bool
-	width  int
-	height int
+	// afterLinks swaps the finished log for the copyable link grid. It is used
+	// by subscription tasks, whose only interesting output is the endpoints.
+	afterLinks bool
+	width      int
+	height     int
 }
 
 func newProgress(title string, fn taskFunc) progressModel {

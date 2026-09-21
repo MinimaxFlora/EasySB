@@ -28,6 +28,18 @@ func clientLabel(lang i18n.Lang, client subscribe.Client) string {
 	}
 }
 
+// clientShortLabel returns a compact client name for a card title.
+func clientShortLabel(lang i18n.Lang, client subscribe.Client) string {
+	switch client {
+	case subscribe.ClientMihomo:
+		return lang.T("links_client_mihomo")
+	case subscribe.ClientV2Ray:
+		return lang.T("links_client_v2ray")
+	default:
+		return lang.T("links_client_singbox")
+	}
+}
+
 // clientDescription returns an optional localized note listing the clients a
 // subscription format serves. The v2ray and mihomo documents are each shared by
 // several OpenWrt plugins, so the note names them explicitly.
@@ -39,17 +51,6 @@ func clientDescription(lang i18n.Lang, client subscribe.Client) string {
 		return lang.T("sub_client_mihomo_desc")
 	default:
 		return ""
-	}
-}
-
-// logSubscriptionURLs prints each client label, its subscription URL and any
-// applicable description note.
-func logSubscriptionURLs(cfg state.Config, lang i18n.Lang, log func(string)) {
-	for _, client := range subscribe.Clients {
-		log(clientLabel(lang, client) + ": " + subscribe.ClientURL(cfg, client))
-		if note := clientDescription(lang, client); note != "" {
-			log("  " + note)
-		}
 	}
 }
 
@@ -75,15 +76,15 @@ func publishSubscription(ctx context.Context, cfg state.Config, log func(string)
 		return err
 	}
 	log(lang.T("svc_nginx_ok"))
-	logSubscriptionURLs(cfg, lang, log)
 	return nil
 }
 
 // regenerateSubscription renders subscribe.json and publishes it over nginx.
+// On success the log is replaced by the copyable link grid.
 func regenerateSubscription() actionFunc {
 	return func(a *App) tea.Cmd {
 		lang := a.lang
-		return a.startTask(lang.T("sub_regen"), func(ctx context.Context, log func(string)) error {
+		return a.startTaskLinks(lang.T("sub_regen"), func(ctx context.Context, log func(string)) error {
 			if !hasServerConfig() {
 				log(lang.T("sub_need_deploy"))
 				return nil

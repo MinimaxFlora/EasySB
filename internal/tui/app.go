@@ -11,6 +11,8 @@ import (
 
 	"github.com/MinimaxFlora/EasySB/internal/i18n"
 	"github.com/MinimaxFlora/EasySB/internal/icons"
+	"github.com/MinimaxFlora/EasySB/internal/state"
+	"github.com/MinimaxFlora/EasySB/internal/subscribe"
 	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
 	"github.com/MinimaxFlora/EasySB/internal/theme"
 )
@@ -35,6 +37,7 @@ type App struct {
 	toastErr      bool
 	task          *progressModel
 	form          *formModel
+	links         *linksModel
 }
 
 func New(scriptVersion string, lang i18n.Lang) *App {
@@ -203,6 +206,68 @@ func (a *App) startTask(title string, fn taskFunc) tea.Cmd {
 	return p.Init()
 }
 
+// startTaskLinks is startTask for subscription work: on success the log is
+// replaced by the copyable link grid.
+func (a *App) startTaskLinks(title string, fn taskFunc) tea.Cmd {
+	p := newProgress(title, fn)
+	p.afterLinks = true
+	p.resize(a.width, a.height)
+	a.task = &p
+	return p.Init()
+}
+
+// openSubscriptionLinks builds the per-client subscription card grid from the
+// current state.
+func (a *App) openSubscriptionLinks() {
+	cfg := state.Load()
+	if cfg.Host() == "" {
+		a.setToast(a.lang.T("sub_need_domain"), true)
+		return
+	}
+	port := cfg.SubPort
+	if port == "" {
+		port = state.DefaultSubPort
+	}
+	host := cfg.Host() + ":" + port
+	items := make([]linkItem, 0, len(subscribe.Clients))
+	for _, client := range subscribe.Clients {
+		items = append(items, linkItem{
+			label: clientShortLabel(a.lang, client),
+			meta:  host,
+			desc:  clientDescription(a.lang, client),
+			value: subscribe.ClientURL(cfg, client),
+		})
+	}
+	a.links = newLinksModel(a.lang.T("sub_url"), items)
+}
+
+// openShareLinks builds the share-link card grid for the enabled protocols.
+func (a *App) openShareLinks() {
+	cfg := state.Load()
+	if !cfg.AnyEnabled() {
+		a.setToast(a.lang.T("node_all_disabled"), true)
+		return
+	}
+	links := subscribe.ShareLinks(cfg)
+	order := []string{
+		state.ProtoAnyTLS,
+		state.ProtoHysteria2,
+		state.ProtoTUIC,
+		state.ProtoVMessWSTLS,
+		state.ProtoVLESSReality,
+	}
+	items := make([]linkItem, 0, len(links))
+	next := 0
+	for _, key := range order {
+		if !cfg.Enabled[key] || next >= len(links) {
+			continue
+		}
+		items = append(items, linkItem{label: state.Labels[key], meta: cfg.Host(), value: links[next]})
+		next++
+	}
+	a.links = newLinksModel(a.lang.T("sub_links"), items)
+}
+
 // openForm shows a single-value text prompt over the dashboard.
 func (a *App) openForm(title, prompt, initial, hint string, submit formSubmit) {
 	f := newForm(title, prompt, initial, hint, submit)
@@ -289,7 +354,16 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case taskDoneMsg:
 		if a.task != nil {
 			cmd := a.task.handle(msg)
+			if a.task.done && a.task.err == nil && a.task.afterLinks {
+				a.task = nil
+				a.openSubscriptionLinks()
+				cmd = nil
+			}
 			return a, tea.Batch(cmd, collectStatus(a.scriptVersion))
+		}
+	case tea.MouseClickMsg:
+		if a.links != nil {
+			return a, a.links.handleClick(msg.X, msg.Y)
 		}
 	case tea.MouseWheelMsg:
 		// Wheel scrolling is only wired up for the finished-task log/QR view,
@@ -311,6 +385,17 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		cmd, done := a.task.handleKey(msg, a.lang)
 		if done {
 			a.task = nil
+		}
+		return a, cmd
+	}
+
+	if a.links != nil {
+		if key == "ctrl+c" {
+			return a, quit()
+		}
+		cmd, done := a.links.handleKey(msg, a.lang)
+		if done {
+			a.links = nil
 		}
 		return a, cmd
 	}
@@ -372,6 +457,8 @@ func (a *App) View() tea.View {
 		content = a.formScreen()
 	case a.task != nil:
 		content = a.task.View(a.width, a.height, a.palette, a.lang, a.iconSet)
+	case a.links != nil:
+		content = a.links.View(a.width, a.height, a.palette, a.lang, a.iconSet)
 	default:
 		content = a.dashboard()
 	}
@@ -384,6 +471,9 @@ func (a *App) View() tea.View {
 	// URLs and QR codes) and only while the user has not released it. Keeping it
 	// off elsewhere, or after `M`, preserves click-drag text selection.
 	if a.task != nil && a.task.mouse {
+		v.MouseMode = tea.MouseModeCellMotion
+	}
+	if a.links != nil && a.links.mouse {
 		v.MouseMode = tea.MouseModeCellMotion
 	}
 	return v

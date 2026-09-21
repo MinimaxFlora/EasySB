@@ -211,6 +211,12 @@ var table = []entry{
 	{"sub_client_mihomo_desc", "完整 YAML 配置，mihomo、Clash Meta、luci-app-nikki 通用", "Complete YAML profile, shared by mihomo, Clash Meta and luci-app-nikki"},
 	{"sub_client_v2ray", "v2rayN / passwall / passwall2 / homeproxy（Base64）", "v2rayN / passwall / passwall2 / homeproxy (Base64)"},
 	{"sub_client_v2ray_desc", "Base64 分享链接文档，v2rayN、passwall、passwall2、homeproxy 通用", "Base64 share-link document, shared by v2rayN, passwall, passwall2 and homeproxy"},
+	{"links_client_singbox", "sing-box", "sing-box"},
+	{"links_client_mihomo", "mihomo / Clash Meta", "mihomo / Clash Meta"},
+	{"links_client_v2ray", "v2rayN / passwall", "v2rayN / passwall"},
+	{"links_copy", "点击复制", "Click to copy"},
+	{"links_copied", "已复制", "Copied"},
+	{"links_hint", "方向键选择 · Enter 复制 · 数字键复制 · C 复制全部 · M 鼠标捕获 · Esc 返回", "Arrows select · Enter copy · number keys copy · C copy all · M mouse · Esc back"},
 
 	{"svc_title", "服务管理", "Service management"},
 	{"svc_start", "启动服务", "Start service"},
