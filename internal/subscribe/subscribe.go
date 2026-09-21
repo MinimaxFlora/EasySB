@@ -37,25 +37,6 @@ var Clients = []Client{ClientSingBox, ClientMihomo, ClientV2Ray}
 // QR scanning in the legacy build.
 const ImportScheme = "sing-box://import-remote-profile?url="
 
-// ClashImportScheme is the OS deep link Clash / mihomo clients register for
-// importing a remote profile. It is meant for clicking a link, not for QR
-// scanning: FlClash and Clash Meta hand the scanned text straight to their HTTP
-// client, which cannot fetch a clash:// URL. QR payloads therefore carry the
-// plain endpoint URL; this constant is kept for reference only.
-const ClashImportScheme = "clash://install-config?url="
-
-// URL returns the legacy subscription endpoint derived from the state.
-func URL(cfg state.Config) string {
-	path := cfg.SubPath
-	if path == "" {
-		path = state.DefaultSubPath
-	}
-	if !strings.HasPrefix(path, "/") {
-		path = "/" + path
-	}
-	return baseURL(cfg) + path
-}
-
 // ClientPath returns the URL path served for one client format. The node UUID
 // acts as the access token so the document is not publicly guessable.
 func ClientPath(cfg state.Config, client Client) string {

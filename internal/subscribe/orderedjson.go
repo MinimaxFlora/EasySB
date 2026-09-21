@@ -91,18 +91,6 @@ func (v *jsonValue) asString() string {
 	}
 }
 
-// asStrings reads an array of scalar values as text.
-func (v *jsonValue) asStrings() []string {
-	if v == nil || v.kind != '[' {
-		return nil
-	}
-	out := make([]string, 0, len(v.arr))
-	for _, e := range v.arr {
-		out = append(out, e.asString())
-	}
-	return out
-}
-
 // parseOrderedJSON decodes a JSON document into the order-preserving tree.
 func parseOrderedJSON(data []byte) (*jsonValue, error) {
 	dec := json.NewDecoder(bytes.NewReader(data))

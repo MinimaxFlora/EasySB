@@ -122,13 +122,6 @@ func Pad(s string, w int) string {
 	return s + strings.Repeat(" ", pad)
 }
 
-func Fit(s string, w int) string {
-	if w <= 0 {
-		return s
-	}
-	return Pad(Truncate(s, w), w)
-}
-
 func Box(title, content string, width int, border color.Color, titleColor color.Color) string {
 	if width < 8 {
 		width = 8

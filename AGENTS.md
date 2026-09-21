@@ -40,9 +40,9 @@ Render one TUI frame without a TTY (good for layout checks):
 - Every user-facing string goes through `internal/i18n` for both `C` and `E`.
 - Directories and paths are lowercase ASCII. `templates/` subdirectories are
   lowercase.
-- The runtime subscription template is embedded from
-  `internal/subscribe/tun-fakeip.json`; `templates/config/tun-fakeip.json` is the
-  readable mirror. Keep them in sync.
+- The runtime subscription templates are embedded from `internal/subscribe/`
+  (`tun-fakeip.json`, `mihomo.yaml`); `templates/config/` holds the readable
+  mirrors. Keep each pair in sync.
 - `README.md` is English; `README_ZH.md` is Chinese. Update both.
 - Use conventional commit subjects (`type(scope): subject`) and no co-author
   trailers.

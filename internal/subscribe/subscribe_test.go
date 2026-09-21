@@ -20,15 +20,6 @@ func sample() state.Config {
 	return c
 }
 
-func TestURLUsesHTTPSchemeWithoutCert(t *testing.T) {
-	c := sample()
-	got := URL(c)
-	want := "http://203.0.113.10:8443/subscribe"
-	if got != want {
-		t.Fatalf("URL = %q, want %q", got, want)
-	}
-}
-
 func TestDeepLinkEncodesURL(t *testing.T) {
 	link := DeepLink("http://example.com:8443/subscribe")
 	if !strings.HasPrefix(link, ImportScheme) {

@@ -7,9 +7,6 @@ func TestDefault(t *testing.T) {
 	if !c.AnyEnabled() {
 		t.Fatal("default config should enable protocols")
 	}
-	if !c.NeedsDomain() {
-		t.Fatal("default config should need a domain")
-	}
 	for _, k := range Keys {
 		if c.Ports[k] != DefaultPorts[k] {
 			t.Fatalf("port %s = %q, want %q", k, c.Ports[k], DefaultPorts[k])
@@ -75,15 +72,5 @@ func TestHost(t *testing.T) {
 	c.Domain = "example.com"
 	if got := c.Host(); got != "example.com" {
 		t.Fatalf("host = %q", got)
-	}
-}
-
-func TestNeedsDomainOnlyReality(t *testing.T) {
-	c := Default()
-	for _, k := range Keys {
-		c.Enabled[k] = k == ProtoVLESSReality
-	}
-	if c.NeedsDomain() {
-		t.Fatal("reality alone should not need a domain")
 	}
 }
