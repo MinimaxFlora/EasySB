@@ -208,7 +208,8 @@ var table = []entry{
 	{"sub_import_link", "导入链接", "Import link"},
 	{"sub_client_singbox", "sing-box 订阅", "sing-box subscription"},
 	{"sub_client_mihomo", "mihomo / Clash 订阅", "mihomo / Clash subscription"},
-	{"sub_client_v2ray", "v2rayN 订阅", "v2rayN subscription"},
+	{"sub_client_v2ray", "v2rayN / OpenWrt 通用订阅", "v2rayN / OpenWrt universal subscription"},
+	{"sub_client_v2ray_desc", "Base64 分享链接，v2rayN、passwall、passwall2、homeproxy、luci-app-ssr-plus 通用", "Base64 share links, shared by v2rayN, passwall, passwall2, homeproxy and luci-app-ssr-plus"},
 
 	{"svc_title", "服务管理", "Service management"},
 	{"svc_start", "启动服务", "Start service"},

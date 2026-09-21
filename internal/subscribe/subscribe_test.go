@@ -86,6 +86,25 @@ func TestShareLinksRespectsDisabled(t *testing.T) {
 	}
 }
 
+func TestVLESSShareLinkUsesCompactUUID(t *testing.T) {
+	c := sample()
+	compact := strings.ReplaceAll(c.UUID, "-", "")
+	var vless string
+	for _, l := range ShareLinks(c) {
+		if strings.HasPrefix(l, "vless://") {
+			vless = l
+		}
+	}
+	// luci-app-ssr-plus neturl rejects hyphenated userinfo and leaves the node
+	// without a UUID, so the vless share link must carry the 32 character form.
+	if !strings.HasPrefix(vless, "vless://"+compact+"@") {
+		t.Fatalf("vless link should carry the compact UUID: %s", vless)
+	}
+	if strings.Contains(vless, c.UUID) {
+		t.Fatalf("vless link should not carry the hyphenated UUID: %s", vless)
+	}
+}
+
 func TestClientURLs(t *testing.T) {
 	c := sample()
 	if got := ClientPath(c, ClientSingBox); got != "/singbox/"+c.UUID {

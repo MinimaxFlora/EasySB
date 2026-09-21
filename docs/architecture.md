@@ -107,7 +107,11 @@ at comes from `subscribe.ClientFile`.
 | `/subscribe` | `subscribe.json` | `application/json` | legacy sing-box |
 | `/singbox/<uuid>` | `subscribe.json` | `application/json` | sing-box (SFM / SFA / SFI) |
 | `/mihomo/<uuid>` | `mihomo.yaml` | `text/yaml` | mihomo / Clash Meta |
-| `/v2ray/<uuid>` | `v2ray.txt` | `text/plain` | v2rayN |
+| `/v2ray/<uuid>` | `v2ray.txt` | `text/plain` | v2rayN, passwall, passwall2, homeproxy, luci-app-ssr-plus |
+
+The `/v2ray/<uuid>` document is the universal format: every client above either
+reads the Base64 share links directly or base64-decodes the document first. The
+VLESS link uses a hyphen-less UUID so `luci-app-ssr-plus`'s `neturl` accepts it.
 
 `subscribe.ClientLink` builds the QR payload. sing-box wraps the URL in its
 deep link (`sing-box://import-remote-profile?url=`) because that is what its

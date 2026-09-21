@@ -47,6 +47,15 @@ Traps already hit in this repository. Each entry names the symptom and the fix.
   (`+`/`/`/`=`) silently loses the password; `luci-app-ssr-plus` parses hysteria2
   userinfo with the bundled neturl, whose character class is only
   `[A-Za-z0-9+.]`, so URL-safe base64 (`-`/`_`) is dropped there instead.
+- **VLESS share links carry a hyphen-less UUID.** `luci-app-ssr-plus` reads the
+  vless userinfo through the same neturl, so a canonical UUID is dropped and the
+  node ends up with an empty UUID. `subscribe.compactUUID` strips the hyphens;
+  Xray, sing-box, mihomo and v2rayN parse the 32 character form to the same
+  value. The sing-box JSON and mihomo YAML keep the canonical form.
+- **`/v2ray/<uuid>` is the universal Base64 document.** v2rayN reads it
+  directly; passwall, passwall2, homeproxy and luci-app-ssr-plus base64-decode
+  it first. No separate "base" format is needed, only the per-client parsing
+  fixes above.
 - **Template actions in comments are still expanded.** `text/template` executes
   `{{ ... }}` even inside YAML/JSON comments. A `{{ .Proxies }}` in a mihomo
   header comment injects uncommented proxy entries above the document root and

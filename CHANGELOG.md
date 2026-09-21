@@ -23,6 +23,8 @@
 - 修复公网 IP 探测在双栈主机上返回 IPv6 的问题：探测端点改为优先使用仅 IPv4 的接口。
 - 修复 OpenWrt 客户端订阅后节点丢失密码：homeproxy 会丢弃含百分号转义的 userinfo，luci-app-ssr-plus 用 neturl 解析 hysteria2 userinfo 时只接受 `[A-Za-z0-9+.]`，会丢弃含 `-` `_` 的 URL-safe Base64 密码。生成密码现改为纯字母数字（22 字符），v2rayN、passwall、passwall2、homeproxy 与 luci-app-ssr-plus 均可正常读取。
 - 修复 luci-app-ssr-plus 读取 VMess 节点加密方式为空的问题：分享链接在 `scy` 之外同时写出 `security`，兼容只读 `security` 的解析器。
+- 修复 luci-app-ssr-plus 解析 VLESS 节点 UUID 为空的问题：vless 分享链接改用 32 位无连字符 UUID，Xray、sing-box、mihomo 与 v2rayN 均解析为同一值。
+- 订阅界面明确 `/v2ray/<uuid>` 为通用格式：客户端标签改为「v2rayN / OpenWrt 通用订阅」，并补充说明 passwall、passwall2、homeproxy、luci-app-ssr-plus 共用同一份 Base64 文档。
 - 修复主菜单选中行光标长度随行内描述长短变化的问题：选中条现在统一填充到面板内宽。
 - 修复分享链接生成失败：AnyTLS 与 Hysteria2 URI 在查询串前缺少 `/`，且密码未做百分号编码，导致客户端拒绝导入。
 - 修复 mihomo 二维码无法被 FlClash 等 Clash 系客户端识别：二维码改为纯订阅地址，不再包装 `clash://install-config?url=`。

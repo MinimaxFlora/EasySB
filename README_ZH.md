@@ -209,6 +209,8 @@ sing-box check -c templates/vless-vision-reality/config_server.json
 | mihomo / Clash Meta | `/mihomo/<uuid>` | 完整 YAML 配置 |
 | v2rayN | `/v2ray/<uuid>` | Base64 分享链接文档 |
 
+`/v2ray/<uuid>` 文档即通用格式。v2rayN 可直接导入，OpenWrt 上的 `passwall`、`passwall2`、`homeproxy`、`luci-app-ssr-plus` 也会先对同一份文档做 Base64 解码再逐行解析，一个端点即可覆盖全部。VLESS 分享链接使用 32 位无连字符 UUID，因为 `luci-app-ssr-plus` 内置的 `neturl` 只接受字母数字 userinfo；其余客户端会将其还原为同一个 UUID。
+
 UUID 即访问 token，请将订阅地址视为机密。sing-box 二维码会包装为 `sing-box://import-remote-profile?url=...` 以便扫码导入；mihomo 与 v2rayN 二维码使用纯订阅地址，因为 Clash 系客户端扫码后会把内容直接当作订阅 URL 抓取（`clash://install-config?url=...` 仅在浏览器点击深链时有效）。sing-box 直接监听 WebSocket，nginx 只负责静态文件，不做反向代理。
 
 mihomo 配置对齐完整桌面方案：`external-controller` 监听 `0.0.0.0:9090` 并带 `secret`，通过 `external-ui-url` 加载 Zashboard 面板，DNS 使用 fake-ip 与 `fake-ip-filter`，策略组包含 `load-balance` / `url-test` / `select`，分流规则包含 `GEOSITE` / `GEOIP`。请仅在局域网内可信设备上导入。
