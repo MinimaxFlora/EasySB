@@ -1,11 +1,9 @@
 package tui
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
@@ -13,14 +11,11 @@ import (
 
 	"github.com/MinimaxFlora/EasySB/internal/i18n"
 	"github.com/MinimaxFlora/EasySB/internal/icons"
-	"github.com/MinimaxFlora/EasySB/internal/netutil"
 	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
 	"github.com/MinimaxFlora/EasySB/internal/theme"
 )
 
 type statusMsg sysinfo.Status
-
-type publicIPMsg string
 
 type App struct {
 	scriptVersion string
@@ -70,7 +65,7 @@ func paletteFromEnv() (theme.Palette, bool) {
 }
 
 func (a *App) Init() tea.Cmd {
-	cmds := []tea.Cmd{collectStatus(a.scriptVersion), fetchPublicIP()}
+	cmds := []tea.Cmd{collectStatus(a.scriptVersion)}
 	if a.themeAuto {
 		cmds = append(cmds, requestBackground())
 	}
@@ -94,20 +89,6 @@ func (a *App) Snapshot(width, height int) string {
 func collectStatus(version string) tea.Cmd {
 	return func() tea.Msg {
 		return statusMsg(sysinfo.Collect(version))
-	}
-}
-
-// fetchPublicIP probes the public IP in the background so the dashboard never
-// blocks on the network. The result only fills a gap left by the state file.
-func fetchPublicIP() tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		defer cancel()
-		ip, err := netutil.PublicIP(ctx)
-		if err != nil {
-			return publicIPMsg("")
-		}
-		return publicIPMsg(ip)
 	}
 }
 
@@ -285,11 +266,6 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.status = sysinfo.Status(msg)
 		a.ready = true
 		return a, nil
-	case publicIPMsg:
-		if a.status.PublicIP == "" && msg != "" {
-			a.status.PublicIP = string(msg)
-		}
-		return a, nil
 	}
 
 	if a.form != nil {
@@ -380,7 +356,7 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		a.lang = a.lang.Toggle()
 		a.quote = a.lang.Hitokoto()
 	case "r":
-		return a, tea.Batch(collectStatus(a.scriptVersion), fetchPublicIP())
+		return a, collectStatus(a.scriptVersion)
 	}
 	return a, nil
 }

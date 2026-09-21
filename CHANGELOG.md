@@ -18,6 +18,7 @@
 
 ### 修复
 
+- 修复生成的 sing-box 订阅 JSON 被编码为字母序的问题：现在保留模板中的顶层分区顺序与节点内参数顺序，与 `templates/config/tun-fakeip.json` 可读样例一致。
 - 修复任务页启用鼠标捕获后无法用鼠标选中并复制订阅链接的问题：现可用 `C` 直接复制，或按 `M` 释放鼠标后原生选择。
 - 修复公网 IP 探测在双栈主机上返回 IPv6 的问题：探测端点改为优先使用仅 IPv4 的接口。
 - 修复 OpenWrt homeproxy 等客户端订阅后节点丢失密码：homeproxy 会丢弃含百分号转义的 userinfo，生成密码现改用 URL-safe Base64（字母表 `[A-Za-z0-9_-]`，无 `+` `/` `=`，无需转义）。
@@ -30,6 +31,7 @@
 
 ### 变更
 
+- 设备面板用「交换空间」替换「公网 IP」，CPU 仅显示核心数，系统仅显示发行版名称，面板更精简。
 - 生成密码由标准 Base64（24 字符，可能含 `+` `/` `=`）改为 URL-safe Base64（22 字符）。旧实例的密码若含这些字符，部分客户端仍会拒绝导入，需重新生成密码或重新部署后生效。
 - 目录名统一小写：`Templates/` → `templates/`，子目录改为 `anytls`、`hysteria2`、`tuic`、`vmess-websocket-tls`、`vless-vision-reality`、`config`。
 - README 主文档改为英文 `README.md`，中文版迁移到 `README_ZH.md`。

@@ -48,22 +48,21 @@ type Status struct {
 
 	Hostname string
 	OS       string
-	Arch     string
 	Kernel   string
 	Timezone string
-	PublicIP string
 
 	// LocalIPv4 and LocalIPv6 are the host's own addresses on its network
 	// interfaces, kept apart so both families are visible at a glance.
 	LocalIPv4 string
 	LocalIPv6 string
 
-	CPUModel string
 	CPUCores int
 	LoadAvg  string
 
-	MemTotal uint64
-	MemAvail uint64
+	MemTotal  uint64
+	MemAvail  uint64
+	SwapTotal uint64
+	SwapFree  uint64
 
 	DiskTotal uint64
 	DiskFree  uint64
@@ -106,7 +105,6 @@ func Collect(scriptVersion string) Status {
 	st.UUID = state["UUID"]
 	st.Password = state["PASSWORD"]
 	st.Hop = state["HY2_HOP_RANGE"]
-	st.PublicIP = state["SERVER_IP"]
 
 	inbounds := readInbounds()
 	if len(inbounds) > 0 {
@@ -135,20 +133,19 @@ func portKey(proto string) string {
 }
 
 // collectDevice fills the host description shown on the dashboard: hostname,
-// distribution name, CPU architecture, kernel release, timezone, local
-// addresses, CPU, memory, disk and uptime.
+// distribution name, kernel release and timezone, then local addresses, CPU,
+// memory, swap, disk and uptime.
 func collectDevice(st *Status) {
 	if h, err := os.Hostname(); err == nil {
 		st.Hostname = strings.TrimSpace(h)
 	}
 	st.OS = osName()
-	st.Arch = runtime.GOARCH
 	st.Kernel = kernelRelease()
 	st.Timezone = timezone()
 	st.LocalIPv4, st.LocalIPv6 = localIPs()
-	st.CPUModel, st.CPUCores = cpuInfo()
+	st.CPUCores = runtime.NumCPU()
 	st.LoadAvg = loadAvg()
-	st.MemTotal, st.MemAvail = memory()
+	st.MemTotal, st.MemAvail, st.SwapTotal, st.SwapFree = memory()
 	st.DiskTotal, st.DiskFree = diskUsage("/")
 	st.Uptime = uptime()
 }
@@ -198,33 +195,6 @@ func localIPs() (string, string) {
 	return v4, v6
 }
 
-func cpuInfo() (string, int) {
-	model := ""
-	if data, err := os.ReadFile("/proc/cpuinfo"); err == nil {
-		model = parseCPUModel(data)
-	}
-	return model, runtime.NumCPU()
-}
-
-// parseCPUModel reads the human-readable processor name from /proc/cpuinfo.
-// x86 uses "model name"; ARM boards use "Model" or "Hardware". The lowercase
-// x86 "model" field is a number, so it is deliberately ignored.
-func parseCPUModel(data []byte) string {
-	for _, line := range strings.Split(string(data), "\n") {
-		k, v, ok := strings.Cut(line, ":")
-		if !ok {
-			continue
-		}
-		switch strings.TrimSpace(k) {
-		case "model name", "Model", "Hardware":
-			if model := strings.TrimSpace(v); model != "" {
-				return model
-			}
-		}
-	}
-	return ""
-}
-
 func loadAvg() string {
 	data, err := os.ReadFile("/proc/loadavg")
 	if err != nil {
@@ -249,18 +219,18 @@ func parseLoadAvg(data []byte) string {
 	return strings.Join(out, " ")
 }
 
-func memory() (uint64, uint64) {
+func memory() (uint64, uint64, uint64, uint64) {
 	data, err := os.ReadFile("/proc/meminfo")
 	if err != nil {
-		return 0, 0
+		return 0, 0, 0, 0
 	}
 	return parseMeminfo(data)
 }
 
-// parseMeminfo returns total and available memory in bytes. MemAvailable is
-// preferred; MemFree is the fallback on kernels that predate it.
-func parseMeminfo(data []byte) (uint64, uint64) {
-	var total, avail uint64
+// parseMeminfo returns total and available memory plus total and free swap, in
+// bytes. MemAvailable is preferred; MemFree is the fallback on kernels that
+// predate it.
+func parseMeminfo(data []byte) (total, avail, swapTotal, swapFree uint64) {
 	for _, line := range strings.Split(string(data), "\n") {
 		k, v, ok := strings.Cut(line, ":")
 		if !ok {
@@ -275,9 +245,13 @@ func parseMeminfo(data []byte) (uint64, uint64) {
 			if avail == 0 {
 				avail = parseKB(v)
 			}
+		case "SwapTotal":
+			swapTotal = parseKB(v)
+		case "SwapFree":
+			swapFree = parseKB(v)
 		}
 	}
-	return total, avail
+	return total, avail, swapTotal, swapFree
 }
 
 func parseKB(s string) uint64 {

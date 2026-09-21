@@ -53,12 +53,15 @@ func Generate(cfg state.Config) ([]byte, error) {
 		return nil, fmt.Errorf("no protocol enabled")
 	}
 
-	root := map[string]any{}
-	if err := json.Unmarshal(stripJSONC(templateJSON), &root); err != nil {
+	root, err := parseOrderedJSON(stripJSONC(templateJSON))
+	if err != nil {
 		return nil, fmt.Errorf("parse subscription template: %w", err)
 	}
 
-	outbounds, _ := root["outbounds"].([]any)
+	outbounds := root.get("outbounds")
+	if !outbounds.array() {
+		return nil, fmt.Errorf("subscription template has no outbounds")
+	}
 	hop := cfg.HopRange
 	if hop == "" {
 		hop = state.DefaultHopRange
@@ -68,13 +71,9 @@ func Generate(cfg state.Config) ([]byte, error) {
 		rsni = state.DefaultSNI
 	}
 
-	var kept []any
-	for _, raw := range outbounds {
-		ob, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-		tag, _ := ob["tag"].(string)
+	var kept []*jsonValue
+	for _, ob := range outbounds.arr {
+		tag := ob.get("tag").asString()
 		switch tag {
 		case "proxy", "auto", "direct":
 			kept = append(kept, ob)
@@ -87,60 +86,56 @@ func Generate(cfg state.Config) ([]byte, error) {
 		kept = append(kept, ob)
 	}
 
-	for _, raw := range kept {
-		ob, _ := raw.(map[string]any)
-		if ob == nil {
-			continue
-		}
-		switch ob["tag"] {
+	for _, ob := range kept {
+		switch ob.get("tag").asString() {
 		case "proxy":
-			ob["outbounds"] = append([]string{"auto"}, enabled...)
+			ob.setStrings("outbounds", append([]string{"auto"}, enabled...))
 		case "auto":
-			ob["outbounds"] = append([]string{}, enabled...)
+			ob.setStrings("outbounds", append([]string{}, enabled...))
 		}
 	}
-	root["outbounds"] = kept
+	outbounds.arr = kept
 
 	return json.MarshalIndent(root, "", "  ")
 }
 
-func applyNode(ob map[string]any, tag string, cfg state.Config, hop, rsni string) {
+func applyNode(ob *jsonValue, tag string, cfg state.Config, hop, rsni string) {
 	host := cfg.Host()
-	ob["server"] = host
+	ob.setString("server", host)
 	switch tag {
 	case "anytls":
-		ob["server_port"] = portInt(cfg, state.ProtoAnyTLS)
-		ob["password"] = cfg.Password
+		ob.setNumber("server_port", portInt(cfg, state.ProtoAnyTLS))
+		ob.setString("password", cfg.Password)
 		setServerName(ob, host)
 	case "hysteria2":
-		ob["server_ports"] = []string{hop}
-		ob["password"] = cfg.Password
+		ob.setStrings("server_ports", []string{hop})
+		ob.setString("password", cfg.Password)
 		setServerName(ob, host)
 	case "tuic":
-		ob["server_port"] = portInt(cfg, state.ProtoTUIC)
-		ob["uuid"] = cfg.UUID
-		ob["password"] = cfg.Password
+		ob.setNumber("server_port", portInt(cfg, state.ProtoTUIC))
+		ob.setString("uuid", cfg.UUID)
+		ob.setString("password", cfg.Password)
 		setServerName(ob, host)
 	case "vmess-ws-tls":
-		ob["server_port"] = portInt(cfg, state.ProtoVMessWSTLS)
-		ob["uuid"] = cfg.UUID
+		ob.setNumber("server_port", portInt(cfg, state.ProtoVMessWSTLS))
+		ob.setString("uuid", cfg.UUID)
 		setServerName(ob, host)
 	case "vless-vision-reality":
-		ob["server_port"] = portInt(cfg, state.ProtoVLESSReality)
-		ob["uuid"] = cfg.UUID
+		ob.setNumber("server_port", portInt(cfg, state.ProtoVLESSReality))
+		ob.setString("uuid", cfg.UUID)
 		setServerName(ob, rsni)
-		if tls, ok := ob["tls"].(map[string]any); ok {
-			if reality, ok := tls["reality"].(map[string]any); ok {
-				reality["public_key"] = cfg.RealityPub
-				reality["short_id"] = cfg.RealitySID
+		if tls := ob.get("tls"); tls != nil {
+			if reality := tls.get("reality"); reality != nil {
+				reality.setString("public_key", cfg.RealityPub)
+				reality.setString("short_id", cfg.RealitySID)
 			}
 		}
 	}
 }
 
-func setServerName(ob map[string]any, name string) {
-	if tls, ok := ob["tls"].(map[string]any); ok {
-		tls["server_name"] = name
+func setServerName(ob *jsonValue, name string) {
+	if tls := ob.get("tls"); tls != nil {
+		tls.setString("server_name", name)
 	}
 }
 

@@ -94,47 +94,30 @@ func (a *App) stateValue(text string, ok, warn, known bool) string {
 	return a.palette.State(text, ok, warn)
 }
 
-// deviceSection renders the host description: local IPv4/IPv6, public IP and
-// uptime, CPU and load, memory and disk, then hostname, kernel, OS and timezone.
+// deviceSection renders the host description: local IPv4/IPv6, swap and uptime,
+// CPU and load, memory and disk, then hostname, kernel, OS and timezone.
 func (a *App) deviceSection(width int) []string {
 	s := a.status
 	if !a.ready {
 		return []string{"  " + a.palette.Dim(a.lang.T("loading")+"…")}
 	}
-	osText := s.OS
-	switch {
-	case s.Arch != "" && osText != "":
-		osText += " · " + s.Arch
-	case s.Arch != "":
-		osText = s.Arch
-	}
 	return []string{
 		a.sectionTitle("panel_device"),
 		a.twoCols(width, "device_local_ipv4", s.LocalIPv4, "device_local_ipv6", s.LocalIPv6),
-		a.twoCols(width, "device_public_ip", s.PublicIP, "device_uptime", humanDuration(s.Uptime)),
+		a.twoCols(width, "device_swap", usageCell(s.SwapTotal, s.SwapFree), "device_uptime", humanDuration(s.Uptime)),
 		a.twoCols(width, "device_cpu", a.cpuSummary(), "device_load", s.LoadAvg),
 		a.twoCols(width, "device_memory", usageCell(s.MemTotal, s.MemAvail), "device_disk", usageCell(s.DiskTotal, s.DiskFree)),
 		a.twoCols(width, "device_host", s.Hostname, "device_kernel", s.Kernel),
-		a.twoCols(width, "device_os", osText, "device_timezone", s.Timezone),
+		a.twoCols(width, "device_os", s.OS, "device_timezone", s.Timezone),
 	}
 }
 
-// cpuSummary combines the core count with the processor name, e.g.
-// "8 cores · AMD Ryzen 7 5800X". The model is dropped when it is unknown.
+// cpuSummary renders the processor core count, e.g. "8 cores".
 func (a *App) cpuSummary() string {
-	s := a.status
-	cores := ""
-	if s.CPUCores > 0 {
-		cores = fmt.Sprintf("%d %s", s.CPUCores, a.lang.T("unit_cores"))
+	if a.status.CPUCores <= 0 {
+		return ""
 	}
-	switch {
-	case s.CPUModel == "":
-		return cores
-	case cores == "":
-		return s.CPUModel
-	default:
-		return cores + " · " + s.CPUModel
-	}
+	return fmt.Sprintf("%d %s", a.status.CPUCores, a.lang.T("unit_cores"))
 }
 
 // usageCell formats a used/total pair with its usage percentage, or an empty

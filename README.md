@@ -125,7 +125,7 @@ Supports Debian / Ubuntu (systemd) and Alpine (OpenRC); run as root.
 | 5-in-1 deployment | One shared UUID and password, generated at install; ports allocated one by one |
 | Core management | Install, replace or remove stable and alpha builds; replace keeps the existing config |
 | Version panel | Script version, local core, stable and alpha versions on top of the menu with update markers |
-| Device panel | Local IPv4/IPv6, public IP, uptime, CPU and load, memory, disk, host, kernel, OS and timezone |
+| Device panel | Local IPv4/IPv6, swap, uptime, CPU cores and load, memory, disk, host, kernel, OS and timezone |
 | Copy and mouse | On task screens `C` copies the log to the system clipboard (OSC52) and `M` releases the mouse for click-drag selection |
 | Certificates | acme.sh `--standalone` issue and renew, list, switch active, remove; handles 80 / 443 occupancy |
 | Subscription | Renders `templates/config/tun-fakeip.json`, outputs files, QR codes and share links, hosted by nginx |
