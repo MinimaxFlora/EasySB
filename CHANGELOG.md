@@ -39,7 +39,7 @@
 - 运行概况首行改为「服务 / 节点」，版本与内核下移到第二行，常用状态更靠前。
 - 二级菜单每项后补上功能概述，与主菜单的展示风格保持一致。
 - 任务页按键提示去掉 `PgUp/PgDn 翻页` 文案，翻页快捷键仍可用。
-- 生成密码由标准 Base64（24 字符，可能含 `+` `/` `=`）改为 URL-safe Base64，再改为纯字母数字（22 字符），兼容 v2rayN、passwall、passwall2、homeproxy 与 luci-app-ssr-plus。旧实例的密码若含 `+` `/` `=` `-` `_`，部分客户端仍会丢失密码，需重新生成密码或重新部署后生效。
+- 生成密码由标准 Base64（24 字符，可能含 `+` `/` `=`）改为 URL-safe Base64，再改为纯字母数字（22 字符），兼容 v2rayN、passwall、passwall2 与 homeproxy。旧实例的密码若含 `+` `/` `=` `-` `_`，部分客户端仍会丢失密码，需重新生成密码或重新部署后生效。
 - 目录名统一小写：`Templates/` → `templates/`，子目录改为 `anytls`、`hysteria2`、`tuic`、`vmess-websocket-tls`、`vless-vision-reality`、`config`。
 - README 主文档改为英文 `README.md`，中文版迁移到 `README_ZH.md`。
 - 新增 `docs/` 面向其他 Agent 与协作者的工程文档，并在根目录提供 `AGENTS.md` 索引。

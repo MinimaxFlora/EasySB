@@ -59,17 +59,20 @@ EasySB 是一个面向 Linux VPS 的 sing-box 五合一部署脚本，把协议�
 .
 ├── main.go                       # Go 入口（TUI 主程序）
 ├── install.sh                    # 一键安装脚本（依赖 / 二进制 / Nerd Font）
+├── VERSION                       # 发布 tag 的唯一来源
 ├── AGENTS.md                     # 面向 AI Agent 与协作者的说明
-├── internal/                     # Go 实现：i18n / theme / icons / sysinfo / state / subscribe / tui
 ├── go.mod                        # Go module 定义
+├── internal/                     # Go 实现，包职责见 docs/architecture.md
 ├── templates/                    # 订阅与协议配置模板
 │   ├── config/
-│   │   └── tun-fakeip.json       # TUN 全局代理 + FakeIP 模板
+│   │   ├── tun-fakeip.json       # sing-box TUN + FakeIP 订阅模板
+│   │   └── mihomo.yaml           # mihomo / Clash Meta 配置（可读镜像）
 │   ├── anytls/                   # AnyTLS 协议客户端 / 服务端样例
 │   ├── hysteria2/                # Hysteria2 协议客户端 / 服务端样例
 │   ├── tuic/                     # TUIC 协议客户端 / 服务端样例
 │   ├── vmess-websocket-tls/      # VMess + WebSocket + TLS 样例
 │   └── vless-vision-reality/     # VLESS + Vision + Reality 样例
+├── assets/                       # README 横幅
 ├── docs/                         # 面向 Agent 与协作者的工程文档
 └── .github/                      # CI 工作流与社区健康文件
 ```
@@ -132,7 +135,7 @@ sb --language E
 | 设备面板 | 本机 IPv4/IPv6、交换空间、运行时间、CPU 核心数与负载、内存、磁盘、主机、内核、系统与时区 |
 | 复制与鼠标 | 任务页按 `C` 将日志复制到系统剪贴板（OSC52），按 `M` 释放鼠标以拖拽选择文本 |
 | 证书管理 | acme.sh `--standalone` 申请与续期，支持列表、切换激活、删除，自动处理 80 / 443 占用 |
-| 订阅生成 | 渲染 `templates/config/tun-fakeip.json`，输出订阅文件、二维码与分享链接，nginx 静态托管 |
+| 订阅生成 | 渲染 `templates/config/tun-fakeip.json`（sing-box）与 `templates/config/mihomo.yaml`（mihomo），输出订阅文件、二维码与分享链接，nginx 静态托管 |
 | 端口跳跃 | Hysteria2 默认 `2080:3000`，自动下发 iptables / nftables DNAT，并生成开机恢复单元 |
 | 服务管理 | 启动、停止、重启、查看状态与开机自启 |
 | 脚本自更新 | 从本仓库拉取最新脚本，校验通过后替换 |
@@ -143,19 +146,17 @@ sb --language E
 ## 交互菜单
 
 ```text
-[1] 安装 / 切换 sing-box 内核（正式版 / alpha）
-[2] 卸载 sing-box 内核
-[3] 替换 sing-box 内核（保留配置）
-[4] 域名证书管理（acme.sh）
-[5] 订阅管理（sing-box / 分享链接 / 二维码）
-[6] 协议参数配置（端口 / 密码 / UUID）
-[7] 服务管理（启动 / 停止 / 重启 / 状态）
-[8] 查看版本与更新
-[9] 完全卸载 EasySB
-[0] 退出脚本
+主菜单
+├── 内核管理     安装正式版 / 测试版、切换内核、更新当前通道
+├── 节点管理     一键部署、启用协议、参数设置（UUID / 密码 / 端口跳跃 / 端口 / 偷用域名 / Reality 密钥）
+├── 域名管理     申请 / 续期、查看、切换激活、删除证书
+├── 订阅管理     重新生成、订阅链接、订阅二维码、各协议分享链接
+├── 服务管理     启动 / 停止 / 重启 / 状态 / 开机自启、端口跳跃规则
+├── 版本更新     拉取最新 EasySB 发行版
+└── 卸载脚本     完整卸载 EasySB
 ```
 
-对应文件：服务端配置 `/etc/sing-box/config.json`，状态 `/etc/sing-box/easysb.conf`，快捷指令 `/usr/bin/sb`。
+对应文件：服务端配置 `/etc/sing-box/config.json`，状态 `/etc/sing-box/easysb.conf`，快捷指令 `/usr/local/bin/sb`。
 
 ---
 
@@ -258,23 +259,7 @@ NAT 规则重启即失效，因此脚本会生成开机恢复单元：
 
 ## 开发者：构建与测试
 
-Go 版（主实现，需要 Go 1.27.1，`go.mod` 已声明 `go 1.27.1`，启用 `GOTOOLCHAIN=auto` 时会自动获取该工具链）：
-
-```bash
-# 编译二进制
-go build -o easysb .
-
-# 运行测试
-go test ./...
-
-# 无交互渲染一次仪表盘（用于预览 / 截图 / 排错）
-./easysb --render --width 100 --height 34
-
-# 切换语言、图标模式与配色
-./easysb --language E --icons off --theme dark
-```
-
-`internal/tui/` 是 TUI 主界面与交互逻辑，`internal/` 下其余包各自负责内核、证书、服务、订阅、防火墙等模块：
+Go 版（主实现，需要 Go 1.27.1，`go.mod` 已声明 `go 1.27.1`，启用 `GOTOOLCHAIN=auto` 时会自动获取该工具链）。`internal/tui/` 是 TUI 主界面与交互逻辑，`internal/` 下其余包各自负责内核、证书、服务、订阅、防火墙等模块，包职责见 `docs/architecture.md`：
 
 ```bash
 # 编译二进制
