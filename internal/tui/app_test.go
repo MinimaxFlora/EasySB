@@ -382,6 +382,32 @@ func TestNoScreenCapturesTheMouse(t *testing.T) {
 	}
 }
 
+func TestUpperQQuitsFromSubscreens(t *testing.T) {
+	a := newTestApp(t)
+	a.links = newLinksModel("t", sampleLinks())
+	if _, cmd := a.Update(press('Q')); cmd == nil {
+		t.Fatal("upper-case Q should quit from the link panel")
+	}
+
+	a.links = nil
+	p := newProgress("t", func(context.Context, func(string)) error { return nil })
+	a.task = &p
+	if _, cmd := a.Update(press('Q')); cmd == nil {
+		t.Fatal("upper-case Q should quit from the task panel")
+	}
+
+	// Lower-case q on a subpage still steps back instead of quitting.
+	a.task = nil
+	a.links = newLinksModel("t", sampleLinks())
+	m, cmd := a.Update(press('q'))
+	if cmd != nil {
+		t.Fatal("lower-case q should not quit the link panel")
+	}
+	if m.(*App).links != nil {
+		t.Fatal("lower-case q should close the link panel")
+	}
+}
+
 func TestEveryScreenUsesOneFixedFrame(t *testing.T) {
 	// The whole point of the layout: the dashboard and every subpage render at
 	// exactly the same size, so moving between them never resizes the panel and

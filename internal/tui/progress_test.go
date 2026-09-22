@@ -9,6 +9,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/MinimaxFlora/EasySB/internal/i18n"
+	"github.com/MinimaxFlora/EasySB/internal/icons"
+	"github.com/MinimaxFlora/EasySB/internal/theme"
 )
 
 func TestProgressDoneScrolls(t *testing.T) {
@@ -98,5 +100,24 @@ func TestProgressIgnoresMouseToggleKey(t *testing.T) {
 	p.resize(80, 20)
 	if _, closed := p.handleKey(press('m'), i18n.Chinese); closed {
 		t.Fatal("a stray key must not close the task")
+	}
+}
+
+func TestProgressNoCopyHidesAndIgnoresCopy(t *testing.T) {
+	p := newProgress("qr", func(context.Context, func(string)) error { return nil })
+	p.noCopy = true
+	p.resize(80, 20)
+	p.appendLog("QR")
+	p.done = true
+
+	if cmd, closed := p.handleKey(press('c'), i18n.Chinese); cmd != nil || closed {
+		t.Fatalf("a picture task must ignore copy, cmd=%v closed=%v", cmd != nil, closed)
+	}
+	view := p.View(80, 20, theme.Dark(), i18n.Chinese, icons.Plain())
+	if strings.Contains(view, i18n.Chinese.T("task_copy")) {
+		t.Fatal("the hint must not offer copy on a picture task")
+	}
+	if !strings.Contains(view, i18n.Chinese.T("hint_quit")) {
+		t.Fatal("the hint should offer Q to quit")
 	}
 }

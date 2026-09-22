@@ -207,6 +207,7 @@ var table = []entry{
 	{"sub_need_deploy", "请先部署节点", "Deploy the node first"},
 	{"sub_import_link", "导入链接", "Import link"},
 	{"sub_client_singbox", "sing-box 订阅", "sing-box subscription"},
+	{"sub_client_singbox_desc", "sing-box 原生配置，sing-box、SFA、SFM 通用", "Native sing-box profile, shared by sing-box, SFA and SFM"},
 	{"sub_client_mihomo", "mihomo / Clash Meta / luci-app-nikki（YAML）", "mihomo / Clash Meta / luci-app-nikki (YAML)"},
 	{"sub_client_mihomo_desc", "完整 YAML 配置，mihomo、Clash Meta、luci-app-nikki 通用", "Complete YAML profile, shared by mihomo, Clash Meta and luci-app-nikki"},
 	{"sub_client_v2ray", "v2rayN / passwall / passwall2 / homeproxy（Base64）", "v2rayN / passwall / passwall2 / homeproxy (Base64)"},
@@ -215,7 +216,7 @@ var table = []entry{
 	{"links_sub_mihomo", "mihomo 订阅", "mihomo subscription"},
 	{"links_sub_v2ray", "Base64 订阅", "Base64 subscription"},
 	{"links_copied_all", "已复制全部", "All copied"},
-	{"links_hint", "↑/↓ 选择 · Enter 复制 · C 复制全部 · Esc 返回", "↑/↓ select · Enter copy · C copy all · Esc back"},
+	{"links_hint", "↑/↓ 选择 · Enter 复制 · C 复制全部 · Q 退出 · Esc 返回", "↑/↓ select · Enter copy · C copy all · Q quit · Esc back"},
 
 	{"svc_title", "服务管理", "Service management"},
 	{"svc_start", "启动服务", "Start service"},

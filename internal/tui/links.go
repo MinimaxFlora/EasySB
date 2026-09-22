@@ -13,8 +13,8 @@ import (
 )
 
 // linkCardHeight is the number of terminal rows one card occupies: two border
-// rows plus the meta and type lines.
-const linkCardHeight = 4
+// rows plus the single description line.
+const linkCardHeight = 3
 
 // linkCardGap is the blank gap between two card columns in cells.
 const linkCardGap = 2
@@ -24,11 +24,10 @@ const linkCardGap = 2
 const linkCardMin = 26
 
 // linkItem is one copyable entry shown as a card. The URL/value is never
-// rendered; only label, meta and desc are visible, and the value is what Enter
-// puts on the clipboard.
+// rendered; only the label and description are visible, and the value is what
+// Enter puts on the clipboard.
 type linkItem struct {
 	label string
-	meta  string
 	desc  string
 	value string
 }
@@ -158,11 +157,9 @@ func (l *linksModel) move(d int) {
 }
 
 // card renders one card. The value is deliberately absent from the content:
-// only the host and the subscription type are drawn, and the frame color is the
-// copy state.
+// only the description is drawn and the frame color is the copy state.
 func (l *linksModel) card(item linkItem, index, width int, pal theme.Palette) string {
 	inner := width - 4
-	meta := pal.Value(theme.Truncate(item.meta, inner))
 	desc := pal.Dim(theme.Truncate(item.desc, inner))
 
 	border := pal.Border
@@ -173,7 +170,7 @@ func (l *linksModel) card(item linkItem, index, width int, pal theme.Palette) st
 	case l.cursor == index:
 		border, title = pal.Primary, pal.Primary
 	}
-	return theme.Box(item.label, meta+"\n"+desc, width, border, title)
+	return theme.Box(item.label, desc, width, border, title)
 }
 
 // gridLines renders the visible grid rows and records how many fit. Each row
@@ -273,7 +270,7 @@ func (l *linksModel) render(width, height int, pal theme.Palette, lang i18n.Lang
 // blankCard keeps empty grid cells the same width as a real card.
 func blankCard(width int) string {
 	line := strings.Repeat(" ", width)
-	return strings.Join([]string{line, line, line, line}, "\n")
+	return strings.Join([]string{line, line, line}, "\n")
 }
 
 func (l *linksModel) View(w, h int, pal theme.Palette, lang i18n.Lang, ic icons.Set) string {
