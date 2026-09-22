@@ -173,7 +173,7 @@ func showSubscriptionURL() actionFunc {
 func showSubscriptionQR() actionFunc {
 	return func(a *App) tea.Cmd {
 		lang := a.lang
-		return a.startTask(lang.T("sub_qr"), func(ctx context.Context, log func(string)) error {
+		return a.startTaskQR(lang.T("sub_qr"), func(ctx context.Context, log func(string)) error {
 			cfg := state.Load()
 			if cfg.Host() == "" {
 				log(lang.T("sub_need_domain"))

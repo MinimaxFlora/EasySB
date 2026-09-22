@@ -37,8 +37,11 @@ type progressModel struct {
 	// afterLinks swaps the finished log for the copyable link grid. It is used
 	// by subscription tasks, whose only interesting output is the endpoints.
 	afterLinks bool
-	width      int
-	height     int
+	// noCopy hides the copy key on tasks whose output is a picture, such as the
+	// subscription QR codes.
+	noCopy bool
+	width  int
+	height int
 }
 
 func newProgress(title string, fn taskFunc) progressModel {
@@ -116,6 +119,9 @@ func (p *progressModel) handleKey(msg tea.KeyPressMsg, lang i18n.Lang) (tea.Cmd,
 		case "enter", "esc", "q", "backspace":
 			return nil, true
 		case "c":
+			if p.noCopy {
+				break
+			}
 			text := strings.Join(p.logs, "\n")
 			p.appendLog("✓ " + lang.T("copied"))
 			return tea.SetClipboard(text), false
@@ -195,8 +201,15 @@ func (p *progressModel) View(w, h int, pal theme.Palette, lang i18n.Lang, ic ico
 	body = append(body, header, "")
 	body = append(body, strings.Split(p.vp.View(), "\n")...)
 
-	hint := lang.T("task_scroll") + "  " + lang.T("task_copy") + "  " + lang.T("task_press_enter")
-	if !p.done {
+	var hint string
+	if p.done {
+		parts := []string{lang.T("task_scroll")}
+		if !p.noCopy {
+			parts = append(parts, lang.T("task_copy"))
+		}
+		parts = append(parts, lang.T("task_press_enter"), lang.T("hint_quit"))
+		hint = strings.Join(parts, "  ")
+	} else {
 		hint = lang.T("hint_back") + "  " + lang.T("cancelled")
 	}
 	return framePanel(pal, lang, width, h, body, pal.Dim(hint))

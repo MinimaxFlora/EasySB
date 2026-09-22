@@ -216,6 +216,16 @@ func (a *App) startTaskLinks(title string, fn taskFunc) tea.Cmd {
 	return p.Init()
 }
 
+// startTaskQR is startTask for the subscription QR codes: the log is a picture,
+// so the copy key is hidden.
+func (a *App) startTaskQR(title string, fn taskFunc) tea.Cmd {
+	p := newProgress(title, fn)
+	p.noCopy = true
+	p.resize(a.width, a.height)
+	a.task = &p
+	return p.Init()
+}
+
 // openSubscriptionLinks builds the per-client subscription card grid from the
 // current state.
 func (a *App) openSubscriptionLinks() {
@@ -224,16 +234,10 @@ func (a *App) openSubscriptionLinks() {
 		a.setToast(a.lang.T("sub_need_domain"), true)
 		return
 	}
-	port := cfg.SubPort
-	if port == "" {
-		port = state.DefaultSubPort
-	}
-	host := cfg.Host() + ":" + port
 	items := make([]linkItem, 0, len(subscribe.Clients))
 	for _, client := range subscribe.Clients {
 		items = append(items, linkItem{
 			label: subscriptionTitle(a.lang, client),
-			meta:  host,
 			desc:  clientDescription(a.lang, client),
 			value: subscribe.ClientURL(cfg, client),
 		})
@@ -275,7 +279,7 @@ func (a *App) openShareLinks() {
 		if !cfg.Enabled[key] || next >= len(links) {
 			continue
 		}
-		items = append(items, linkItem{label: state.Labels[key], meta: cfg.Host(), value: links[next]})
+		items = append(items, linkItem{label: state.Labels[key], desc: state.Labels[key], value: links[next]})
 		next++
 	}
 	a.links = newLinksModel(a.lang.T("sub_links"), items)
@@ -379,12 +383,16 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	key := strings.ToLower(msg.String())
+	raw := msg.String()
+	key := strings.ToLower(raw)
+
+	// Upper-case Q quits the whole program from any screen that is not a text
+	// field; lower-case q and Esc step back to the parent menu.
+	if raw == "Q" || key == "ctrl+c" {
+		return a, quit()
+	}
 
 	if a.task != nil {
-		if key == "ctrl+c" {
-			return a, quit()
-		}
 		cmd, done := a.task.handleKey(msg, a.lang)
 		if done {
 			a.task = nil
@@ -393,9 +401,6 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if a.links != nil {
-		if key == "ctrl+c" {
-			return a, quit()
-		}
 		cmd, done := a.links.handleKey(msg, a.lang)
 		if done {
 			a.links = nil
@@ -408,11 +413,9 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch key {
-	case "ctrl+c":
-		return a, quit()
 	case "q":
-		// Q always quits, at any depth. Esc and the navigation row are the
-		// ways back to the parent menu.
+		// On the menu tree q quits; inside the task/link panels it steps back.
+		// Upper-case Q quits from anywhere (handled above).
 		return a, quit()
 	case "esc", "backspace":
 		if len(a.stack) > 1 {

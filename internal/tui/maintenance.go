@@ -28,9 +28,9 @@ func clientLabel(lang i18n.Lang, client subscribe.Client) string {
 	}
 }
 
-// clientDescription returns an optional localized note listing the clients a
-// subscription format serves. The v2ray and mihomo documents are each shared by
-// several OpenWrt plugins, so the note names them explicitly.
+// clientDescription returns a localized note listing the clients a subscription
+// format serves. The v2ray and mihomo documents are each shared by several
+// OpenWrt plugins, so the note names them explicitly.
 func clientDescription(lang i18n.Lang, client subscribe.Client) string {
 	switch client {
 	case subscribe.ClientV2Ray:
@@ -38,7 +38,7 @@ func clientDescription(lang i18n.Lang, client subscribe.Client) string {
 	case subscribe.ClientMihomo:
 		return lang.T("sub_client_mihomo_desc")
 	default:
-		return ""
+		return lang.T("sub_client_singbox_desc")
 	}
 }
 

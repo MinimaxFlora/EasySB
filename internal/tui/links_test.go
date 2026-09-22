@@ -14,9 +14,9 @@ import (
 
 func sampleLinks() []linkItem {
 	return []linkItem{
-		{label: "sing-box", meta: "example.com:8443", desc: "json", value: "https://example.com:8443/singbox/aaaa"},
-		{label: "mihomo", meta: "example.com:8443", desc: "yaml", value: "https://example.com:8443/mihomo/aaaa"},
-		{label: "v2ray", meta: "example.com:8443", desc: "base64", value: "https://example.com:8443/v2ray/aaaa"},
+		{label: "sing-box 订阅", desc: "sing-box 原生配置", value: "https://example.com:8443/singbox/aaaa"},
+		{label: "mihomo 订阅", desc: "完整 YAML 配置", value: "https://example.com:8443/mihomo/aaaa"},
+		{label: "Base64 订阅", desc: "Base64 分享链接文档", value: "https://example.com:8443/v2ray/aaaa"},
 	}
 }
 
@@ -28,8 +28,11 @@ func TestLinksViewHidesValues(t *testing.T) {
 			t.Fatalf("view leaked value %q", item.value)
 		}
 	}
-	if !strings.Contains(view, "example.com:8443") {
-		t.Fatal("view should show the short host:port meta")
+	if strings.Contains(view, "example.com:8443") {
+		t.Fatal("the host must not be drawn on the cards")
+	}
+	if !strings.Contains(view, "完整 YAML 配置") {
+		t.Fatal("view should show the card description")
 	}
 }
 
@@ -54,7 +57,7 @@ func TestLinksArrowsMoveCursor(t *testing.T) {
 func TestLinksGridScrollsToCursor(t *testing.T) {
 	items := make([]linkItem, 9)
 	for i := range items {
-		items[i] = linkItem{label: "c", meta: "host", value: "v"}
+		items[i] = linkItem{label: "c", desc: "d", value: "v"}
 	}
 	l := newLinksModel("t", items)
 	l.cursor = 8
@@ -134,8 +137,8 @@ func TestLinksCardSignalsCopyByColor(t *testing.T) {
 	if got := strings.Count(idle, "\n") + 1; got != linkCardHeight {
 		t.Fatalf("card should be %d rows, got %d", linkCardHeight, got)
 	}
-	if !strings.Contains(idle, l.items[1].label) || !strings.Contains(idle, l.items[1].meta) {
-		t.Fatalf("card should show its label and host, got %q", idle)
+	if !strings.Contains(idle, l.items[1].label) || !strings.Contains(idle, l.items[1].desc) {
+		t.Fatalf("card should show its label and description, got %q", idle)
 	}
 
 	l.cursor = 1
