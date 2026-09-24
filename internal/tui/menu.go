@@ -55,8 +55,8 @@ func buildRoot() *menu {
 				return nil
 			}),
 			{id: "bbr", label: tk("bbr_title"), desc: tk("menu_bbr"), icon: func(s icons.Set) string { return s.Speed }, sub: buildBBR()},
-			iconLeaf("script-update", "menu_script_update", "menu_script_update_desc", func(s icons.Set) string { return s.Refresh }, scriptUpdate()),
-			iconLeaf("uninstall", "menu_uninstall", "menu_uninstall_desc", func(s icons.Set) string { return s.Trash }, uninstallAction()),
+			{id: "script-update", label: tk("menu_script_update"), desc: tk("menu_script_update_desc"), icon: func(s icons.Set) string { return s.Refresh }, sub: buildUpdatePage()},
+			{id: "uninstall", label: tk("menu_uninstall"), desc: tk("menu_uninstall_desc"), icon: func(s icons.Set) string { return s.Trash }, sub: buildSelfPage()},
 		},
 	}
 }

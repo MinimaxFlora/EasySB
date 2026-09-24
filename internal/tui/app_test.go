@@ -880,6 +880,92 @@ func TestSectionPanelRefreshesAfterTask(t *testing.T) {
 	}
 }
 
+// TestRootEntriesOpenPages covers the frame the operator is left in after a root
+// entry: every entry of the main menu opens a page of its own, so the top box is that
+// page's 看板 and Esc walks back to the main menu. An entry that used to run its
+// action in place showed this section's 看板 above the main menu and made Esc quit.
+func TestRootEntriesOpenPages(t *testing.T) {
+	// The index of a root entry, looked up from the menu itself so the test does not
+	// depend on anything besides the entries the panel builds.
+	rootIndex := func(id string) int {
+		for i, n := range buildRoot().nodes {
+			if n.id == id {
+				return i
+			}
+		}
+		return -1
+	}
+	for _, id := range []string{"script-update", "uninstall"} {
+		a := New("test", i18n.Chinese)
+		a.width, a.height = 100, 33
+		a.sized = true
+		a.status = sysinfo.Collect("test")
+		a.ready = true
+		a.index = rootIndex(id)
+
+		m, _ := a.Update(press(tea.KeyEnter))
+		a = m.(*App)
+		if len(a.stack) != 2 {
+			t.Fatalf("%s: Enter should open a page, stack is %d deep", id, len(a.stack))
+		}
+		if a.sectionID() != id {
+			t.Fatalf("%s: the page should carry its own section, got %q", id, a.sectionID())
+		}
+		// The page is the same two boxes as every other: its 看板 on top, its own
+		// entries below, titled with the page.
+		view := a.View().Content
+		title, rows := a.sectionPanel(a.frameWidth())
+		if title == "" || len(rows) == 0 {
+			t.Fatalf("%s: the page has no 看板", id)
+		}
+		if !strings.Contains(stripANSI(view), title) {
+			t.Fatalf("%s: the page should draw the %q 看板:\n%s", id, title, view)
+		}
+		if got := strings.Count(stripANSI(view), i18n.Chinese.T("menu_main")); got != 0 {
+			t.Fatalf("%s: the main menu should not be on screen inside a page", id)
+		}
+		if !strings.Contains(stripANSI(view), i18n.Chinese.T("nav_back")) {
+			t.Fatalf("%s: the page should offer the way back:\n%s", id, view)
+		}
+
+		// Esc leaves the page instead of quitting the panel.
+		m, cmd := a.Update(press(tea.KeyEscape))
+		a = m.(*App)
+		if cmd != nil {
+			t.Fatalf("%s: Esc on a page should step back, not quit", id)
+		}
+		if len(a.stack) != 1 || a.sectionID() != "" {
+			t.Fatalf("%s: Esc should return to the main menu, stack=%d section=%q", id, len(a.stack), a.sectionID())
+		}
+	}
+}
+
+// TestRootRunInPlaceLeavesNoSection pins the invariant behind that frame: an entry
+// that runs an action without opening a page must not claim a section.
+func TestRootRunInPlaceLeavesNoSection(t *testing.T) {
+	a := New("test", i18n.Chinese)
+	a.width, a.height = 100, 33
+	a.sized = true
+	a.status = sysinfo.Collect("test")
+	a.ready = true
+	for i, n := range buildRoot().nodes {
+		if n.sub != nil || n.action == nil {
+			continue
+		}
+		a.section = ""
+		a.stack = a.stack[:1]
+		a.index = i
+		if n.id == "system" {
+			continue // the system screen is a page of its own and says so
+		}
+		m, _ := a.Update(press(tea.KeyEnter))
+		a = m.(*App)
+		if a.section != "" {
+			t.Fatalf("%s runs in place and must not set a section, got %q", n.id, a.section)
+		}
+	}
+}
+
 func TestLogEndpointWarnsWithoutCertificate(t *testing.T) {
 	cfg := state.Default()
 	// A server IP is enough for a host, but it is not a domain with a
