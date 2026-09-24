@@ -45,15 +45,23 @@ type Status struct {
 	ScriptVersion string
 	CoreVersion   string
 	CoreChannel   string
-	Service       string
-	Autostart     string
-	Domain        string
-	SubPort       int
-	SubSyncSecs   int
-	Hop           string
-	Ports         []PortInfo
-	Deployed      bool
-	StateFound    bool
+	// StatsCapable reports whether the installed core was built with the V2Ray API
+	// (with_v2ray_api), which is what per-account traffic accounting reads. The
+	// official builds leave it out.
+	StatsCapable bool
+	// CoreSource records where the installed core was installed from: "build" for
+	// this repository's builds, "upstream" for the official releases. Empty when the
+	// install predates the record, in which case the build tags decide.
+	CoreSource string
+	Service    string
+	Autostart  string
+	Domain     string
+	SubPort    int
+	SubSyncSecs int
+	Hop        string
+	Ports      []PortInfo
+	Deployed   bool
+	StateFound bool
 
 	Hostname string
 	OS       string
@@ -99,7 +107,7 @@ func Collect(scriptVersion string) Status {
 		Service:       "unknown",
 		Autostart:     "unknown",
 	}
-	st.CoreVersion, st.CoreChannel = coreVersion()
+	st.CoreVersion, st.CoreChannel, st.StatsCapable = coreVersion()
 	st.Service = serviceState("is-active")
 	st.Autostart = serviceState("is-enabled")
 
@@ -107,6 +115,7 @@ func Collect(scriptVersion string) Status {
 
 	state := readState()
 	st.StateFound = len(state) > 0
+	st.CoreSource = state["CORE_SOURCE"]
 	st.Domain = state["DOMAIN"]
 	if st.Domain == "" {
 		st.Domain = state["CERT_DOMAIN"]
@@ -350,25 +359,28 @@ func timezone() string {
 	return "UTC"
 }
 
-func coreVersion() (string, string) {
+// coreVersion reads the installed core's version, the channel it belongs to, and whether
+// it can count traffic. All three come from the one `sing-box version` call: the tags it
+// prints are the ones the binary was built with.
+func coreVersion() (string, string, bool) {
 	if _, err := os.Stat(CoreBin); err != nil {
-		return "", ""
+		return "", "", false
 	}
 	out, err := run(3*time.Second, CoreBin, "version")
 	if err != nil {
-		return "", ""
+		return "", "", false
 	}
 	re := regexp.MustCompile(`(?m)version\s+([^\s]+)`)
 	m := re.FindStringSubmatch(out)
 	if len(m) < 2 {
-		return "", ""
+		return "", "", false
 	}
 	v := m[1]
 	channel := "stable"
 	if strings.Contains(strings.ToLower(v), "alpha") || strings.Contains(strings.ToLower(v), "beta") || strings.Contains(strings.ToLower(v), "rc") {
 		channel = "alpha"
 	}
-	return v, channel
+	return v, channel, strings.Contains(out, "with_v2ray_api")
 }
 
 func serviceState(verb string) string {

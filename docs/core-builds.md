@@ -23,10 +23,26 @@ traffic quotas still work, they are just never filled from real usage.
 newest `alpha`/`beta`/`rc` tag as a *prerelease*; the panel calls them the stable and the
 alpha channel, and so does the rebuild.
 
-The panel itself still installs from upstream — `core.Repo` in `internal/core/core.go`
-points at `SagerNet/sing-box` and `core.AssetURL` builds the download from that. Wiring the
-core manager to the rebuilt releases is the remaining step, and the file names above are
-deliberately identical so that step is a source switch rather than a second download path.
+The panel installs from the author source by default: `core.FetchPreferred` reads the
+channel's `version.ini` stamp and builds the download from it, falling back to the official
+release for a channel this repository has not published yet (`core.FetchBuildRelease` fails,
+`fetchUpstream` answers). 「内核管理 → 切换到官方源内核」 takes the official build on purpose,
+and the log says what that costs before anything is downloaded. The file names above are
+identical in both sources, so this is a source switch and not a second download path.
+
+Which source is installed is shown, not remembered: the core page's 看板 carries a 内核来源
+row (作者源 / 官方源, with whether the binary can count traffic appended) and the version line
+on every page names the source too. The recorded source (`CORE_SOURCE` in the state) is used
+when the panel performed the install; otherwise it is read off the binary's build tags
+(`with_v2ray_api` present means the author source), which also covers an install made before
+the record existed.
+
+**A source switch changes what the core can express, so the config is regenerated with it.**
+A config naming an API the installed binary was not built with is rejected whole and the node
+never starts — and a config that omits the API a capable binary does carry would count
+nothing. Either way the kernel action re-renders the config through the deploy path
+(`configMatchesCore` decides) instead of starting a node that cannot come up. Without that,
+switching to the official core left the node down until someone redeployed by hand.
 
 ## How the rebuilt core is produced
 

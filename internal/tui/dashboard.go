@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MinimaxFlora/EasySB/internal/core"
 	"github.com/MinimaxFlora/EasySB/internal/state"
 	"github.com/MinimaxFlora/EasySB/internal/theme"
 	"github.com/MinimaxFlora/EasySB/internal/ui"
@@ -200,6 +201,7 @@ func (a *App) kernelBody(w int) []string {
 	service, svcKind := a.serviceState()
 	left := [][2]string{
 		a.kv("status_core", coreText, coreKind),
+		a.kv("kernel_source", a.coreSourceText(), ui.KindPlain),
 		a.kv("status_service", service, svcKind),
 	}
 	right := [][2]string{
@@ -508,9 +510,9 @@ func (a *App) statusStrip(w int) string {
 	return ui.Strip(s, items, w)
 }
 
-// coreSummary words the installed core as "version [channel]", or says it is not
-// installed. The wordmark card, the core section's 看板 and the version section's all
-// show it, so it is worded once here.
+// coreSummary words the installed core as "version [channel]", with a marker when the
+// binary can count traffic, or says it is not installed. The wordmark card, the core
+// section's 看板 and the version section's all show it, so it is worded once here.
 func (a *App) coreSummary() (string, ui.Kind) {
 	if a.status.CoreVersion == "" {
 		return a.lang.T("ver_not_installed"), ui.KindPlain
@@ -519,7 +521,42 @@ func (a *App) coreSummary() (string, ui.Kind) {
 	if a.status.CoreChannel == "alpha" {
 		kind = ui.KindWarn
 	}
-	return a.status.CoreVersion + " [" + a.lang.T(channelTagKey(a.status.CoreChannel)) + "]", kind
+	text := a.status.CoreVersion + " [" + a.lang.T(channelTagKey(a.status.CoreChannel)) + "]"
+	text += " · " + a.coreSourceLabel()
+	return text, kind
+}
+
+// coreSourceLabel names where the installed core came from: this repository's builds (the
+// default, and the only ones that can count traffic) or the official SagerNet releases.
+// The source recorded at install time is used when there is one; otherwise it is read off
+// the binary's build tags, which also covers a core installed before the record existed.
+func (a *App) coreSourceLabel() string {
+	source := a.status.CoreSource
+	if source == "" {
+		if a.status.StatsCapable {
+			source = core.SourceBuild
+		} else {
+			source = core.SourceUpstream
+		}
+	}
+	if source == core.SourceBuild {
+		return a.lang.T("kernel_source_author")
+	}
+	return a.lang.T("kernel_source_official")
+}
+
+// coreSourceText words the installed core's source together with whether it can count
+// per-account traffic. The counter half is measured from the binary, not remembered, so
+// it cannot drift from what is actually installed.
+func (a *App) coreSourceText() string {
+	if a.status.CoreVersion == "" {
+		return a.lang.T("state_unknown")
+	}
+	stats := a.lang.T("kernel_stats_off")
+	if a.status.StatsCapable {
+		stats = a.lang.T("kernel_stats_on")
+	}
+	return a.coreSourceLabel() + " · " + stats
 }
 
 // overviewBody is the service/node/version card.
