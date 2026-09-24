@@ -409,6 +409,8 @@ var table = []entry{
 	{"svc_disabled", "服务已取消开机自启", "Service disabled on boot"},
 	{"service_restart_failed", "重启服务失败", "restarting the service failed"},
 	{"script_update", "检查并更新到最新版本", "Check for and install the latest release"},
+	{"script_update_run", "立即检查并更新", "Check for and install the latest release"},
+	{"desc_script_update_run", "下载并替换本面板二进制，替换后需重新运行", "Download and replace this binary, then run it again"},
 	{"script_updating", "正在更新版本", "Updating version"},
 	{"script_uptodate", "已是最新版本", "Already up to date"},
 	{"script_updated", "版本更新完成", "Version updated"},
@@ -418,6 +420,8 @@ var table = []entry{
 	{"shortcut_created", "快捷命令已创建（sb）", "Shortcut created (sb)"},
 
 	{"uninstall_title", "卸载脚本", "Uninstall script"},
+	{"uninstall_run", "执行卸载", "Uninstall"},
+	{"desc_uninstall_run", "停止服务、移除内核与配置，证书保留（会二次确认）", "Stop the service, remove core and config, keep certificates (asks first)"},
 	{"uninstall_confirm", "将停止服务、移除内核与配置（证书会保留），是否继续？", "Stops the service and removes core and config (certificates are kept). Continue?"},
 	{"uninstall_done", "EasySB 已卸载", "EasySB uninstalled"},
 	{"uninstall_keep_certs", "acme 证书已保留", "acme certificates kept"},

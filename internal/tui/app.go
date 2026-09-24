@@ -403,9 +403,11 @@ func (a *App) enter() tea.Cmd {
 	if n == nil {
 		return nil
 	}
-	// Entering a root entry is what decides the current section, which is what
-	// the navigation column marks and what gives a screen its context card.
-	if a.current().id == "root" {
+	// Entering a root entry is what decides the current section, which is what gives a
+	// page its 看板. Only an entry that opens a page counts: an entry that runs an
+	// action in place would otherwise leave the frame showing that section's 看板 above
+	// a menu it does not own, with Esc quitting the panel instead of walking back.
+	if a.current().id == "root" && n.sub != nil {
 		a.section = n.id
 	}
 	if n.sub != nil {

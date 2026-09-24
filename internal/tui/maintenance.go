@@ -168,6 +168,33 @@ func firewallRemove() actionFunc {
 	}
 }
 
+// buildUpdatePage is the version section: what the panel and the core are on, above
+// the one action that changes them. It is a page rather than an action run straight
+// off the main menu, because a root entry that starts a task in place leaves the
+// frame half-switched: the top box would show this section's 看板 over the main menu,
+// and Esc would quit the program instead of walking back.
+func buildUpdatePage() *menu {
+	return &menu{
+		id:    "script-update",
+		title: tk("menu_script_update"),
+		nodes: []*node{
+			leaf("script-update-run", "script_update_run", "desc_script_update_run", scriptUpdate()),
+		},
+	}
+}
+
+// buildSelfPage is the uninstall section: what the script installed, above the action
+// that removes it. The removal asks for confirmation of its own.
+func buildSelfPage() *menu {
+	return &menu{
+		id:    "uninstall",
+		title: tk("menu_uninstall"),
+		nodes: []*node{
+			leaf("uninstall-run", "uninstall_run", "desc_uninstall_run", uninstallAction()),
+		},
+	}
+}
+
 // scriptUpdate downloads and replaces the running binary.
 func scriptUpdate() actionFunc {
 	return func(a *App) tea.Cmd {
