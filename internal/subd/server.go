@@ -133,6 +133,13 @@ func (o Options) handleUnknown(w http.ResponseWriter, _ *http.Request) {
 	http.Error(w, "not found", http.StatusNotFound)
 }
 
+// profileName is the base name of every downloaded subscription file. It is what a
+// client shows as the profile's name, so it is the product rather than the account:
+// the file lands in a download folder, and the account token it used to carry would
+// put a credential in a file name that nobody reads as one.
+const profileName = "EasySB"
+
+// handleSubscription serves one account's profile in the format its client reads.
 func (o Options) handleSubscription(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.Header().Set("Allow", "GET, HEAD")
@@ -171,7 +178,7 @@ func (o Options) handleSubscription(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", subscribe.ContentType(client))
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", account.Token+extensionFor(client)))
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", profileName+extensionFor(client)))
 	// The document carries the account's credentials, so nothing may cache it.
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Subscription-Userinfo", userinfo(account))

@@ -141,6 +141,31 @@ func TestEndpointServesBase64ForUnknownClients(t *testing.T) {
 	}
 }
 
+// TestEndpointNamesDownloads covers the file name a client saves: it is the product,
+// not the account. The token used to be the name, which is a credential sitting in
+// somebody's download folder, and it differs per account in a folder that usually
+// holds one profile.
+func TestEndpointNamesDownloads(t *testing.T) {
+	cases := map[string]string{
+		"sing-box 1.10.0":       `attachment; filename="EasySB.json"`,
+		"clash-verge/v2 mihomo": `attachment; filename="EasySB.yaml"`,
+		"v2rayN/6.0":            `attachment; filename="EasySB.txt"`,
+	}
+	for ua, want := range cases {
+		e := newEndpoint(t, account("alice", nil))
+		rec := e.get("token-alice", ua)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d", ua, rec.Code)
+		}
+		if got := rec.Header().Get("Content-Disposition"); got != want {
+			t.Errorf("%s: disposition = %q, want %q", ua, got, want)
+		}
+		if got := rec.Header().Get("Content-Disposition"); strings.Contains(got, "token-alice") {
+			t.Errorf("%s: the file name must not carry the account token: %q", ua, got)
+		}
+	}
+}
+
 func TestEndpointClientOverride(t *testing.T) {
 	e := newEndpoint(t, account("alice", nil))
 	req := httptest.NewRequest(http.MethodGet, SubPath+"token-alice?client=mihomo", nil)
