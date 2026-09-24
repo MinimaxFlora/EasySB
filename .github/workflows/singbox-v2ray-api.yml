@@ -122,9 +122,10 @@ jobs:
           echo "targets=${targets}" >> "${GITHUB_OUTPUT}"
 
   build:
-    # Skipped runs render the matrix expressions literally, so fall back to a plain name
-    # when there is nothing to build.
-    name: ${{ matrix.target.channel != '' && format('{0} · linux-{1}', matrix.target.channel, matrix.arch) || 'build' }}
+    # A run where nothing needs rebuilding has an empty matrix, and GitHub then shows this
+    # template unevaluated on the skipped job. Cosmetic, and only on those runs: naming
+    # each build instance after its channel and architecture is worth more.
+    name: ${{ matrix.target.channel }} · linux-${{ matrix.arch }}
     needs: resolve
     if: needs.resolve.outputs.targets != '[]'
     runs-on: ubuntu-latest
@@ -224,7 +225,7 @@ jobs:
           echo "published ${release}/${archive}"
 
   stamp:
-    name: ${{ matrix.target.channel != '' && format('stamp {0}', matrix.target.channel) || 'stamp' }}
+    name: stamp ${{ matrix.target.channel }}
     needs: [resolve, build]
     if: needs.resolve.outputs.targets != '[]'
     runs-on: ubuntu-latest
