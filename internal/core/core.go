@@ -442,6 +442,22 @@ func Install(ctx context.Context, rel Release, log func(string), progress Progre
 	return rel.Version, nil
 }
 
+// SupportsV2RayStats reports whether the installed core was built with the V2Ray
+// API, which is where the per-account traffic counters are read from. The
+// official release builds are not built with it (the tag is opt-in upstream), so
+// a deployment on one carries no experimental.v2ray_api block: sing-box rejects
+// the whole config for an API it was not built with.
+func SupportsV2RayStats(ctx context.Context) bool {
+	if !Installed() {
+		return false
+	}
+	out, err := run(ctx, sysinfo.CoreBin, "version")
+	if err != nil {
+		return false
+	}
+	return strings.Contains(out, "with_v2ray_api")
+}
+
 // RealityKeypair returns a fresh Reality private/public key pair.
 func RealityKeypair(ctx context.Context) (string, string, error) {
 	out, err := run(ctx, sysinfo.CoreBin, "generate", "reality-keypair")

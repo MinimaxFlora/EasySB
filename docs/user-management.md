@@ -124,7 +124,13 @@ ports, hop range, Reality parameters and `NODE_DEPLOYED` keep their meaning.
 - Every enabled inbound receives a `users` entry for each user that selected
   that protocol, is enabled, is not expired and is not over quota. The same
   name in several inbounds aggregates into one counter set.
-- `experimental.v2ray_api` is added automatically:
+- `experimental.v2ray_api` is added automatically when the installed core was
+  built with `with_v2ray_api` (`sing-box version` lists the build tags). The
+  official upstream builds are not, and sing-box rejects the whole config for an
+  API it was not built with, so a deployment on one carries no stats block and
+  says so in its log: the node and its accounts work, usage is just not counted.
+  The state key `STATS_API=none` records that choice, and the accounting loop
+  skips its sampling instead of failing on a socket nothing listens on:
 
   ```json
   {

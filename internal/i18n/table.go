@@ -234,6 +234,7 @@ var table = []entry{
 	{"node_need_domain", "部署 TLS 类协议需要域名，请先到 [3] 域名管理申请证书", "TLS protocols need a domain, get a cert in [3] Domain first"},
 	{"node_select_protos", "请选择要部署的协议（多选，逗号分隔，回车=全选）", "Select protocols (comma-separated, Enter=all)"},
 	{"node_config_ok", "配置校验通过", "Config check passed"},
+	{"node_stats_unavailable", "当前内核不含 v2ray API（未以 with_v2ray_api 编译），本次部署不含流量统计：节点与账号照常可用，但流量不会计数", "this core has no V2Ray API (not built with with_v2ray_api): the deployment carries no traffic counters — the node and its accounts work, usage is just not counted"},
 	{"node_config_fail", "配置校验失败，请检查参数", "Config check failed, review parameters"},
 	{"node_deploy_done", "部署完成，服务已启动", "Deployed, service started"},
 	{"node_deploying", "正在生成配置并启动服务", "Building config and starting service"},

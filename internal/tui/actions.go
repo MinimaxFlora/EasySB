@@ -197,6 +197,17 @@ func deployNode() actionFunc {
 				}
 			}
 
+			// The counter source is a property of the installed core, so it is
+			// read here instead of assumed: the official builds carry no V2Ray
+			// API, and a config naming one is rejected whole. A core without it
+			// still deploys a working node, only the byte counters are absent.
+			cfg.StatsAPI = state.StatsAPINone
+			if core.SupportsV2RayStats(ctx) {
+				cfg.StatsAPI = ""
+			} else {
+				r.Log(lang.T("node_stats_unavailable"))
+			}
+
 			// The configuration is rendered for the accounts that are usable
 			// right now, so a deploy also revokes whatever expired meanwhile.
 			now := time.Now()

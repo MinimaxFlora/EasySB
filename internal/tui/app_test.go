@@ -830,6 +830,56 @@ func TestLogEndpointNeedsHost(t *testing.T) {
 	}
 }
 
+// TestBBRPanelShowsPendingReboot keeps the one thing an operator has to do after
+// installing a kernel on the page: the new kernel only runs after a reboot, and a
+// panel that reports it installed without saying so invites a bug report.
+func TestBBRPanelShowsPendingReboot(t *testing.T) {
+	newApp := func() *App {
+		a := New("test", i18n.Chinese)
+		a.width, a.height = 100, 34
+		a.sized = true
+		a.status = sysinfo.Collect("test")
+		a.ready = true
+		a.section = "bbr"
+		a.push(buildBBR())
+		return a
+	}
+
+	pending := newApp()
+	pending.bbrStatus = bbr.Status{
+		Running:    "6.12.48+deb13-amd64",
+		Congestion: "cubic",
+		Kernels:    []string{"linux-image-7.2.7-minimaxflora-bbrv3"},
+	}
+	if view := pending.View().Content; !strings.Contains(view, i18n.Chinese.T("bbr_reboot_pending")) {
+		t.Fatalf("a kernel waiting for a reboot should say so:\n%s", view)
+	}
+
+	running := newApp()
+	running.bbrStatus = bbr.Status{
+		Running:    "7.2.7-minimaxflora-bbrv3",
+		Congestion: "bbr",
+		Kernels:    []string{"linux-image-7.2.7-minimaxflora-bbrv3"},
+	}
+	if view := running.View().Content; strings.Contains(view, i18n.Chinese.T("bbr_reboot_pending")) {
+		t.Fatalf("a kernel that is already running should not ask for a reboot:\n%s", view)
+	}
+}
+
+// TestSectionPanelRefreshesAfterTask keeps the 看板 of a section that reads the
+// machine in step with the task that just changed it.
+func TestSectionPanelRefreshesAfterTask(t *testing.T) {
+	a := New("test", i18n.Chinese)
+	a.section = "bbr"
+	if a.sectionRefresh() == nil {
+		t.Fatal("a task that finished in the BBR section should re-read its panel")
+	}
+	a.section = "domain"
+	if a.sectionRefresh() != nil {
+		t.Fatal("a section whose panel only reads the status strip needs no re-read")
+	}
+}
+
 func TestLogEndpointWarnsWithoutCertificate(t *testing.T) {
 	cfg := state.Default()
 	// A server IP is enough for a host, but it is not a domain with a

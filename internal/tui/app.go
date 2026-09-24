@@ -538,8 +538,11 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmd := a.task.handle(msg)
 			if a.task.done {
 				// The account file is what the account menus render from, so the
-				// snapshot is refreshed as soon as a task finishes.
+				// snapshot is refreshed as soon as a task finishes; a section whose
+				// 看板 reads the machine (BBR) takes its reading again too, or the
+				// page would keep showing what it said before the task ran.
 				a.loadAccounts()
+				return a, tea.Batch(cmd, collectStatus(a.scriptVersion), a.sectionRefresh())
 			}
 			return a, tea.Batch(cmd, collectStatus(a.scriptVersion))
 		}

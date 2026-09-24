@@ -77,11 +77,25 @@ type Config struct {
 	ACMEEmail    string
 	CoreChannel  string
 	NodeDeployed bool
+	// StatsAPI records which counter source the deployed core offers. It is
+	// "none" when the core was built without the V2Ray API, which is the case
+	// for the official release builds: the config then carries no
+	// experimental.v2ray_api block, because sing-box refuses a config that
+	// names an API it was not built with. Empty means the historical value
+	// ("v2ray"), so an existing deployment keeps its counters.
+	StatsAPI     string
 	SubServePort int
 	SubSyncSecs  int
 	ServerIP     string
 	raw          map[string]string
 }
+
+// StatsAPINone is the StatsAPI value for a core without the V2Ray API.
+const StatsAPINone = "none"
+
+// V2RayStats reports whether the core being configured offers the V2Ray stats
+// API, which is where the per-account byte counters come from.
+func (c Config) V2RayStats() bool { return !strings.EqualFold(c.StatsAPI, StatsAPINone) }
 
 // Default returns a Config populated with built-in defaults.
 func Default() Config {
@@ -168,6 +182,7 @@ func (c *Config) applyRaw() {
 	set(&c.ACMEEmail, "ACME_EMAIL")
 	set(&c.CoreChannel, "CORE_CHANNEL")
 	set(&c.ServerIP, "SERVER_IP")
+	set(&c.StatsAPI, "STATS_API")
 	if n, err := strconv.Atoi(c.raw["SUB_SERVE_PORT"]); err == nil && n > 0 && n < 65536 {
 		c.SubServePort = n
 	}
@@ -260,6 +275,7 @@ func (c Config) Save() error {
 		{"ACME_EMAIL", c.ACMEEmail},
 		{"CORE_CHANNEL", c.CoreChannel},
 		{"NODE_DEPLOYED", deployed},
+		{"STATS_API", c.StatsAPI},
 		{"SUB_SERVE_PORT", strconv.Itoa(c.SubServePort)},
 		{"SUB_SYNC_SECONDS", strconv.Itoa(c.SubSyncSecs)},
 		{"SERVER_IP", c.ServerIP},
@@ -289,6 +305,7 @@ func (c Config) extraKeys() []string {
 		"HY2_HOP_RANGE": true, "REALITY_SNI": true, "REALITY_PRIVATE": true,
 		"REALITY_PUBLIC": true, "REALITY_SHORT_ID": true, "DOMAIN": true,
 		"CERT_DOMAIN": true, "ACME_EMAIL": true, "CORE_CHANNEL": true, "NODE_DEPLOYED": true,
+		"STATS_API": true,
 		"SUB_SERVE_PORT": true, "SUB_SYNC_SECONDS": true, "SERVER_IP": true,
 	}
 	var out []string

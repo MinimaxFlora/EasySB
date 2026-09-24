@@ -29,6 +29,9 @@ type Params struct {
 	RealitySID    string
 	CertFullchain string
 	CertKey       string
+	// Stats asks for the experimental.v2ray_api block, which only a core built
+	// with -tags with_v2ray_api accepts.
+	Stats bool
 }
 
 // ParamsFromState maps a persisted config into rendering parameters.
@@ -40,6 +43,7 @@ func ParamsFromState(c state.Config) Params {
 		RealitySNI:  c.RealitySNI,
 		RealityPriv: c.RealityPriv,
 		RealitySID:  c.RealitySID,
+		Stats:       c.V2RayStats(),
 	}
 }
 
@@ -135,7 +139,10 @@ func (p Params) NeedsCert() bool {
 	return false
 }
 
-// Build renders the complete server configuration document.
+// Build renders the complete server configuration document. Params.Stats decides
+// whether the document carries the V2Ray API block the counters are read over:
+// a core that was not built with that API refuses the whole document, so the
+// block is left out rather than written and rejected.
 func Build(p Params) ([]byte, error) {
 	inbounds, err := buildInbounds(p)
 	if err != nil {
@@ -145,12 +152,14 @@ func Build(p Params) ([]byte, error) {
 		Log:       logConfig{Level: "info", Timestamp: true},
 		Inbounds:  inbounds,
 		Outbounds: []outbound{{Type: "direct", Tag: "direct"}},
-		Experimental: experimental{
+	}
+	if p.Stats {
+		doc.Experimental = &experimental{
 			V2RayAPI: v2rayAPI{
 				Listen: StatsListen,
 				Stats:  statsEntry{Enabled: true, Users: p.memberNames()},
 			},
-		},
+		}
 	}
 	return json.MarshalIndent(doc, "", "  ")
 }
@@ -167,10 +176,10 @@ func (p Params) memberNames() []string {
 }
 
 type serverConfig struct {
-	Log          logConfig    `json:"log"`
-	Inbounds     []any        `json:"inbounds"`
-	Outbounds    []outbound   `json:"outbounds"`
-	Experimental experimental `json:"experimental"`
+	Log          logConfig     `json:"log"`
+	Inbounds     []any         `json:"inbounds"`
+	Outbounds    []outbound    `json:"outbounds"`
+	Experimental *experimental `json:"experimental,omitempty"`
 }
 
 type experimental struct {

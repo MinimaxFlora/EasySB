@@ -44,6 +44,9 @@ type Loop struct {
 	// sampled records whether sample can be subtracted from; the first cycle only
 	// establishes the baseline.
 	sampled bool
+	// announcedNoStats keeps the "no counter source" line from repeating every
+	// interval on a node whose core cannot count.
+	announcedNoStats bool
 }
 
 // New prepares an accounting loop.
@@ -70,6 +73,16 @@ func (l *Loop) Run(ctx context.Context) error {
 // Tick runs one accounting cycle.
 func (l *Loop) Tick(ctx context.Context) error {
 	now := l.now()
+	// A core built without the V2Ray API has nothing to read: the deployed config
+	// carries no stats block, so the cycle would only fail on a dead socket every
+	// interval. The node is announced once, when the deployment says so.
+	if l.opts.Node != nil && !l.opts.Node().V2RayStats() {
+		if !l.announcedNoStats {
+			l.announcedNoStats = true
+			l.log("accounting off: the installed core has no v2ray api")
+		}
+		return nil
+	}
 	store, err := user.Load(l.opts.AccountsPath)
 	if err != nil {
 		return err
