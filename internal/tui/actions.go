@@ -56,124 +56,110 @@ func serviceAction(verb string) actionFunc {
 //	mode = "install-stable" | "install-alpha": install that channel
 //	mode = "switch":                          toggle stable <-> alpha
 //	mode = "update":                          update the installed channel
-func kernelAction(mode string) actionFunc {
+// kernelInstall installs one combination of channel and source. The source is part of the
+// request rather than a hidden default: the two differ in what the core can express, so the
+// menu offers the four combinations as four explicit choices.
+func kernelInstall(source, channel string) actionFunc {
 	return func(a *App) tea.Cmd {
 		lang := a.lang
 		return a.startTask(lang.T("kernel_installing"), func(ctx context.Context, r *taskReporter) error {
 			cfg := state.Load()
 			installed := core.Installed()
-			current := core.InstalledChannel(cfg.CoreChannel)
-
-			var target string
-			official := false
-			switch mode {
-			case "install-stable":
-				target = "stable"
-			case "install-alpha":
-				target = "alpha"
-			case "switch":
-				if !installed {
-					return errors.New(lang.T("kernel_need_install"))
-				}
-				if current == "alpha" {
-					target = "stable"
-				} else {
-					target = "alpha"
-				}
-				r.Log(lang.T("kernel_switching") + ": " + lang.T(channelKey(current)) + " → " + lang.T(channelKey(target)))
-			case "update":
-				if !installed {
-					return errors.New(lang.T("kernel_need_install"))
-				}
-				target = current
-			case "install-official":
-				// The escape hatch. The official release is the same upstream source
-				// without the with_v2ray_api tag, so taking it turns the per-account
-				// counters off; the log says so before anything is downloaded.
-				official = true
-				target = current
-			default:
-				target = mode
-			}
-
-			// "Already on this channel" is only true while the source matches as well:
-			// after taking the official core, asking for the author's build again is a
-			// real change, not a no-op — otherwise the way back from the official source
-			// would be a menu entry that silently does nothing.
+			// Comparing the source too is what makes the menu reversible: after taking
+			// the official core, asking for the author's build is a real change.
 			installedSource := coreSourceFrom(cfg.CoreSource, core.SupportsV2RayStats(ctx))
-			if sameInstall(mode, installed, target, current, installedSource) {
-				r.Log(lang.T("kernel_already") + ": " + lang.T(channelKey(target)))
+			if sameInstall(installed, core.InstalledChannel(cfg.CoreChannel), installedSource, channel, source) {
+				r.Log(lang.T("kernel_already") + ": " + lang.T(kernelCombinationKey(channel, source)))
 				return nil
 			}
-
-			rels, err := core.FetchPreferred(ctx)
-			if official {
-				rels, err = core.FetchReleases(ctx)
-			}
-			if err != nil {
-				r.Log(lang.T("ver_offline"))
-			}
-			rel := rels.Stable
-			if target == "alpha" {
-				rel = rels.Alpha
-			}
-			if rel.Version == "" {
-				return errors.New(lang.T("kernel_no_version"))
-			}
-			// Where the core comes from decides whether the node can account usage, so
-			// it is said out loud on every install rather than left in the code.
-			if rel.Source == core.SourceBuild {
-				r.Log(lang.T("kernel_source_build"))
-			} else {
-				r.Log(lang.T("kernel_source_upstream"))
-				r.Log(lang.T("kernel_source_official_warn"))
-			}
-
-			if installed {
-				r.Log("$ systemctl stop " + sysinfo.ServiceName)
-				runCmd(ctx, "systemctl", "stop", sysinfo.ServiceName)
-			}
-
-			r.Log(lang.T("kernel_downloading") + ": " + target + " " + rel.Version)
-			version, err := core.Install(ctx, rel, r.Log, r.Progress)
-			if err != nil {
-				return err
-			}
-
-			// Where the core came from is recorded, because the panel shows it and
-			// because the source is what decides whether usage can be counted.
-			cfg.CoreSource = rel.Source
-			cfg.StatsAPI = state.StatsAPINone
-			if core.SupportsV2RayStats(ctx) {
-				cfg.StatsAPI = ""
-			}
-			cfg.CoreChannel = target
-			if err := cfg.Save(); err != nil {
-				return err
-			}
-
-			if hasServerConfig() {
-				if configMatchesCore(ctx, cfg.V2RayStats()) {
-					r.Log("$ systemctl start " + sysinfo.ServiceName)
-					runCmd(ctx, "systemctl", "start", sysinfo.ServiceName)
-				} else {
-					// The core just changed what it can express, so the deployed config
-					// no longer matches it: regenerating through the deploy path is what
-					// keeps the node up (and the counters working) either way.
-					r.Log(lang.T("kernel_redeploy_needed"))
-					if err := runDeploy(ctx, r, lang); err != nil {
-						r.Log(lang.T("kernel_redeploy_failed") + ": " + err.Error())
-					}
-				}
-			}
-			if mode == "update" {
-				r.Log(lang.T("kernel_updated") + ": " + version)
-			} else {
-				r.Log(lang.T("kernel_installed") + ": " + lang.T(channelKey(target)) + " " + version)
-			}
-			return nil
+			return installCore(ctx, r, lang, cfg, installed, channel, source, "kernel_installed")
 		})
 	}
+}
+
+// kernelUpdate refreshes the version of what is installed, keeping both the channel and the
+// source: an operator who chose the official core is not silently moved off it.
+func kernelUpdate() actionFunc {
+	return func(a *App) tea.Cmd {
+		lang := a.lang
+		return a.startTask(lang.T("kernel_installing"), func(ctx context.Context, r *taskReporter) error {
+			cfg := state.Load()
+			if !core.Installed() {
+				return errors.New(lang.T("kernel_need_install"))
+			}
+			channel := core.InstalledChannel(cfg.CoreChannel)
+			source := coreSourceFrom(cfg.CoreSource, core.SupportsV2RayStats(ctx))
+			return installCore(ctx, r, lang, cfg, true, channel, source, "kernel_updated")
+		})
+	}
+}
+
+// installCore is the one install path: fetch the wanted combination, stop the core, install
+// it, record where it came from, and leave the node up — regenerating the config when the new
+// core can express something different from the old one. doneKey picks the closing line.
+func installCore(ctx context.Context, r *taskReporter, lang i18n.Lang, cfg state.Config, installed bool, channel, source, doneKey string) error {
+	rels, err := core.FetchPreferred(ctx)
+	if source == core.SourceUpstream {
+		rels, err = core.FetchReleases(ctx)
+	}
+	if err != nil {
+		r.Log(lang.T("ver_offline"))
+	}
+	rel := rels.Stable
+	if channel == "alpha" {
+		rel = rels.Alpha
+	}
+	if rel.Version == "" {
+		return errors.New(lang.T("kernel_no_version"))
+	}
+	// Where the core comes from decides whether the node can account usage, so it is said
+	// out loud on every install rather than left in the code.
+	if rel.Source == core.SourceBuild {
+		r.Log(lang.T("kernel_source_build"))
+	} else {
+		r.Log(lang.T("kernel_source_upstream"))
+		r.Log(lang.T("kernel_source_official_warn"))
+	}
+
+	if installed {
+		r.Log("$ systemctl stop " + sysinfo.ServiceName)
+		runCmd(ctx, "systemctl", "stop", sysinfo.ServiceName)
+	}
+
+	r.Log(lang.T("kernel_downloading") + ": " + lang.T(kernelCombinationKey(channel, rel.Source)) + " " + rel.Version)
+	version, err := core.Install(ctx, rel, r.Log, r.Progress)
+	if err != nil {
+		return err
+	}
+
+	// Where the core came from is recorded, because the panel shows it and because the
+	// source is what decides whether usage can be counted.
+	cfg.CoreSource = rel.Source
+	cfg.StatsAPI = state.StatsAPINone
+	if core.SupportsV2RayStats(ctx) {
+		cfg.StatsAPI = ""
+	}
+	cfg.CoreChannel = channel
+	if err := cfg.Save(); err != nil {
+		return err
+	}
+
+	if hasServerConfig() {
+		if configMatchesCore(ctx, cfg.V2RayStats()) {
+			r.Log("$ systemctl start " + sysinfo.ServiceName)
+			runCmd(ctx, "systemctl", "start", sysinfo.ServiceName)
+		} else {
+			// The core just changed what it can express, so the deployed config no longer
+			// matches it: regenerating through the deploy path is what keeps the node up
+			// (and the counters working) either way.
+			r.Log(lang.T("kernel_redeploy_needed"))
+			if err := runDeploy(ctx, r, lang); err != nil {
+				r.Log(lang.T("kernel_redeploy_failed") + ": " + err.Error())
+			}
+		}
+	}
+	r.Log(lang.T(doneKey) + ": " + lang.T(kernelCombinationKey(channel, rel.Source)) + " " + version)
+	return nil
 }
 
 // coreSourceFrom reports which source an installed core came from: the recorded one when the
@@ -194,14 +180,24 @@ func coreSourceFrom(recorded string, statsCapable bool) string {
 	return core.SourceUpstream
 }
 
-// sameInstall reports whether an install request would change nothing: the wanted channel is
-// already installed from the author source. Updating always has work to do, and so does
-// taking the official core — that is a deliberate downgrade of what the core can express.
-func sameInstall(mode string, installed bool, target, current, installedSource string) bool {
-	if !installed || mode == "update" || mode == "install-official" {
-		return false
+// sameInstall reports whether the wanted combination of channel and source is the one already
+// installed, which is the only case an install request has nothing to do.
+func sameInstall(installed bool, installedChannel, installedSource, wantChannel, wantSource string) bool {
+	return installed && installedChannel == wantChannel && installedSource == wantSource
+}
+
+// kernelCombinationKey names one of the four channel/source combinations in the interface.
+func kernelCombinationKey(channel, source string) string {
+	if source == core.SourceBuild {
+		if channel == "alpha" {
+			return "kernel_alpha_author"
+		}
+		return "kernel_stable_author"
 	}
-	return current == target && installedSource == core.SourceBuild
+	if channel == "alpha" {
+		return "kernel_alpha_official"
+	}
+	return "kernel_stable_official"
 }
 
 func hasServerConfig() bool {

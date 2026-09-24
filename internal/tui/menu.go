@@ -3,6 +3,7 @@ package tui
 import (
 	"charm.land/bubbletea/v2"
 
+	"github.com/MinimaxFlora/EasySB/internal/core"
 	"github.com/MinimaxFlora/EasySB/internal/i18n"
 	"github.com/MinimaxFlora/EasySB/internal/icons"
 	"github.com/MinimaxFlora/EasySB/internal/state"
@@ -66,13 +67,57 @@ func buildKernel() *menu {
 		id:    "kernel",
 		title: tk("kernel_title"),
 		nodes: []*node{
-			leaf("kernel-install-stable", "kernel_install_stable", "desc_kernel_install_stable", kernelAction("install-stable")),
-			leaf("kernel-install-alpha", "kernel_install_alpha", "desc_kernel_install_alpha", kernelAction("install-alpha")),
-			leaf("kernel-switch", "kernel_switch", "desc_kernel_switch", kernelAction("switch")),
-			leaf("kernel-update", "kernel_update", "desc_kernel_update", kernelAction("update")),
-			leaf("kernel-install-official", "kernel_install_official", "desc_kernel_install_official", kernelAction("install-official")),
+			// The combination page is built when it is opened, so the mark it puts on the
+			// installed combination is the state as it is now, not as it was at startup.
+			{id: "kernel-switch", label: tk("kernel_switch"), desc: tk("desc_kernel_switch"),
+				action: func(a *App) tea.Cmd {
+					a.push(buildKernelSwitch())
+					return nil
+				}},
+			leaf("kernel-update", "kernel_update", "desc_kernel_update", kernelUpdate()),
 		},
 	}
+}
+
+// buildKernelSwitch is the four combinations of channel and source in one list to move
+// through: taking the official core is a choice made here rather than something the panel
+// slips in, and the way back is the same list. The installed combination is marked from the
+// recorded state; a core installed before that record existed carries no mark, because the
+// core page's 看板 reads the binary itself and is the answer that cannot be stale.
+func buildKernelSwitch() *menu {
+	current := kernelCurrentKey(state.Load())
+	entry := func(id, labelKey, descKey, channel, source string) *node {
+		n := leaf(id, labelKey, descKey, kernelInstall(source, channel))
+		if current != "" && current == channel+":"+source {
+			n.desc = func(l i18n.Lang) string {
+				return l.T(descKey) + " · " + l.T("kernel_current_marker")
+			}
+		}
+		return n
+	}
+	return &menu{
+		id:    "kernel-switch",
+		title: tk("kernel_switch"),
+		nodes: []*node{
+			entry("kernel-apply-stable-author", "kernel_stable_author", "desc_kernel_stable_author", "stable", core.SourceBuild),
+			entry("kernel-apply-alpha-author", "kernel_alpha_author", "desc_kernel_alpha_author", "alpha", core.SourceBuild),
+			entry("kernel-apply-stable-official", "kernel_stable_official", "desc_kernel_stable_official", "stable", core.SourceUpstream),
+			entry("kernel-apply-alpha-official", "kernel_alpha_official", "desc_kernel_alpha_official", "alpha", core.SourceUpstream),
+		},
+	}
+}
+
+// kernelCurrentKey is the channel and source recorded for the installed core, or empty when
+// nothing was recorded (see buildKernelSwitch).
+func kernelCurrentKey(cfg state.Config) string {
+	if cfg.CoreSource == "" {
+		return ""
+	}
+	channel := cfg.CoreChannel
+	if channel == "" {
+		channel = "stable"
+	}
+	return channel + ":" + cfg.CoreSource
 }
 
 func buildNode() *menu {

@@ -50,7 +50,7 @@ func main() {
 	skinFlag := flag.String("skin", "", "界面皮肤 / UI skin: jade, aurora, ember, graphite (or a-d)")
 	showVersion := flag.Bool("version", false, "显示版本 / show version")
 	render := flag.Bool("render", false, "渲染一次仪表盘后退出 / render once and exit")
-	screen := flag.String("screen", "", "配合 --render 渲染指定界面，用栏目 id（kernel/node/domain/bbr…）、system、task 或 bbr-versions / with --render, draw this screen by section id, or system, task, bbr-qdisc, bbr-versions")
+	screen := flag.String("screen", "", "配合 --render 渲染指定界面，用栏目 id（kernel/node/domain/bbr…）、system、task 或 bbr-versions / with --render, draw this screen by section id, or system, task, bbr-qdisc, bbr-versions, kernel-switch")
 	applyFirewall := flag.Bool("apply-firewall", false, "应用端口跳跃防火墙规则 / apply port-hopping firewall rules")
 	renewCerts := flag.Bool("renew-certs", false, "续期证书并重载服务（供定时器调用）/ renew certificates and reload the services")
 	installTimer := flag.Bool("install-renew-timer", false, "安装证书续期定时器 / install the certificate renewal timer")
