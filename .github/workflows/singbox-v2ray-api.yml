@@ -143,27 +143,22 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Upstream's own tag set, read from the source we just checked out, plus the
-          # one tag this workflow exists for. Reading it rather than copying it keeps
-          # the build in step with a release that adds or drops a tag.
-          base=$(cat release/DEFAULT_BUILD_TAGS)
-          tags="${base},${EXTRA_TAG}"
-
+          # Upstream picks its tag set per architecture, and the choice matters: the naive
+          # outbound needs the Chromium/cronet toolchain that only its amd64 and arm64
+          # jobs set up, so every other architecture builds from
+          # DEFAULT_BUILD_TAGS_OTHERS, which leaves that tag out. Copying the amd64 set
+          # onto the small architectures is what makes their build fail.
           case "${ARCH}" in
-            amd64) export GOARCH=amd64 ;;
-            arm64) export GOARCH=arm64 ;;
-            armv7) export GOARCH=arm GOARM=7 ;;
-            armv6) export GOARCH=arm GOARM=6 ;;
-            386)   export GOARCH=386 ;;
-            riscv64) export GOARCH=riscv64 ;;
-            s390x) export GOARCH=s390x ;;
+            amd64)   export GOARCH=amd64; base=$(cat release/DEFAULT_BUILD_TAGS); extra=",with_purego" ;;
+            arm64)   export GOARCH=arm64; base=$(cat release/DEFAULT_BUILD_TAGS); extra=",with_purego" ;;
+            386)     export GOARCH=386 GO386=sse2; base=$(cat release/DEFAULT_BUILD_TAGS_OTHERS); extra="" ;;
+            armv7)   export GOARCH=arm GOARM=7; base=$(cat release/DEFAULT_BUILD_TAGS_OTHERS); extra="" ;;
+            armv6)   export GOARCH=arm GOARM=6; base=$(cat release/DEFAULT_BUILD_TAGS_OTHERS); extra="" ;;
+            riscv64) export GOARCH=riscv64; base=$(cat release/DEFAULT_BUILD_TAGS_OTHERS); extra="" ;;
+            s390x)   export GOARCH=s390x; base=$(cat release/DEFAULT_BUILD_TAGS_OTHERS); extra="" ;;
           esac
 
-          # The pure-Go runtime is what the official amd64/arm64 archives use; the
-          # remaining architectures are pure Go anyway and reject the tag.
-          case "${ARCH}" in
-            amd64|arm64) tags="${tags},with_purego" ;;
-          esac
+          tags="${base},${EXTRA_TAG}${extra}"
 
           export CGO_ENABLED=0 GOOS=linux
           # LDFLAGS from the sing-box repository, so the binary behaves like an official

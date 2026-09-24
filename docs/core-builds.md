@@ -35,11 +35,22 @@ sing-box-<version>-linux-<arch>.tar.gz
 ```
 
 The tag list is read from the checked-out source rather than copied here, so a release
-that adds or drops a tag stays in step. `with_purego` is added for amd64 and arm64, which
-is what the official archives of those architectures carry. The version is injected the
-way upstream does it (`-X github.com/sagernet/sing-box/constant.Version=<version>`), and
-`sing-box version` prints the tags it was built with — that line is what the panel reads
-to decide whether a core may carry the stats block (`core.SupportsV2RayStats`).
+that adds or drops a tag stays in step — but which list is read depends on the
+architecture, and that is not cosmetic:
+
+| Architecture | Tag list | Extra |
+| :-- | :-- | :-- |
+| amd64, arm64 | `release/DEFAULT_BUILD_TAGS` | `with_purego` |
+| 386, armv7, armv6, riscv64, s390x | `release/DEFAULT_BUILD_TAGS_OTHERS` | — |
+
+`DEFAULT_BUILD_TAGS` carries `with_naive_outbound`, which needs the Chromium/cronet
+toolchain that upstream sets up for its amd64 and arm64 jobs only; building the small
+architectures from that list fails outright. `with_purego` is amd64/arm64 only. Both
+lists are upstream's, from the source that was just checked out, so a release that adds
+or drops a tag stays in step. The version is injected the way upstream does it
+(`-X github.com/sagernet/sing-box/constant.Version=<version>`), and `sing-box version`
+prints the tags it was built with — that line is what the panel reads to decide whether a
+core may carry the stats block (`core.SupportsV2RayStats`).
 
 Two rolling releases hold the results, one per channel, each with a `version.ini` stamp:
 
