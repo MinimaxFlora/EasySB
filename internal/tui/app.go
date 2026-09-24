@@ -180,17 +180,21 @@ func (a *App) Snapshot(width, height int) string {
 }
 
 // SnapshotScreen is Snapshot for one named screen, so a layout can be inspected
-// without walking the menus. Unknown names fall back to the dashboard.
+// without walking the menus. Any root entry that has a submenu can be named, on top of
+// the screens that open their own model. Unknown names fall back to the dashboard.
 func (a *App) SnapshotScreen(screen string, width, height int) string {
+	if screen != "system" && a.enterSection(screen) {
+		// The BBR 看板 reads the local state when the section is entered. A
+		// rendered screen has no event loop to deliver that reading, so it takes
+		// one here; otherwise it would only ever draw the placeholder.
+		if screen == "bbr" {
+			a.bbrStatus = bbrStatusNow()
+		}
+		return a.Snapshot(width, height)
+	}
 	switch screen {
 	case "system":
 		a.openSystem()
-	case "node":
-		a.push(buildNode())
-		a.section = "node"
-	case "bbr":
-		a.push(buildBBR())
-		a.section = "bbr"
 	case "bbr-qdisc":
 		a.push(buildBBR())
 		a.section = "bbr"
@@ -198,17 +202,28 @@ func (a *App) SnapshotScreen(screen string, width, height int) string {
 	case "bbr-versions":
 		a.push(buildBBR())
 		a.section = "bbr"
+		a.bbrStatus = bbrStatusNow()
 		// The list is fetched from the network when it is opened. A rendered
 		// screen shows the layout, so it takes a sample list instead of an empty
 		// one, which would only ever draw the loading placeholder.
 		a.bbrVersions = previewReleases()
-		a.bbrStatus = bbr.Status{
-			Running: "7.2.6-minimaxflora-bbrv3",
-			Kernels: []string{"linux-image-7.2.6-minimaxflora-bbrv3"},
-		}
 		a.push(a.bbrVersionsMenu())
 	}
 	return a.Snapshot(width, height)
+}
+
+// enterSection pushes the submenu of a root entry by id, so a page can be rendered by
+// name. It reports whether the entry exists and has a submenu to stand in.
+func (a *App) enterSection(id string) bool {
+	for _, n := range buildRoot().nodes {
+		if n.id != id || n.sub == nil {
+			continue
+		}
+		a.push(n.sub)
+		a.section = id
+		return true
+	}
+	return false
 }
 
 func collectStatus(version string) tea.Cmd {
@@ -363,7 +378,7 @@ func (a *App) enter() tea.Cmd {
 	}
 	if n.sub != nil {
 		a.push(n.sub)
-		return nil
+		return a.sectionRefresh()
 	}
 	if n.action != nil {
 		return n.action(a)
@@ -462,6 +477,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 	case bbrVersionsMsg:
 		a.applyBBRVersions(msg)
+		return a, nil
+	case bbrStatusMsg:
+		a.bbrStatus = msg.status
 		return a, nil
 	}
 

@@ -243,19 +243,6 @@ func Rule(s theme.Style, w int) string {
 	return s.Colored(s.Border, strings.Repeat(glyph, w))
 }
 
-// RuleLabel is a rule interrupted by a label: "── Accounts ──────────".
-func RuleLabel(s theme.Style, label string, w int) string {
-	if w <= 0 {
-		return ""
-	}
-	head := " " + label + " "
-	headW := lipgloss.Width(head)
-	if headW >= w {
-		return theme.Truncate(label, w)
-	}
-	return s.Colored(s.Border, "──") + s.Label(head) + s.Colored(s.Border, strings.Repeat("─", w-headW-2))
-}
-
 // Badge renders a short state token in the tone it deserves.
 func Badge(s theme.Style, text string, k Kind) string {
 	if text == "" {

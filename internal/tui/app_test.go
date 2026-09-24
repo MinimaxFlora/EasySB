@@ -435,12 +435,18 @@ func TestDashboardShowsLogoAndMenuDescriptions(t *testing.T) {
 	if rule < 0 {
 		t.Fatalf("no rule between the wordmark and the vitals:\n%s", view)
 	}
-	// The entries follow the vitals inside the same frame — the panel, the vitals
-	// and the menu are one box divided by rules, not two boxes with a gap.
+	// The entries live in their own box under the 看板: that is the frame every
+	// page of the panel shares — 看板 on top, entries below — and it is what the
+	// lines between the two halves have to prove.
+	split := -1
 	for i := vitals; i < menu; i++ {
 		if strings.ContainsAny(lines[i], "╭╰") {
-			t.Fatalf("the frame is split at line %d, between the vitals and the menu:\n%s", i, view)
+			split = i
+			break
 		}
+	}
+	if split < 0 {
+		t.Fatalf("the menu is not in a box of its own after the 看板:\n%s", view)
 	}
 	// The hints follow the menu instead of being pinned to the bottom, which is
 	// what leaves the gap the user asked to close: the menu card's bottom border
@@ -455,6 +461,40 @@ func TestDashboardShowsLogoAndMenuDescriptions(t *testing.T) {
 	}
 	if hint+3 >= len(lines)-1 {
 		t.Fatalf("hints at line %d of %d lines — they are pinned to the bottom:\n%s", hint, len(lines), view)
+	}
+}
+
+// TestEverySectionHasItsOwnPanel guards the frame the panel is built around: every
+// second-level page shows a 看板 of its own in the top box and its entries in the
+// bottom one, so moving between pages swaps those two contents and nothing else.
+func TestEverySectionHasItsOwnPanel(t *testing.T) {
+	ids := []string{"kernel", "node", "domain", "subscribe", "users", "service", "bbr", "script-update", "uninstall"}
+	seen := make(map[string]string, len(ids))
+	for _, id := range ids {
+		a := newTestApp(t)
+		a.width, a.height = 100, 40
+		a.section = id
+		title, rows := a.sectionPanel(a.width)
+		if strings.TrimSpace(title) == "" {
+			t.Errorf("section %q has no 看板 title", id)
+		}
+		if len(rows) == 0 {
+			t.Errorf("section %q has no 看板 rows", id)
+		}
+		if first, ok := seen[title]; ok {
+			t.Errorf("sections %q and %q share the 看板 title %q", first, id, title)
+		}
+		seen[title] = id
+
+		// The rendered page is two boxes: the 看板 and, under it, the entries.
+		view := stripANSI(a.dashboard())
+		boxes := strings.Count(view, "╭")
+		if boxes < 2 {
+			t.Errorf("section %q renders %d boxes, want the 看板 and the entries:\n%s", id, boxes, view)
+		}
+		if !strings.Contains(view, title) {
+			t.Errorf("section %q does not render its 看板 title %q:\n%s", id, title, view)
+		}
 	}
 }
 

@@ -51,8 +51,36 @@ func bbrVersionsAction() actionFunc {
 	}
 }
 
-// fetchBBRVersions reads the published kernels and the local state in one go, so
-// the list can mark what is already installed.
+// bbrStatusMsg carries a reading of the local BBR state, taken when the section is
+// entered so its 看板 shows the machine rather than "not read".
+type bbrStatusMsg struct{ status bbr.Status }
+
+// readBBRStatus reads the local half of the BBR picture: the kernel that is running
+// and the BBR kernels that are installed.
+func readBBRStatus() tea.Cmd {
+	return func() tea.Msg { return bbrStatusMsg{status: bbrStatusNow()} }
+}
+
+// bbrStatusNow is readBBRStatus without the event loop, for a screen that is rendered
+// rather than driven: the CLI preview has no message loop to deliver the result.
+func bbrStatusNow() bbr.Status {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return bbr.LocalStatus(ctx)
+}
+
+// sectionRefresh loads what a section's 看板 reads the moment that section is entered,
+// so the top box is never blank while the actions in the bottom box are untouched.
+// Sections the status tick already answers need nothing here.
+func (a *App) sectionRefresh() tea.Cmd {
+	if a.section == "bbr" {
+		return readBBRStatus()
+	}
+	return nil
+}
+
+// fetchBBRVersions reads the published kernels and the local state in one go, so the
+// list can mark what is already installed.
 func fetchBBRVersions() tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)

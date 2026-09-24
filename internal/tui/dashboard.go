@@ -161,32 +161,54 @@ func (a *App) dashboardBody(w, h int) []string {
 	return out
 }
 
-// sectionContent renders one section as a single card: the section's own panel on
-// top, a rule, then its entries, and the hints under the card. The section name is
-// not part of the card — the navigation column already marks it, unless the
-// navigation is hidden on a narrow terminal, where a breadcrumb takes its place.
+// sectionContent renders one section in the frame every page of the panel shares: the
+// section's own 看板 in the top box and its entries in the bottom one. Only their
+// contents change as the operator moves between pages, the frame itself does not. The
+// entries box takes the section's name only where the navigation column is hidden,
+// because that column already says which section this is.
 func (a *App) sectionContent(w, h int, withNav bool) []string {
 	s := a.style()
-	inner := ui.InnerWidth(s, w)
-	title, rows := a.sectionPanel(w)
-	body := make([]string, 0, len(rows)+6)
-	if len(rows) > 0 {
-		body = append(body, rows...)
-		body = append(body, ui.Rule(s, inner))
-	} else if !withNav {
-		// No panel and no navigation column: the breadcrumb is the only thing
-		// that says which section this is.
-		body = append(body, s.Faint(theme.Truncate(a.breadcrumb(), inner)), "")
-	}
-
 	tail := a.tailLines(w, h)
-	limit := h - len(tail) - 2 - len(body)
+	space := h - len(tail)
+	out := []string{}
+	if title, rows := a.sectionPanel(w); title != "" && len(rows) > 0 {
+		box := ui.Card(s, title, "", rows, w)
+		// The 看板 keeps its slot only while the entries still fit under it.
+		if len(box)+1+sectionMenuRows <= space {
+			out = append(out, box...)
+			if !s.Met.Compact {
+				out = append(out, "")
+			}
+		}
+	}
+	out = append(out, a.sectionMenu(w, space-len(out), withNav)...)
+	return append(out, tail...)
+}
+
+// sectionMenuRows is the height the entries box is never squeezed below: three
+// entries and the row that leads back out of the section.
+const sectionMenuRows = 5
+
+// sectionMenu is the bottom box of a section: its numbered entries and the row that
+// returns to the parent menu.
+func (a *App) sectionMenu(w, h int, withNav bool) []string {
+	s := a.style()
+	inner := ui.InnerWidth(s, w)
+	title := ""
+	if !withNav {
+		title = a.current().title(a.lang)
+	}
+	limit := h - 2
+	if a.hasNavRow() {
+		limit--
+	}
 	if limit < 1 {
 		limit = 1
 	}
 	descCol := a.menuDescColumn(inner, a.menuLabelColumn())
 	cursorWidth := a.menuCursorWidth(inner)
 	items, hidden := a.menuViewport(limit, inner, descCol, cursorWidth)
+	body := make([]string, 0, len(items)+2)
 	body = append(body, items...)
 	if hidden > 0 {
 		body = append(body, s.Faint(fmt.Sprintf("  +%d", hidden)))
@@ -194,19 +216,176 @@ func (a *App) sectionContent(w, h int, withNav bool) []string {
 	if a.hasNavRow() {
 		body = append(body, a.rowLine(a.onNavRow(), a.numberedLabel(len(a.current().nodes), nil), inner, cursorWidth))
 	}
-	out := ui.Card(s, title, "", body, w)
-	return append(out, tail...)
+	return ui.Card(s, title, "", body, w)
 }
 
-// sectionPanel is the panel that describes what the operator is about to change,
-// returned as a title and the rows to draw under it so the entries can share its
-// card. Only the node section has one for now: its parameters are the ones an
-// operator reads while changing them.
+// sectionPanel is the 看板 of the page: its title, and the rows drawn in the top box.
+// Every section has one, which is what keeps the frame identical everywhere — the top
+// box is always the 看板 of the page the operator stands in, the bottom box is always
+// its entries, and only those two contents are swapped as the navigation moves.
 func (a *App) sectionPanel(w int) (string, []string) {
-	if a.sectionID() != "node" {
-		return "", nil
+	switch a.sectionID() {
+	case "kernel":
+		return a.lang.T("panel_kernel"), a.kernelBody(w)
+	case "node":
+		return a.lang.T("panel_node"), a.nodeBody(w)
+	case "domain":
+		return a.lang.T("panel_domain"), a.domainBody(w)
+	case "subscribe":
+		return a.lang.T("panel_subscribe"), a.subscribeBody(w)
+	case "users":
+		return a.lang.T("panel_accounts"), a.accountsBody(w)
+	case "service":
+		return a.lang.T("panel_service"), a.serviceBody(w)
+	case "bbr":
+		return a.lang.T("panel_bbr"), a.bbrBody(w)
+	case "script-update":
+		return a.lang.T("panel_update"), a.updateBody(w)
+	case "uninstall":
+		return a.lang.T("panel_uninstall"), a.selfBody(w)
 	}
-	return a.lang.T("panel_node"), a.nodeBody(w)
+	return a.lang.T("panel_overview"), a.overviewBody(w)
+}
+
+// kernelBody is the core section's 看板: which sing-box is installed, whether the
+// service runs it, and whether its node is deployed.
+func (a *App) kernelBody(w int) []string {
+	s := a.style()
+	inner := ui.InnerWidth(s, w)
+	coreText, coreKind := a.coreSummary()
+	nodeText, nodeKind := a.nodeState()
+	service, svcKind := a.serviceState()
+	left := [][2]string{
+		a.kv("status_core", coreText, coreKind),
+		a.kv("status_service", service, svcKind),
+	}
+	right := [][2]string{
+		a.kv("status_node", nodeText, nodeKind),
+		a.kv("status_ports", a.panelValue(enabledPorts(a.status.Ports)), ui.KindPlain),
+	}
+	return ui.TwoCol(s, left, right, inner)
+}
+
+// domainBody is the domain section's 看板: the name in use and what is deployed
+// behind it, which is what its certificate actions act on.
+func (a *App) domainBody(w int) []string {
+	s := a.style()
+	st := a.status
+	inner := ui.InnerWidth(s, w)
+	nodeText, nodeKind := a.nodeState()
+	service, svcKind := a.serviceState()
+	left := [][2]string{
+		a.kv("status_domain", a.panelValue(st.Domain), ui.KindPlain),
+		a.kv("status_node", nodeText, nodeKind),
+	}
+	right := [][2]string{
+		a.kv("status_service", service, svcKind),
+		a.kv("status_ports", a.panelValue(enabledPorts(st.Ports)), ui.KindPlain),
+	}
+	return ui.TwoCol(s, left, right, inner)
+}
+
+// subscribeBody is the subscription section's 看板: where subscriptions are served,
+// how often usage is read, and how many accounts they carry.
+func (a *App) subscribeBody(w int) []string {
+	s := a.style()
+	st := a.status
+	inner := ui.InnerWidth(s, w)
+	left := [][2]string{
+		a.kv("status_sub", a.subscriptionSummary(), ui.KindPlain),
+		a.kv("param_sub_sync", a.syncIntervalText(), ui.KindPlain),
+	}
+	right := [][2]string{
+		a.kv("users_summary_total", fmt.Sprintf("%d", len(a.accounts)), ui.KindPlain),
+		a.kv("status_domain", a.panelValue(st.Domain), ui.KindPlain),
+	}
+	return ui.TwoCol(s, left, right, inner)
+}
+
+// serviceBody is the service section's 看板: the three things its actions change —
+// whether the service runs, whether it starts at boot, and on which ports.
+func (a *App) serviceBody(w int) []string {
+	s := a.style()
+	st := a.status
+	inner := ui.InnerWidth(s, w)
+	service, svcKind := a.serviceState()
+	autostart, autoKind := a.autostartState()
+	left := [][2]string{
+		a.kv("status_service", service, svcKind),
+		a.kv("status_autostart", autostart, autoKind),
+	}
+	right := [][2]string{
+		a.kv("status_ports", a.panelValue(enabledPorts(st.Ports)), ui.KindPlain),
+		a.kv("device_uptime", withFallback(humanDuration(st.Uptime), "—"), ui.KindPlain),
+	}
+	return ui.TwoCol(s, left, right, inner)
+}
+
+// bbrBody is the BBR section's 看板: whether acceleration is on, which kernel runs it
+// and how many BBR kernels are installed. Acceleration is the congestion control the
+// kernel is actually using, not the kernel release; the local reading is taken when
+// the section is entered, and before it lands the rows say so instead of guessing.
+func (a *App) bbrBody(w int) []string {
+	s := a.style()
+	inner := ui.InnerWidth(s, w)
+	st := a.bbrStatus
+	if st.Running == "" {
+		notRead := a.lang.T("not_read")
+		left := [][2]string{
+			a.kv("bbr_state", notRead, ui.KindPlain),
+			a.kv("bbr_congestion", notRead, ui.KindPlain),
+		}
+		right := [][2]string{
+			a.kv("bbr_running_kernel", notRead, ui.KindPlain),
+			a.kv("bbr_row_installed", notRead, ui.KindPlain),
+		}
+		return ui.TwoCol(s, left, right, inner)
+	}
+	accel, accelKind := a.lang.T("state_disabled"), ui.KindPlain
+	if st.Congestion == "bbr" {
+		accel, accelKind = a.lang.T("bbr_on"), ui.KindOK
+	}
+	left := [][2]string{
+		a.kv("bbr_state", accel, accelKind),
+		a.kv("bbr_congestion", a.panelValue(st.Congestion), ui.KindPlain),
+	}
+	right := [][2]string{
+		a.kv("bbr_running_kernel", a.panelValue(st.Running), ui.KindPlain),
+		a.kv("bbr_row_installed", fmt.Sprintf("%d", len(st.Kernels)), ui.KindPlain),
+	}
+	return ui.TwoCol(s, left, right, inner)
+}
+
+// updateBody is the version section's 看板: what the panel and the core are on.
+func (a *App) updateBody(w int) []string {
+	s := a.style()
+	inner := ui.InnerWidth(s, w)
+	coreText, coreKind := a.coreSummary()
+	left := [][2]string{
+		a.kv("status_version", a.scriptVersion, ui.KindOK),
+	}
+	right := [][2]string{
+		a.kv("status_core", coreText, coreKind),
+	}
+	return ui.TwoCol(s, left, right, inner)
+}
+
+// selfBody is the uninstall section's 看板: what the script installed, which is what
+// removing it takes away.
+func (a *App) selfBody(w int) []string {
+	s := a.style()
+	inner := ui.InnerWidth(s, w)
+	service, svcKind := a.serviceState()
+	nodeText, nodeKind := a.nodeState()
+	left := [][2]string{
+		a.kv("status_version", a.scriptVersion, ui.KindOK),
+		a.kv("status_service", service, svcKind),
+	}
+	right := [][2]string{
+		a.kv("status_node", nodeText, nodeKind),
+		a.kv("users_summary_total", fmt.Sprintf("%d", len(a.accounts)), ui.KindPlain),
+	}
+	return ui.TwoCol(s, left, right, inner)
 }
 
 // nodeBody lists the node parameters exactly as the config stores them.
@@ -227,52 +406,45 @@ func (a *App) nodeBody(w int) []string {
 	return ui.TwoCol(s, left, right, inner)
 }
 
-// rootCards draws the main menu as one frame: the wordmark and the panel's vitals on
-// top, a rule, then the entries under a labelled rule. The section pages have the
-// same shape — panel above, entries below, one frame — so the panel reads the same
-// at every level. The result is not padded to its height, so whatever follows the
-// menu stays right under it, and the menu is never traded away: every entry stays
-// reachable on a short terminal.
+// rootCards stacks the two boxes of the main menu in the same frame as every other
+// page: the panel's own 看板 on top — the wordmark and the vitals — and the entries
+// below it. It is not padded to its height, so the explanation and the hints stay
+// right under the entries, and the entries are never traded away: on a terminal too
+// short for both boxes the 看板 gives up its slot, so every entry stays reachable.
 func (a *App) rootCards(w, h int) []string {
 	s := a.style()
 	if !a.ready {
 		return ui.Card(s, a.lang.T("card_welcome"), "", []string{s.Faint(a.lang.T("loading") + "…")}, w)
 	}
-	card := a.rootCard(w, heroLevels)
-	for level := heroLevels; level >= 0 && len(card) > h; level-- {
-		card = a.rootCard(w, level)
-	}
-	if len(card) <= h {
-		return card
-	}
-	// Even without its wordmark the panel does not fit: the entries are what the
-	// screen is for, so they get a card of their own and the vitals give up their
-	// slot. A tiny terminal then still gets a frame instead of an empty column.
 	menu := a.rootMenuLines(w)
-	if len(menu) > h {
-		return menu[:maxInt(0, h)]
+	panel := a.rootCard(w, heroLevels)
+	for level := heroLevels; level > 0 && len(panel)+1+len(menu) > h; level-- {
+		panel = a.rootCard(w, level-1)
 	}
-	return menu
+	out := []string{}
+	if len(panel)+1+len(menu) <= h {
+		out = append(out, panel...)
+		if !s.Met.Compact {
+			out = append(out, "")
+		}
+	}
+	return append(out, menu...)
 }
 
 // heroLevels is how many shapes the wordmark block has, from the full wordmark,
 // tagline and quote down to nothing at all.
 const heroLevels = 3
 
-// rootCard is the main menu as a single frame: the wordmark, the panel's vitals, then
-// the entries, divided by rules rather than by borders. The entry block keeps its own
-// label on the rule above it, so the menu is still named without a second card.
+// rootCard is the main menu's 看板: the wordmark, the tagline and the quote, a rule,
+// then the service, node and version rows.
 func (a *App) rootCard(w, level int) []string {
 	s := a.style()
-	inner := ui.InnerWidth(s, w)
 	body := []string{}
 	if level > 0 && w >= 46 && !s.Met.Compact {
 		body = append(body, a.heroBody(w, level)...)
-		body = append(body, ui.Rule(s, inner))
+		body = append(body, ui.Rule(s, ui.InnerWidth(s, w)))
 	}
 	body = append(body, a.overviewBody(w)...)
-	body = append(body, ui.RuleLabel(s, a.current().title(a.lang), inner))
-	body = append(body, a.menuCellRows(inner)...)
 	return ui.Card(s, a.lang.T("card_welcome"), "", body, w)
 }
 
@@ -327,16 +499,6 @@ func (a *App) menuCell(selected bool, i int, n *node, cellW int) string {
 		return a.palette.SelectedRow(line)
 	}
 	return a.palette.Bold(a.palette.Text, line)
-}
-
-// breadcrumb is the root-to-current path, which is what makes the two-column
-// layout readable when the navigation column is not there to say where you are.
-func (a *App) breadcrumb() string {
-	parts := make([]string, 0, len(a.stack))
-	for _, m := range a.stack {
-		parts = append(parts, m.title(a.lang))
-	}
-	return strings.Join(parts, " › ")
 }
 
 // heroBody is the wordmark block shown at the top of a tall main menu: the block
@@ -397,6 +559,20 @@ func (a *App) statusStrip(w int) string {
 	return ui.Strip(s, items, w)
 }
 
+// coreSummary words the installed core as "version [channel]", or says it is not
+// installed. The wordmark card, the core section's 看板 and the version section's all
+// show it, so it is worded once here.
+func (a *App) coreSummary() (string, ui.Kind) {
+	if a.status.CoreVersion == "" {
+		return a.lang.T("ver_not_installed"), ui.KindPlain
+	}
+	kind := ui.KindOK
+	if a.status.CoreChannel == "alpha" {
+		kind = ui.KindWarn
+	}
+	return a.status.CoreVersion + " [" + a.lang.T(channelTagKey(a.status.CoreChannel)) + "]", kind
+}
+
 // overviewBody is the service/node/version card.
 func (a *App) overviewBody(w int) []string {
 	s := a.style()
@@ -404,13 +580,7 @@ func (a *App) overviewBody(w int) []string {
 	inner := ui.InnerWidth(s, w)
 	svcText, svcKind := a.serviceState()
 	nodeText, nodeKind := a.nodeState()
-	coreText, coreKind := a.lang.T("ver_not_installed"), ui.KindPlain
-	if st.CoreVersion != "" {
-		coreText, coreKind = st.CoreVersion+" ["+a.lang.T(channelTagKey(st.CoreChannel))+"]", ui.KindOK
-		if st.CoreChannel == "alpha" {
-			coreKind = ui.KindWarn
-		}
-	}
+	coreText, coreKind := a.coreSummary()
 	autostart, autoKind := a.autostartState()
 	left := [][2]string{
 		a.kv("ov_service", svcText, svcKind),
@@ -435,6 +605,15 @@ func (a *App) subscriptionSummary() string {
 		return a.lang.T("not_set")
 	}
 	return fmt.Sprintf(":%d · %ds", st.SubPort, st.SubSyncSecs)
+}
+
+// syncIntervalText is the accounting interval on its own, which reads as "not set"
+// rather than "0s" while no node is deployed.
+func (a *App) syncIntervalText() string {
+	if a.status.SubSyncSecs <= 0 {
+		return a.lang.T("not_set")
+	}
+	return fmt.Sprintf("%ds", a.status.SubSyncSecs)
 }
 
 // deviceBody is the host card: meters for the three resources that run out, then
