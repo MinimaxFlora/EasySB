@@ -89,8 +89,10 @@ def main() -> int:
     if proc.returncode:
         print(proc.stderr, file=sys.stderr, end="")
         return proc.returncode
-    targets = out.read_text(encoding="utf-8").strip().removeprefix("targets=")
-    print("targets =", targets)
+    raw = out.read_text(encoding="utf-8").strip()
+    outputs = {k: v for k, v in (line.split("=", 1) for line in raw.splitlines())}
+    targets = outputs.get("targets", "[]")
+    print("step outputs:", outputs)
     decided = json.loads(targets)
     if os.environ.get("EXPECT_EMPTY") == "1":
         assert decided == [], f"expected no builds, got {decided}"

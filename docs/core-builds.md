@@ -23,6 +23,11 @@ traffic quotas still work, they are just never filled from real usage.
 newest `alpha`/`beta`/`rc` tag as a *prerelease*; the panel calls them the stable and the
 alpha channel, and so does the rebuild.
 
+The panel itself still installs from upstream — `core.Repo` in `internal/core/core.go`
+points at `SagerNet/sing-box` and `core.AssetURL` builds the download from that. Wiring the
+core manager to the rebuilt releases is the remaining step, and the file names above are
+deliberately identical so that step is a source switch rather than a second download path.
+
 ## How the rebuilt core is produced
 
 `.github/workflows/singbox-v2ray-api.yml` checks out the upstream tag, builds
@@ -65,7 +70,31 @@ build_tags=with_gvisor,...,with_v2ray_api
 ```
 
 A channel is only rebuilt when upstream moved, so the daily run is usually a no-op;
-`workflow_dispatch` takes `channels` (both/stable/alpha) and `force`.
+`workflow_dispatch` takes `channels` (both/stable/alpha), `force`, and `keep_generations`.
+
+A channel is only marked done when **both** its stamp matches the upstream version **and**
+its archive count matches the architecture count: a run that dies half way leaves a release
+whose stamp already names the new version while architectures are missing, and a stamp-only
+check would skip that channel forever.
+
+## Retention: two releases forever, one version's archives inside
+
+The fixed channel tags are what keeps the release list at two entries however many upstream
+versions pass. The archives inside them still pile up, because their names carry the version
+they were built from (`sing-box-1.14.2-linux-amd64.tar.gz`) and a new upstream release adds a
+set beside the old one instead of replacing it — after a year each channel would hold hundreds
+of files.
+
+`scripts/prune_release_assets.py`, run by the workflow's `prune` job on every run (including
+the runs that rebuild nothing, which is exactly when nothing else would tidy up), deletes
+every set the channel no longer offers and leaves one version per channel: 7 archives + 7
+checksums + `version.ini` = 15 assets. `keep_generations` changes that — `2` keeps the
+previous version as well, `0` keeps everything and never prunes. `version.ini` is never
+touched: it is the stamp the panel reads, not an archive.
+
+The delete path only has work to do when a stale version exists, so the rules are testable
+without GitHub: `--assets-file` takes a JSON list of asset names and `--dry-run` prints the
+decisions.
 
 ## Adding an architecture
 

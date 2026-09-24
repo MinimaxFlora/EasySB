@@ -8,7 +8,8 @@
 
 ### 新增
 
-- **带流量统计的内核构建工作流**：`.github/workflows/singbox-v2ray-api.yml` 用上游同一份源码加一个 `with_v2ray_api` 标签，重建正式版与测试版两条通道（滚动 release `singbox-stable` / `singbox-alpha`），产物与官方发布**同名**（`sing-box-<版本>-linux-<架构>.tar.gz` + `.sha256` + `version.ini` 版本戳），因此面板可以按同一套命名取用。上游版本没变就不重复构建；支持手动 dispatch（可选 both/stable/alpha 与强制重建）与每日定时。为什么需要它、光环标签怎么来的、加架构要动哪几处：见 `docs/core-builds.md`。
+- **带流量统计的内核构建工作流**：`.github/workflows/singbox-v2ray-api.yml` 用上游同一份源码加一个 `with_v2ray_api` 标签，重建正式版与测试版两条通道（滚动 release `singbox-stable` / `singbox-alpha`），产物与官方发布**同名**（`sing-box-<版本>-linux-<架构>.tar.gz` + `.sha256` + `version.ini` 版本戳），因此面板可以按同一套命名取用。上游版本没变就不重复构建；支持手动 dispatch（可选 both/stable/alpha 与强制重建）与每日定时。为什么需要它、光环标签怎么来、加架构要动哪几处：见 `docs/core-builds.md`。
+- **通道资产保留策略**：`prune` 任务每次运行都清掉通道不再提供的旧内核包（`scripts/prune_release_assets.py`）。固定通道 tag 让 release 永远只有两个，但包名带版本号，不清的话每个新版本都会在同一 release 里再堆 14 个文件；默认每个通道只留当前版本（15 个资产），dispatch 时可选 `keep_generations`（2=连上一代一起留，0=全留不清理）。
 
 ### 变更
 

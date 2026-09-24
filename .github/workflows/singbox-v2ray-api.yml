@@ -21,6 +21,12 @@ name: sing-box with v2ray api
 #
 # A channel is only rebuilt when upstream moved or when the workflow is dispatched by
 # hand, so the daily run is a no-op most days.
+#
+# Retention: the two channel tags are fixed on purpose (the panel polls one URL forever
+# and the release list never grows), but the archives inside them are named after the
+# version they were built from, so each new upstream release adds a set instead of
+# replacing one. A `prune` job deletes every set the channel no longer offers, keeping it
+# at one version (or `keep_generations` versions when dispatched by hand).
 
 on:
   workflow_dispatch:
@@ -34,6 +40,10 @@ on:
         description: 即使上游版本没变也重新构建 / rebuild even when the version did not move
         type: boolean
         default: false
+      keep_generations:
+        description: 每个通道保留几代内核（1=只留当前，0=全部保留）/ core versions to keep per channel
+        type: number
+        default: "1"
   schedule:
     # Upstream publishes whenever it likes; a daily look is enough to pick a release up.
     - cron: "23 3 * * *"
@@ -60,6 +70,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       targets: ${{ steps.plan.outputs.targets }}
+      versions: ${{ steps.plan.outputs.versions }}
     steps:
       - name: Plan the builds
         id: plan
@@ -83,6 +94,9 @@ jobs:
           fi
 
           echo "upstream stable=${stable:?} alpha=${alpha:?}"
+          # Every channel's current upstream version, whether or not it gets rebuilt: the
+          # prune job reads this to know which asset set is still the one being offered.
+          echo "versions={\"stable\":\"${stable#v}\",\"alpha\":\"${alpha#v}\"}" >> "${GITHUB_OUTPUT}"
 
           published() {
             # The version stamp of a channel we have already published, or empty.
@@ -223,6 +237,39 @@ jobs:
             -q '.assets[].name' | grep -qx "${archive}" \
             || { echo "::error::${archive} is not attached to ${release}"; exit 1; }
           echo "published ${release}/${archive}"
+
+  prune:
+    # Fixed channel tags keep the release list at two entries forever, but the assets inside
+    # them accumulate: every core version is a fresh set of files rather than a replacement,
+    # so a year of releases would leave hundreds of archives hanging off each channel. This
+    # job keeps what the channel still offers and deletes the rest. It runs even on the runs
+    # that rebuild nothing, which is exactly when nothing else would tidy up.
+    name: prune ${{ matrix.channel }} assets
+    needs: [resolve]
+    if: always() && needs.resolve.result == 'success'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        channel: [stable, alpha]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Delete cores the channel no longer offers
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CHANNEL: ${{ matrix.channel }}
+          VERSIONS: ${{ needs.resolve.outputs.versions }}
+          KEEP: ${{ github.event.inputs.keep_generations || 1 }}
+        run: |
+          set -euo pipefail
+          current=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get(sys.argv[2], ""))' \
+            "${VERSIONS}" "${CHANNEL}")
+          if [ -z "${current}" ]; then
+            echo "upstream has no ${CHANNEL} release right now, nothing to prune"
+            exit 0
+          fi
+          python3 scripts/prune_release_assets.py --repo "${GITHUB_REPOSITORY}" \
+            --tag "singbox-${CHANNEL}" --current "${current}" --keep-generations "${KEEP}"
 
   stamp:
     name: stamp ${{ matrix.target.channel }}
