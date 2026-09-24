@@ -137,9 +137,18 @@ func (o Options) handleUnknown(w http.ResponseWriter, _ *http.Request) {
 // client shows as the profile's name, so it is the product rather than the account:
 // the file lands in a download folder, and the account token it used to carry would
 // put a credential in a file name that nobody reads as one. The name carries no
-// extension — the client picks the format from the Content-Type, and the suffix only
-// made the profile read as "EasySB.yaml" in a client that keeps it.
+// extension either: the client reads the format from the Content-Type.
 const profileName = "EasySB"
+
+// dispositionName is the Content-Disposition value for a profile download. It sends
+// the name in both forms RFC 6266 defines, and the plain one is deliberately
+// unquoted: the Clash family (Clash Verge Rev, Clash Orbit) reads the header through
+// a Debug-formatted string and strips the surrounding quotes only, so the quoted
+// form arrives there as `\"EasySB\"` and ends up as the profile's name. Those clients
+// resolve filename* first, which needs no quoting.
+func dispositionName() string {
+	return fmt.Sprintf("attachment; filename=%s; filename*=UTF-8''%s", profileName, profileName)
+}
 
 // handleSubscription serves one account's profile in the format its client reads.
 func (o Options) handleSubscription(w http.ResponseWriter, r *http.Request) {
@@ -180,7 +189,7 @@ func (o Options) handleSubscription(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", subscribe.ContentType(client))
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", profileName))
+	w.Header().Set("Content-Disposition", dispositionName())
 	// The document carries the account's credentials, so nothing may cache it.
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Subscription-Userinfo", userinfo(account))

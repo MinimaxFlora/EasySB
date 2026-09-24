@@ -173,18 +173,21 @@ Response headers on every `/sub/<token>` response:
 
 ```
 Subscription-Userinfo: upload=<bytes>; download=<bytes>; total=<bytes>; expire=<unix seconds>
-Content-Disposition: attachment; filename="EasySB"
+Content-Disposition: attachment; filename=EasySB; filename*=UTF-8''EasySB
 Cache-Control: no-store
 ```
 
 `total=0` means unlimited and `expire=0` never, which is what Clash Orbit,
 Clash Verge Rev and v2rayN already understand. The document body stays
 byte-compatible with what the v3 templates produced, so no client needs a new
-parser. The download name is the product name, fixed for every account: a Clash
-client shows the file name as the profile's name, so it is the one string a user
-reads, and the account token it used to carry is a credential that has no reason
-to sit in a download folder. Being plain ASCII, it needs no RFC 5987 encoding
-either — a display name would have to be quoted into the header.
+parser. The download name is the product name, fixed for every account, and carries
+no extension: a Clash client shows the file name as the profile's name, so it is the
+one string a user reads, and the account token it used to carry is a credential that
+has no reason to sit in a download folder. It is sent twice, as RFC 6266 allows,
+because the Clash family (Clash Verge Rev, Clash Orbit) reads the header through a
+Debug-formatted string and strips the surrounding quotes only: a quoted
+`filename="EasySB"` reaches them as `\"EasySB\"` and becomes the profile's name, while
+the `filename*=UTF-8''EasySB` they look at first survives intact.
 
 `expire` is omitted entirely when the account never expires, because a client
 reads `expire=0` as "already expired".

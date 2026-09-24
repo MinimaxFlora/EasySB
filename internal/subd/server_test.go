@@ -144,11 +144,13 @@ func TestEndpointServesBase64ForUnknownClients(t *testing.T) {
 // TestEndpointNamesDownloads covers the file name a client saves: it is the product,
 // not the account. The token used to be the name, which is a credential sitting in
 // somebody's download folder, and it differs per account in a folder that usually
-// holds one profile. The name carries no extension either: the client reads the
-// format from the Content-Type, and "EasySB.yaml" is not the name anybody asked for.
+// holds one profile. The name is sent in both forms RFC 6266 defines and the plain
+// one stays unquoted: a quoted filename reaches the Clash family as `\"EasySB\"`,
+// because they strip the surrounding quotes from a Debug-formatted header and nothing
+// else. See scripts/clash_orbit_name_check.py for the parser this is written against.
 func TestEndpointNamesDownloads(t *testing.T) {
-	const want = `attachment; filename="EasySB"`
-	for _, ua := range []string{"sing-box 1.10.0", "clash-verge/v2 mihomo", "v2rayN/6.0"} {
+	const want = "attachment; filename=EasySB; filename*=UTF-8''EasySB"
+	for _, ua := range []string{"sing-box 1.10.0", "clash-verge/v2 mihomo", "clash-orbit/2.0", "v2rayN/6.0"} {
 		e := newEndpoint(t, account("alice", nil))
 		rec := e.get("token-alice", ua)
 		if rec.Code != http.StatusOK {
