@@ -69,6 +69,8 @@ jobs:
         run: |
           set -euo pipefail
           api="https://api.github.com/repos/${UPSTREAM}"
+          read -r -a arch_list <<<"${ARCHES}"
+          expected_archives="${#arch_list[@]}"
 
           stable=$(curl -fsSL "${api}/releases/latest" | jq -r .tag_name)
           # The alpha channel is whatever newest release upstream marked prerelease;
@@ -88,6 +90,14 @@ jobs:
               | sed -n 's/^version=//p' | head -1 || true
           }
 
+          published_archives() {
+            # How many architecture archives the channel release carries. A run that
+            # died half way leaves a release whose stamp already matches the version,
+            # so the stamp alone is not enough to call a channel done.
+            curl -fsSL "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/singbox-$1" 2>/dev/null \
+              | jq -r '[.assets[] | select(.name | endswith(".sha256"))] | length' 2>/dev/null || echo 0
+          }
+
           targets="[]"
           for channel in stable alpha; do
             case "${WANTED}" in
@@ -99,11 +109,12 @@ jobs:
             [ -n "$tag" ] || continue
             version="${tag#v}"
             have=$(published "${channel}")
-            if [ "${have}" = "${version}" ] && [ "${FORCE}" != "true" ]; then
-              echo "singbox-${channel}: ${version} is already published, skipping"
+            count=$(published_archives "${channel}")
+            if [ "${have}" = "${version}" ] && [ "${count}" -ge "${expected_archives}" ] && [ "${FORCE}" != "true" ]; then
+              echo "singbox-${channel}: ${version} is already published with ${count} archives, skipping"
               continue
             fi
-            echo "singbox-${channel}: building ${tag} (published: ${have:-none})"
+            echo "singbox-${channel}: building ${tag} (published: ${have:-none}, archives: ${count})"
             targets=$(jq -c --arg c "$channel" --arg t "$tag" --arg v "$version" \
               '. + [{channel: $c, tag: $t, version: $v}]' <<<"${targets}")
           done
