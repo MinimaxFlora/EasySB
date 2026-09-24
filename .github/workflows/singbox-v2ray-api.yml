@@ -191,9 +191,11 @@ jobs:
           CHANNEL: ${{ matrix.target.channel }}
           TAG: ${{ matrix.target.tag }}
           VERSION: ${{ matrix.target.version }}
+          ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
           release="singbox-${CHANNEL}"
+          archive="sing-box-${VERSION}-linux-${ARCH}.tar.gz"
           if ! gh release view "${release}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             gh release create "${release}" --repo "${GITHUB_REPOSITORY}" \
               --title "sing-box ${CHANNEL} (with_v2ray_api)" \
@@ -205,7 +207,13 @@ jobs:
           \`sing-box-<version>-linux-<arch>.tar.gz\`, the same names the official releases use."
           fi
           gh release upload "${release}" --repo "${GITHUB_REPOSITORY}" --clobber \
-            "sing-box-${VERSION}-linux-${ARCH}.tar.gz" "sing-box-${VERSION}-linux-${ARCH}.tar.gz.sha256"
+            "${archive}" "${archive}.sha256"
+          # The panel builds the download URL from the asset name, so an upload that
+          # silently did not land would only surface as a 404 much later.
+          gh release view "${release}" --repo "${GITHUB_REPOSITORY}" --json assets \
+            -q '.assets[].name' | grep -qx "${archive}" \
+            || { echo "::error::${archive} is not attached to ${release}"; exit 1; }
+          echo "published ${release}/${archive}"
 
   stamp:
     name: stamp ${{ matrix.target.channel }}
