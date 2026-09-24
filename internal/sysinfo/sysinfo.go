@@ -39,7 +39,17 @@ const (
 	SubServiceName = "easysb"
 	SubSystemdUnit = "/etc/systemd/system/easysb.service"
 	SubOpenRCUnit  = "/etc/init.d/easysb"
+
+	// PanelPaths are where this project's installer puts the panel binary, most
+	// preferred first. Anything that has to name the panel in a unit, a timer or a
+	// launcher uses these rather than os.Executable(): a panel run from a scratch copy
+	// (a test build, an unpacked tree) must not redirect the installed service to that
+	// copy, because deleting the copy would then take the service down with it.
+	PanelPath = "/usr/local/bin/easysb"
 )
+
+// PanelPaths are the candidate locations of the panel binary, most preferred first.
+var PanelPaths = []string{PanelPath, "/usr/local/bin/sb", "/usr/bin/sb"}
 
 type Status struct {
 	ScriptVersion string

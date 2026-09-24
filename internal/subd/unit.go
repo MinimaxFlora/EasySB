@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/MinimaxFlora/EasySB/internal/service"
@@ -23,11 +25,70 @@ func UnitPath() string {
 // WriteUnit installs the unit that keeps the endpoint running. It runs this same
 // binary with --serve, so the endpoint needs no separate program.
 func WriteUnit() error {
-	exe, err := os.Executable()
+	exe, err := serviceExecutable()
 	if err != nil {
 		return err
 	}
 	return writeUnit(UnitPath(), exe, service.Detect())
+}
+
+// serviceExecutable picks the path the subscription unit should run. The installed
+// panel wins over wherever this process happens to live: running a scratch copy once
+// used to rewrite the unit to that copy's path, and removing the copy left the endpoint
+// unable to start. A tree that was never installed still points at itself.
+func serviceExecutable() (string, error) {
+	self, err := os.Executable()
+	if err != nil {
+		self = ""
+	}
+	picked := pickExecutable(self, sysinfo.PanelPaths)
+	if picked == "" {
+		return "", errors.New("cannot determine the panel executable")
+	}
+	return picked, nil
+}
+
+// pickExecutable returns the first candidate that exists and is executable, preferring
+// the one this process is running from; self is the fallback when none is installed.
+func pickExecutable(self string, candidates []string) string {
+	installed := ""
+	selfResolved := ""
+	if self != "" {
+		if resolved, err := filepath.EvalSymlinks(self); err == nil {
+			selfResolved = resolved
+		}
+	}
+	for _, candidate := range candidates {
+		info, err := os.Stat(candidate)
+		if err != nil || !executable(info) {
+			continue
+		}
+		if installed == "" {
+			installed = candidate
+		}
+		if selfResolved != "" {
+			if resolved, err := filepath.EvalSymlinks(candidate); err == nil && resolved == selfResolved {
+				return candidate
+			}
+		}
+	}
+	if installed != "" {
+		return installed
+	}
+	return self
+}
+
+// executable reports whether a file may be run. Windows has no executable bit, so there
+// any regular file counts; everywhere the panel installs to, the bit is what decides, so
+// a half-written download is never mistaken for the installed panel.
+func executable(info os.FileInfo) bool {
+	if info.IsDir() {
+		return false
+	}
+	if runtime.GOOS == "windows" {
+		return true
+	}
+	return info.Mode()&0o111 != 0
 }
 
 func writeUnit(path, exe string, manager service.Manager) error {

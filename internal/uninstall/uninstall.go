@@ -22,12 +22,9 @@ import (
 // BackupDir is where the pre-uninstall archive is written.
 const BackupDir = "/root"
 
-// shortcuts lists the launcher paths removed on uninstall.
-var shortcuts = []string{
-	"/usr/bin/sb",
-	"/usr/local/bin/sb",
-	"/usr/local/bin/easysb",
-}
+// shortcuts lists the launcher paths removed on uninstall. They are the same paths the
+// installer uses, so the list lives with the rest of the install paths.
+var shortcuts = sysinfo.PanelPaths
 
 // Backup archives /etc/sing-box into /root and returns the archive path.
 func Backup(log func(string)) (string, error) {
