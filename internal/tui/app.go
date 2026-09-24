@@ -201,6 +201,9 @@ func (a *App) SnapshotScreen(screen string, width, height int) string {
 	switch screen {
 	case "system":
 		a.openSystem()
+	case "kernel-switch":
+		a.enterSection("kernel")
+		a.push(buildKernelSwitch())
 	case "bbr-qdisc":
 		a.push(buildBBR())
 		a.section = "bbr"

@@ -254,7 +254,7 @@ func TestRootMenuHasNoNav(t *testing.T) {
 func TestKernelMenuEntries(t *testing.T) {
 	a := newTestApp(t)
 	a.push(buildKernel())
-	want := []string{"kernel-install-stable", "kernel-install-alpha", "kernel-switch", "kernel-update", "kernel-install-official"}
+	want := []string{"kernel-switch", "kernel-update"}
 	if got := len(a.current().nodes); got != len(want) {
 		t.Fatalf("kernel menu has %d entries, want %d", got, len(want))
 	}
@@ -267,9 +267,9 @@ func TestKernelMenuEntries(t *testing.T) {
 		t.Fatalf("kernel menu should show a navigation row")
 	}
 	view := a.View().Content
-	for _, label := range []string{"安装正式版内核", "安装测试版内核", "切换内核", "更新内核（仅更新当前通道）", "切换到官方源内核", i18n.Chinese.T("nav_back")} {
+	for _, label := range []string{"切换内核", "更新内核", i18n.Chinese.T("nav_back")} {
 		if !strings.Contains(view, label) {
-			t.Fatalf("kernel menu view missing %q:\n%s", label, view)
+			t.Fatalf("kernel menu view missing %q: %s", label, view)
 		}
 	}
 	m, _ := a.Update(press('0'))
@@ -279,6 +279,60 @@ func TestKernelMenuEntries(t *testing.T) {
 	}
 	if a.current().id != "kernel" {
 		t.Fatalf("expected kernel submenu, got %s", a.current().id)
+	}
+}
+
+// Switching the core is one list of the four channel/source combinations, so taking the
+// official core and going back to the author's build are the same kind of move.
+func TestKernelSwitchEntries(t *testing.T) {
+	a := newTestApp(t)
+	a.push(buildKernelSwitch())
+	want := []struct{ id, label string }{
+		{"kernel-apply-stable-author", "正式版 · 作者源"},
+		{"kernel-apply-alpha-author", "测试版 · 作者源"},
+		{"kernel-apply-stable-official", "正式版 · 官方源"},
+		{"kernel-apply-alpha-official", "测试版 · 官方源"},
+	}
+	if got := len(a.current().nodes); got != len(want) {
+		t.Fatalf("switch menu has %d entries, want %d", got, len(want))
+	}
+	view := a.View().Content
+	for i, entry := range want {
+		if got := a.current().nodes[i].id; got != entry.id {
+			t.Fatalf("switch entry %d = %s, want %s", i, got, entry.id)
+		}
+		if got := a.current().nodes[i].label(i18n.Chinese); got != entry.label {
+			t.Fatalf("switch entry %d label = %q, want %q", i, got, entry.label)
+		}
+		if !strings.Contains(view, entry.label) {
+			t.Fatalf("switch menu view missing %q: %s", entry.label, view)
+		}
+	}
+	if !a.hasNavRow() {
+		t.Fatalf("switch menu should show a navigation row")
+	}
+}
+
+// The combination that is installed is marked, and the mark comes from the recorded state:
+// without a record nothing is marked, because the core page's 看板 answers from the binary.
+func TestKernelCurrentKey(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  state.Config
+		want string
+	}{
+		{"author stable", state.Config{CoreChannel: "stable", CoreSource: core.SourceBuild}, "stable:build"},
+		{"official alpha", state.Config{CoreChannel: "alpha", CoreSource: core.SourceUpstream}, "alpha:upstream"},
+		{"channel missing", state.Config{CoreSource: core.SourceBuild}, "stable:build"},
+		{"no record", state.Config{CoreChannel: "stable"}, ""},
+		{"nothing at all", state.Config{}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := kernelCurrentKey(tc.cfg); got != tc.want {
+				t.Fatalf("kernelCurrentKey(%+v) = %q, want %q", tc.cfg, got, tc.want)
+			}
+		})
 	}
 }
 
@@ -1145,32 +1199,31 @@ func TestCoreSourceLabel(t *testing.T) {
 	}
 }
 
-// Taking the official core has to be reversible from the menu. The install guard used to
-// compare channels only, so after switching to the official source, "安装正式版内核" reported
-// "already on this channel" and did nothing — the entry that would bring the author's build
-// back was a no-op.
+// An install request has nothing to do only when the channel *and* the source are the ones
+// already installed: comparing channels alone made the way back from the official source a
+// no-op.
 func TestSameInstall(t *testing.T) {
 	cases := []struct {
-		name    string
-		mode    string
-		install bool
-		target  string
-		current string
-		source  string
-		want    bool
+		name       string
+		installed  bool
+		haveCh     string
+		haveSource string
+		wantCh     string
+		wantSource string
+		want       bool
 	}{
-		{"author source, same channel", "install-stable", true, "stable", "stable", core.SourceBuild, true},
-		{"official source, same channel", "install-stable", true, "stable", "stable", core.SourceUpstream, false},
-		{"official source, other channel", "install-alpha", true, "alpha", "stable", core.SourceUpstream, false},
-		{"update always installs", "update", true, "stable", "stable", core.SourceBuild, false},
-		{"official entry always installs", "install-official", true, "stable", "stable", core.SourceBuild, false},
-		{"nothing installed yet", "install-stable", false, "stable", "", core.SourceUpstream, false},
+		{"author stable already there", true, "stable", core.SourceBuild, "stable", core.SourceBuild, true},
+		{"official installed, author wanted", true, "stable", core.SourceUpstream, "stable", core.SourceBuild, false},
+		{"author installed, official wanted", true, "stable", core.SourceBuild, "stable", core.SourceUpstream, false},
+		{"other channel", true, "stable", core.SourceBuild, "alpha", core.SourceBuild, false},
+		{"nothing installed", false, "", core.SourceUpstream, "stable", core.SourceBuild, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := sameInstall(tc.mode, tc.install, tc.target, tc.current, tc.source); got != tc.want {
-				t.Fatalf("sameInstall(%q, %v, %q, %q, %q) = %v, want %v",
-					tc.mode, tc.install, tc.target, tc.current, tc.source, got, tc.want)
+			got := sameInstall(tc.installed, tc.haveCh, tc.haveSource, tc.wantCh, tc.wantSource)
+			if got != tc.want {
+				t.Fatalf("sameInstall(%v, %q, %q, %q, %q) = %v, want %v",
+					tc.installed, tc.haveCh, tc.haveSource, tc.wantCh, tc.wantSource, got, tc.want)
 			}
 		})
 	}
