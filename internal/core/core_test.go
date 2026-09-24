@@ -343,3 +343,59 @@ func writeArchive(path, name, content string) error {
 	_, err = bytes.NewBufferString(content).WriteTo(tw)
 	return err
 }
+
+func TestParseStamp(t *testing.T) {
+	stamp := []byte("[singbox]\nchannel=stable\nversion=1.14.2\ntag=v1.14.2\n# comment\narches=amd64,arm64\n\n build_tags = with_gvisor,with_v2ray_api \n")
+	cases := map[string]string{
+		"version":    "1.14.2",
+		"tag":        "v1.14.2",
+		"channel":    "stable",
+		"build_tags": "with_gvisor,with_v2ray_api",
+		"missing":    "",
+	}
+	for key, want := range cases {
+		if got := parseStamp(stamp, key); got != want {
+			t.Errorf("parseStamp(%q) = %q, want %q", key, got, want)
+		}
+	}
+	if got := parseStamp([]byte(""), "version"); got != "" {
+		t.Errorf("parseStamp on an empty stamp = %q, want empty", got)
+	}
+}
+
+func TestBuildAssetURL(t *testing.T) {
+	got := BuildAssetURL("stable", "1.14.2", "amd64")
+	want := "https://github.com/MinimaxFlora/EasySB/releases/download/singbox-stable/sing-box-1.14.2-linux-amd64.tar.gz"
+	if got != want {
+		t.Fatalf("BuildAssetURL = %q, want %q", got, want)
+	}
+	// The archive name has to stay the official one, or the panel would need a second
+	// download path instead of a source switch.
+	if !strings.HasSuffix(got, AssetURL("v1.14.2", "amd64")[strings.Index(AssetURL("v1.14.2", "amd64"), "/sing-box-"):]) {
+		t.Fatalf("BuildAssetURL does not use the official file name: %q", got)
+	}
+	if tag := ChannelTag("alpha"); tag != "singbox-alpha" {
+		t.Fatalf("ChannelTag(alpha) = %q", tag)
+	}
+}
+
+// TestFetchBuildReleaseLive reads the real version stamp this repository publishes.
+// Opt-in via EASYSB_LIVE=1, like the other live tests.
+func TestFetchBuildReleaseLive(t *testing.T) {
+	if os.Getenv("EASYSB_LIVE") == "" {
+		t.Skip("set EASYSB_LIVE=1 to read the published stamp")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	rel, err := FetchBuildRelease(ctx, "stable")
+	if err != nil {
+		t.Fatalf("FetchBuildRelease: %v", err)
+	}
+	if rel.Version == "" || rel.Source != SourceBuild {
+		t.Fatalf("unexpected release: %+v", rel)
+	}
+	if want := BuildAssetURL("stable", rel.Version, Arch()); rel.URL != want {
+		t.Fatalf("URL = %q, want %q", rel.URL, want)
+	}
+	t.Logf("rebuilt core: %s -> %s", rel.Version, rel.URL)
+}

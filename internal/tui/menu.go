@@ -70,6 +70,7 @@ func buildKernel() *menu {
 			leaf("kernel-install-alpha", "kernel_install_alpha", "desc_kernel_install_alpha", kernelAction("install-alpha")),
 			leaf("kernel-switch", "kernel_switch", "desc_kernel_switch", kernelAction("switch")),
 			leaf("kernel-update", "kernel_update", "desc_kernel_update", kernelAction("update")),
+			leaf("kernel-install-official", "kernel_install_official", "desc_kernel_install_official", kernelAction("install-official")),
 		},
 	}
 }

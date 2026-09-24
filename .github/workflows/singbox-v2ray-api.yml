@@ -1,0 +1,309 @@
+name: sing-box with v2ray api
+
+# EasySB installs its core from the SagerNet/sing-box releases, but the official builds
+# are not compiled with `with_v2ray_api`: that API is what the per-account traffic
+# counters are read over, and sing-box refuses a whole config that names an API it was
+# not built with. This workflow rebuilds the same upstream source with that one tag
+# added, for the two channels the panel knows (stable and alpha), and publishes the
+# archives under the same file names the official releases use, so the panel can fetch
+# either source with the same code path.
+#
+# The build tags are upstream's own set (release/DEFAULT_BUILD_TAGS in the sing-box
+# repository) plus with_v2ray_api, so the node keeps gVisor, QUIC, the Clash API and the
+# rest of what the panel's config expects. `sing-box version` prints the tags it was
+# built with, which is how EasySB decides whether a deployment may carry the stats block.
+#
+# Published releases:
+#   singbox-stable  - newest non-prerelease upstream tag
+#   singbox-alpha   - newest prerelease upstream tag
+# Each holds sing-box-<version>-linux-<arch>.tar.gz (+ .sha256) for every architecture
+# the panel can ask for, and a version.ini stamp describing the build.
+#
+# A channel is only rebuilt when upstream moved or when the workflow is dispatched by
+# hand, so the daily run is a no-op most days. To force a rebuild without an API token,
+# push a commit that touches this file with [rebuild] in its message.
+#
+# Retention: the two channel tags are fixed on purpose (the panel polls one URL forever
+# and the release list never grows), but the archives inside them are named after the
+# version they were built from, so each new upstream release adds a set instead of
+# replacing one. A `prune` job deletes every set the channel no longer offers, keeping it
+# at one version (or `keep_generations` versions when dispatched by hand).
+
+on:
+  workflow_dispatch:
+    inputs:
+      channels:
+        description: 要构建的通道 / channels to build
+        type: choice
+        default: both
+        options: [both, stable, alpha]
+      force:
+        description: 即使上游版本没变也重新构建 / rebuild even when the version did not move
+        type: boolean
+        default: false
+      keep_generations:
+        description: 每个通道保留几代内核（1=只留当前，0=全部保留）/ core versions to keep per channel
+        type: number
+        default: "1"
+  schedule:
+    # Upstream publishes whenever it likes; a daily look is enough to pick a release up.
+    - cron: "23 3 * * *"
+  push:
+    # Any edit to this file rebuilds both channels, which is also how the first run
+    # happens: pushing the workflow for the first time publishes both stamps.
+    paths:
+      - .github/workflows/singbox-v2ray-api.yml
+
+permissions:
+  contents: write
+
+env:
+  # Upstream source and the extra tag this workflow exists for.
+  UPSTREAM: SagerNet/sing-box
+  EXTRA_TAG: with_v2ray_api
+  # Architectures the panel maps `uname -m` to (internal/core ArchFromUname). The names
+  # are the ones that appear in the asset file name.
+  ARCHES: amd64 arm64 armv7 armv6 386 riscv64 s390x
+
+jobs:
+  resolve:
+    name: resolve upstream versions
+    runs-on: ubuntu-latest
+    outputs:
+      targets: ${{ steps.plan.outputs.targets }}
+      versions: ${{ steps.plan.outputs.versions }}
+    steps:
+      - name: Plan the builds
+        id: plan
+        env:
+          WANTED: ${{ github.event.inputs.channels || 'both' }}
+          # A forced rebuild has to be askable without an API token: since this workflow
+          # only runs when this file is pushed, a commit message carrying [rebuild] is the
+          # trigger. Dispatch keeps working too (force=true, channels=both/stable/alpha).
+          FORCE: ${{ github.event.inputs.force || (contains(github.event.head_commit.message || '', '[rebuild]') && 'true') || 'false' }}
+        run: |
+          set -euo pipefail
+          api="https://api.github.com/repos/${UPSTREAM}"
+          read -r -a arch_list <<<"${ARCHES}"
+          expected_archives="${#arch_list[@]}"
+
+          stable=$(curl -fsSL "${api}/releases/latest" | jq -r .tag_name)
+          # The alpha channel is whatever newest release upstream marked prerelease;
+          # the atom feed is the fallback when the API is rate limited.
+          alpha=$(curl -fsSL "${api}/releases?per_page=30" | jq -r '[.[] | select(.prerelease)][0].tag_name')
+          if [ -z "$alpha" ] || [ "$alpha" = "null" ]; then
+            alpha=$(curl -fsSL "https://github.com/${UPSTREAM}/releases.atom" \
+              | grep -o '<title>v[^<]*</title>' | head -20 \
+              | sed -e 's/<[^>]*>//g' | grep -E 'alpha|beta|rc' | head -1)
+          fi
+
+          echo "upstream stable=${stable:?} alpha=${alpha:?}"
+          # Every channel's current upstream version, whether or not it gets rebuilt: the
+          # prune job reads this to know which asset set is still the one being offered.
+          echo "versions={\"stable\":\"${stable#v}\",\"alpha\":\"${alpha#v}\"}" >> "${GITHUB_OUTPUT}"
+
+          published() {
+            # The version stamp of a channel we have already published, or empty.
+            curl -fsSL "https://github.com/${GITHUB_REPOSITORY}/releases/download/singbox-$1/version.ini" 2>/dev/null \
+              | sed -n 's/^version=//p' | head -1 || true
+          }
+
+          published_archives() {
+            # How many architecture archives the channel release carries. A run that
+            # died half way leaves a release whose stamp already matches the version,
+            # so the stamp alone is not enough to call a channel done.
+            curl -fsSL "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/singbox-$1" 2>/dev/null \
+              | jq -r '[.assets[] | select(.name | endswith(".sha256"))] | length' 2>/dev/null || echo 0
+          }
+
+          targets="[]"
+          for channel in stable alpha; do
+            case "${WANTED}" in
+              both|"${channel}") ;;
+              *) continue ;;
+            esac
+            tag_var="${channel}"
+            tag="${!tag_var}"
+            [ -n "$tag" ] || continue
+            version="${tag#v}"
+            have=$(published "${channel}")
+            count=$(published_archives "${channel}")
+            if [ "${have}" = "${version}" ] && [ "${count}" -ge "${expected_archives}" ] && [ "${FORCE}" != "true" ]; then
+              echo "singbox-${channel}: ${version} is already published with ${count} archives, skipping"
+              continue
+            fi
+            echo "singbox-${channel}: building ${tag} (published: ${have:-none}, archives: ${count})"
+            targets=$(jq -c --arg c "$channel" --arg t "$tag" --arg v "$version" \
+              '. + [{channel: $c, tag: $t, version: $v}]' <<<"${targets}")
+          done
+
+          echo "targets=${targets}" >> "${GITHUB_OUTPUT}"
+
+  build:
+    # A run where nothing needs rebuilding has an empty matrix, and GitHub then shows this
+    # template unevaluated on the skipped job. Cosmetic, and only on those runs: naming
+    # each build instance after its channel and architecture is worth more.
+    name: ${{ matrix.target.channel }} · linux-${{ matrix.arch }}
+    needs: resolve
+    if: needs.resolve.outputs.targets != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.resolve.outputs.targets) }}
+        arch: [amd64, arm64, armv7, armv6, 386, riscv64, s390x]
+    steps:
+      - name: Check out the upstream tag
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.UPSTREAM }}
+          ref: ${{ matrix.target.tag }}
+          fetch-depth: 1
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Build
+        env:
+          CHANNEL: ${{ matrix.target.channel }}
+          TAG: ${{ matrix.target.tag }}
+          VERSION: ${{ matrix.target.version }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+
+          # Upstream picks its tag set per architecture, and the choice matters: the naive
+          # outbound needs the Chromium/cronet toolchain that only its amd64 and arm64
+          # jobs set up, so every other architecture builds from
+          # DEFAULT_BUILD_TAGS_OTHERS, which leaves that tag out. Copying the amd64 set
+          # onto the small architectures is what makes their build fail.
+          case "${ARCH}" in
+            amd64)   export GOARCH=amd64; base=$(cat release/DEFAULT_BUILD_TAGS); extra=",with_purego" ;;
+            arm64)   export GOARCH=arm64; base=$(cat release/DEFAULT_BUILD_TAGS); extra=",with_purego" ;;
+            386)     export GOARCH=386 GO386=sse2; base=$(cat release/DEFAULT_BUILD_TAGS_OTHERS); extra="" ;;
+            armv7)   export GOARCH=arm GOARM=7; base=$(cat release/DEFAULT_BUILD_TAGS_OTHERS); extra="" ;;
+            armv6)   export GOARCH=arm GOARM=6; base=$(cat release/DEFAULT_BUILD_TAGS_OTHERS); extra="" ;;
+            riscv64) export GOARCH=riscv64; base=$(cat release/DEFAULT_BUILD_TAGS_OTHERS); extra="" ;;
+            s390x)   export GOARCH=s390x; base=$(cat release/DEFAULT_BUILD_TAGS_OTHERS); extra="" ;;
+          esac
+
+          tags="${base},${EXTRA_TAG}${extra}"
+
+          export CGO_ENABLED=0 GOOS=linux
+          # LDFLAGS from the sing-box repository, so the binary behaves like an official
+          # one apart from the API tags, plus the version the panel compares against.
+          ldflags="-s -w -buildid= -X github.com/sagernet/sing-box/constant.Version=${VERSION}"
+          ldflags="${ldflags} -X runtime.godebugDefault=multipathtcp=0,tlssha1=1 -checklinkname=0"
+
+          mkdir -p build
+          go build -trimpath -tags "${tags}" -ldflags "${ldflags}" -o build/sing-box ./cmd/sing-box
+
+          # The archive layout the official releases use, and the file name the panel
+          # builds from the version it resolved: sing-box-<version>-linux-<arch>.tar.gz.
+          cp LICENSE README.md build/ 2>/dev/null || true
+          name="sing-box-${VERSION}-linux-${ARCH}.tar.gz"
+          tar -czf "${name}" -C build sing-box LICENSE README.md
+          sha256sum "${name}" > "${name}.sha256"
+
+          # The tags are the one thing the panel infers from the binary itself, so they
+          # are printed here as well as baked into it: `sing-box version` lists them.
+          echo "built ${name} with tags: ${tags}"
+
+      - name: Publish to the channel release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CHANNEL: ${{ matrix.target.channel }}
+          TAG: ${{ matrix.target.tag }}
+          VERSION: ${{ matrix.target.version }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          release="singbox-${CHANNEL}"
+          archive="sing-box-${VERSION}-linux-${ARCH}.tar.gz"
+          if ! gh release view "${release}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release create "${release}" --repo "${GITHUB_REPOSITORY}" \
+              --title "sing-box ${CHANNEL} (with_v2ray_api)" \
+              --notes "Rolling rebuild of ${UPSTREAM} ${TAG} with the ${EXTRA_TAG} tag added.
+
+          These are the cores EasySB installs when per-account traffic accounting is wanted:
+          the official upstream builds leave that API out, and sing-box refuses a config
+          that names an API it was not built with. Archived as
+          \`sing-box-<version>-linux-<arch>.tar.gz\`, the same names the official releases use."
+          fi
+          gh release upload "${release}" --repo "${GITHUB_REPOSITORY}" --clobber \
+            "${archive}" "${archive}.sha256"
+          # The panel builds the download URL from the asset name, so an upload that
+          # silently did not land would only surface as a 404 much later.
+          gh release view "${release}" --repo "${GITHUB_REPOSITORY}" --json assets \
+            -q '.assets[].name' | grep -qx "${archive}" \
+            || { echo "::error::${archive} is not attached to ${release}"; exit 1; }
+          echo "published ${release}/${archive}"
+
+  prune:
+    # Fixed channel tags keep the release list at two entries forever, but the assets inside
+    # them accumulate: every core version is a fresh set of files rather than a replacement,
+    # so a year of releases would leave hundreds of archives hanging off each channel. This
+    # job keeps what the channel still offers and deletes the rest. It runs even on the runs
+    # that rebuild nothing, which is exactly when nothing else would tidy up.
+    name: prune ${{ matrix.channel }} assets
+    needs: [resolve]
+    if: always() && needs.resolve.result == 'success'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        channel: [stable, alpha]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Delete cores the channel no longer offers
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CHANNEL: ${{ matrix.channel }}
+          VERSIONS: ${{ needs.resolve.outputs.versions }}
+          KEEP: ${{ github.event.inputs.keep_generations || 1 }}
+        run: |
+          set -euo pipefail
+          current=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get(sys.argv[2], ""))' \
+            "${VERSIONS}" "${CHANNEL}")
+          if [ -z "${current}" ]; then
+            echo "upstream has no ${CHANNEL} release right now, nothing to prune"
+            exit 0
+          fi
+          python3 scripts/prune_release_assets.py --repo "${GITHUB_REPOSITORY}" \
+            --tag "singbox-${CHANNEL}" --current "${current}" --keep-generations "${KEEP}"
+
+  stamp:
+    name: stamp ${{ matrix.target.channel }}
+    needs: [resolve, build]
+    if: needs.resolve.outputs.targets != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # One row per channel that was built; each entry is the {channel, tag, version}
+        # object the resolve job planned.
+        target: ${{ fromJSON(needs.resolve.outputs.targets) }}
+    steps:
+      - name: Write the version stamp
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CHANNEL: ${{ matrix.target.channel }}
+          TAG: ${{ matrix.target.tag }}
+          VERSION: ${{ matrix.target.version }}
+        run: |
+          set -euo pipefail
+          tags=$(curl -fsSL "https://raw.githubusercontent.com/${UPSTREAM}/${TAG}/release/DEFAULT_BUILD_TAGS")
+          arches=$(echo ${ARCHES} | tr ' ' ',')
+          cat > version.ini <<EOF
+          [singbox]
+          channel=${CHANNEL}
+          version=${VERSION}
+          tag=${TAG}
+          upstream=${UPSTREAM}
+          arches=${arches}
+          build_tags=${tags},${EXTRA_TAG}
+          EOF
+          cat version.ini
+          gh release upload "singbox-${CHANNEL}" --repo "${GITHUB_REPOSITORY}" --clobber version.ini

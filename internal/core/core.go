@@ -25,19 +25,85 @@ import (
 )
 
 const (
-	// Repo is the upstream sing-box repository.
+	// Repo is the upstream sing-box repository: the fallback source, used for a channel
+	// this repository has not published a rebuilt core for yet.
 	Repo = "SagerNet/sing-box"
 	// API lists releases on the upstream repository.
 	API = "https://api.github.com/repos/" + Repo + "/releases"
 	// Web is the human facing releases page.
 	Web = "https://github.com/" + Repo
+
+	// BuildRepo publishes the panel's own cores: the same upstream source compiled with
+	// the with_v2ray_api tag the official releases leave out, one rolling release per
+	// channel holding the archives plus a version.ini stamp. See docs/core-builds.md.
+	BuildRepo = "MinimaxFlora/EasySB"
+
+	// SourceBuild and SourceUpstream say which of the two an offered core came from.
+	// Only the rebuilt one carries the counters per-account accounting reads.
+	SourceBuild    = "build"
+	SourceUpstream = "upstream"
 )
+
+// ChannelTag is the release tag holding a channel's rebuilt core.
+func ChannelTag(channel string) string {
+	return "singbox-" + channel
+}
+
+// StampURL is the version stamp of a channel's rebuilt core: written last, after every
+// architecture archive of that version is attached.
+func StampURL(channel string) string {
+	return fmt.Sprintf("https://github.com/%s/releases/download/%s/version.ini", BuildRepo, ChannelTag(channel))
+}
+
+// BuildAssetURL builds the archive URL of a channel's rebuilt core. The file name is the
+// official one on purpose: switching source is a change of repository and tag, not a
+// second download path.
+func BuildAssetURL(channel, version, arch string) string {
+	return fmt.Sprintf("https://github.com/%s/releases/download/%s/sing-box-%s-linux-%s.tar.gz",
+		BuildRepo, ChannelTag(channel), version, arch)
+}
+
+// parseStamp reads one key out of a version.ini stamp, ignoring sections and comments.
+func parseStamp(body []byte, key string) string {
+	for _, line := range strings.Split(string(body), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "[") || strings.HasPrefix(line, "#") {
+			continue
+		}
+		name, value, ok := strings.Cut(line, "=")
+		if ok && strings.TrimSpace(name) == key {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+// FetchBuildRelease reads a channel's rebuilt core from this repository's version stamp.
+func FetchBuildRelease(ctx context.Context, channel string) (Release, error) {
+	body, err := fetch(ctx, StampURL(channel))
+	if err != nil {
+		return Release{}, err
+	}
+	version := parseStamp(body, "version")
+	if version == "" {
+		return Release{}, errors.New("version stamp carries no version")
+	}
+	return Release{
+		Version: version,
+		Tag:     ChannelTag(channel),
+		URL:     BuildAssetURL(channel, version, Arch()),
+		Source:  SourceBuild,
+	}, nil
+}
 
 // Release describes one downloadable core build.
 type Release struct {
 	Version string
 	Tag     string
 	URL     string
+	// Source is SourceBuild or SourceUpstream, so the caller can say where the core
+	// came from and warn when it cannot count traffic.
+	Source string
 }
 
 // Releases holds the newest stable and alpha builds.
@@ -158,7 +224,7 @@ func selectRelease(rels []ghRelease, prerelease bool, arch string) Release {
 		if r.Draft || r.Prerelease != prerelease {
 			continue
 		}
-		rel := Release{Version: strings.TrimPrefix(r.Tag, "v"), Tag: r.Tag}
+		rel := Release{Version: strings.TrimPrefix(r.Tag, "v"), Tag: r.Tag, Source: SourceUpstream}
 		for _, a := range r.Assets {
 			if strings.HasSuffix(a.Name, suffix) {
 				rel.URL = a.URL
@@ -173,8 +239,54 @@ func selectRelease(rels []ghRelease, prerelease bool, arch string) Release {
 	return Release{}
 }
 
-// FetchReleases queries the newest stable and alpha core builds.
+// FetchReleases queries the newest official stable and alpha core builds. The official
+// builds are compiled without the V2Ray API, so a deployment on one of them carries no
+// traffic counters; this is the escape hatch, and FetchPreferred is the normal path.
 func FetchReleases(ctx context.Context) (Releases, error) {
+	return fetchUpstream(ctx)
+}
+
+// FetchPreferred returns the newest stable and alpha cores, taking each channel from this
+// repository's rebuilt release when it has one and falling back to the official release
+// otherwise. The rebuilt source is what per-account accounting needs: the official builds
+// leave out the with_v2ray_api tag, and a core without it cannot be given a config that
+// names the API.
+func FetchPreferred(ctx context.Context) (Releases, error) {
+	out := Releases{}
+	missing := false
+	for _, channel := range []string{"stable", "alpha"} {
+		rel, err := FetchBuildRelease(ctx, channel)
+		if err == nil && rel.Version != "" {
+			if channel == "stable" {
+				out.Stable = rel
+			} else {
+				out.Alpha = rel
+			}
+			continue
+		}
+		missing = true
+	}
+	if missing {
+		upstream, err := fetchUpstream(ctx)
+		if out.Stable.Version == "" {
+			out.Stable = upstream.Stable
+		}
+		if out.Alpha.Version == "" {
+			out.Alpha = upstream.Alpha
+		}
+		if out.Stable.Version == "" && out.Alpha.Version == "" {
+			if err != nil {
+				return out, err
+			}
+			return out, errors.New("no releases available")
+		}
+	}
+	return out, nil
+}
+
+// fetchUpstream queries the newest stable and alpha core builds on the official
+// repository, which is also the fallback for a channel without a rebuilt core.
+func fetchUpstream(ctx context.Context) (Releases, error) {
 	var rels []ghRelease
 	body, err := fetch(ctx, API+"?per_page=40")
 	if err == nil {
@@ -189,12 +301,12 @@ func FetchReleases(ctx context.Context) (Releases, error) {
 	}
 	if out.Stable.Version == "" {
 		if tag, err := fetchLatestTag(ctx); err == nil {
-			out.Stable = Release{Version: strings.TrimPrefix(tag, "v"), Tag: tag, URL: AssetURL(tag, Arch())}
+			out.Stable = Release{Version: strings.TrimPrefix(tag, "v"), Tag: tag, URL: AssetURL(tag, Arch()), Source: SourceUpstream}
 		}
 	}
 	if out.Alpha.Version == "" {
 		if tag, err := fetchAlphaTag(ctx); err == nil {
-			out.Alpha = Release{Version: strings.TrimPrefix(tag, "v"), Tag: tag, URL: AssetURL(tag, Arch())}
+			out.Alpha = Release{Version: strings.TrimPrefix(tag, "v"), Tag: tag, URL: AssetURL(tag, Arch()), Source: SourceUpstream}
 		}
 	}
 	if out.Stable.Version == "" && out.Alpha.Version == "" {

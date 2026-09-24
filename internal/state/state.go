@@ -84,6 +84,10 @@ type Config struct {
 	// names an API it was not built with. Empty means the historical value
 	// ("v2ray"), so an existing deployment keeps its counters.
 	StatsAPI     string
+	// CoreSource records where the installed core came from ("build" for this
+	// repository's builds, "upstream" for the official releases), so the panel can
+	// say which source is installed. Empty on an install made before the record.
+	CoreSource   string
 	SubServePort int
 	SubSyncSecs  int
 	ServerIP     string
@@ -183,6 +187,7 @@ func (c *Config) applyRaw() {
 	set(&c.CoreChannel, "CORE_CHANNEL")
 	set(&c.ServerIP, "SERVER_IP")
 	set(&c.StatsAPI, "STATS_API")
+	set(&c.CoreSource, "CORE_SOURCE")
 	if n, err := strconv.Atoi(c.raw["SUB_SERVE_PORT"]); err == nil && n > 0 && n < 65536 {
 		c.SubServePort = n
 	}
@@ -276,6 +281,7 @@ func (c Config) Save() error {
 		{"CORE_CHANNEL", c.CoreChannel},
 		{"NODE_DEPLOYED", deployed},
 		{"STATS_API", c.StatsAPI},
+		{"CORE_SOURCE", c.CoreSource},
 		{"SUB_SERVE_PORT", strconv.Itoa(c.SubServePort)},
 		{"SUB_SYNC_SECONDS", strconv.Itoa(c.SubSyncSecs)},
 		{"SERVER_IP", c.ServerIP},
@@ -306,6 +312,7 @@ func (c Config) extraKeys() []string {
 		"REALITY_PUBLIC": true, "REALITY_SHORT_ID": true, "DOMAIN": true,
 		"CERT_DOMAIN": true, "ACME_EMAIL": true, "CORE_CHANNEL": true, "NODE_DEPLOYED": true,
 		"STATS_API": true,
+		"CORE_SOURCE": true,
 		"SUB_SERVE_PORT": true, "SUB_SYNC_SECONDS": true, "SERVER_IP": true,
 	}
 	var out []string

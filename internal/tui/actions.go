@@ -65,6 +65,7 @@ func kernelAction(mode string) actionFunc {
 			current := core.InstalledChannel(cfg.CoreChannel)
 
 			var target string
+			official := false
 			switch mode {
 			case "install-stable":
 				target = "stable"
@@ -85,16 +86,30 @@ func kernelAction(mode string) actionFunc {
 					return errors.New(lang.T("kernel_need_install"))
 				}
 				target = current
+			case "install-official":
+				// The escape hatch. The official release is the same upstream source
+				// without the with_v2ray_api tag, so taking it turns the per-account
+				// counters off; the log says so before anything is downloaded.
+				official = true
+				target = current
 			default:
 				target = mode
 			}
 
-			if mode != "update" && installed && current == target {
+			// "Already on this channel" is only true while the source matches as well:
+			// after taking the official core, asking for the author's build again is a
+			// real change, not a no-op — otherwise the way back from the official source
+			// would be a menu entry that silently does nothing.
+			installedSource := coreSourceFrom(cfg.CoreSource, core.SupportsV2RayStats(ctx))
+			if sameInstall(mode, installed, target, current, installedSource) {
 				r.Log(lang.T("kernel_already") + ": " + lang.T(channelKey(target)))
 				return nil
 			}
 
-			rels, err := core.FetchReleases(ctx)
+			rels, err := core.FetchPreferred(ctx)
+			if official {
+				rels, err = core.FetchReleases(ctx)
+			}
 			if err != nil {
 				r.Log(lang.T("ver_offline"))
 			}
@@ -104,6 +119,14 @@ func kernelAction(mode string) actionFunc {
 			}
 			if rel.Version == "" {
 				return errors.New(lang.T("kernel_no_version"))
+			}
+			// Where the core comes from decides whether the node can account usage, so
+			// it is said out loud on every install rather than left in the code.
+			if rel.Source == core.SourceBuild {
+				r.Log(lang.T("kernel_source_build"))
+			} else {
+				r.Log(lang.T("kernel_source_upstream"))
+				r.Log(lang.T("kernel_source_official_warn"))
 			}
 
 			if installed {
@@ -117,14 +140,31 @@ func kernelAction(mode string) actionFunc {
 				return err
 			}
 
+			// Where the core came from is recorded, because the panel shows it and
+			// because the source is what decides whether usage can be counted.
+			cfg.CoreSource = rel.Source
+			cfg.StatsAPI = state.StatsAPINone
+			if core.SupportsV2RayStats(ctx) {
+				cfg.StatsAPI = ""
+			}
 			cfg.CoreChannel = target
 			if err := cfg.Save(); err != nil {
 				return err
 			}
 
 			if hasServerConfig() {
-				r.Log("$ systemctl start " + sysinfo.ServiceName)
-				runCmd(ctx, "systemctl", "start", sysinfo.ServiceName)
+				if configMatchesCore(ctx, cfg.V2RayStats()) {
+					r.Log("$ systemctl start " + sysinfo.ServiceName)
+					runCmd(ctx, "systemctl", "start", sysinfo.ServiceName)
+				} else {
+					// The core just changed what it can express, so the deployed config
+					// no longer matches it: regenerating through the deploy path is what
+					// keeps the node up (and the counters working) either way.
+					r.Log(lang.T("kernel_redeploy_needed"))
+					if err := runDeploy(ctx, r, lang); err != nil {
+						r.Log(lang.T("kernel_redeploy_failed") + ": " + err.Error())
+					}
+				}
 			}
 			if mode == "update" {
 				r.Log(lang.T("kernel_updated") + ": " + version)
@@ -136,9 +176,52 @@ func kernelAction(mode string) actionFunc {
 	}
 }
 
+// coreSourceFrom reports which source an installed core came from: the recorded one when the
+// panel performed the install, and otherwise what the binary's own build tags say (the
+// `with_v2ray_api` tag is the only way to tell the two apart from the outside). One function
+// answers this for the 看板, the version line and the install guard, so what the operator
+// reads and what the panel decides cannot drift apart.
+func coreSourceFrom(recorded string, statsCapable bool) string {
+	if recorded != "" {
+		if recorded == core.SourceBuild {
+			return core.SourceBuild
+		}
+		return core.SourceUpstream
+	}
+	if statsCapable {
+		return core.SourceBuild
+	}
+	return core.SourceUpstream
+}
+
+// sameInstall reports whether an install request would change nothing: the wanted channel is
+// already installed from the author source. Updating always has work to do, and so does
+// taking the official core — that is a deliberate downgrade of what the core can express.
+func sameInstall(mode string, installed bool, target, current, installedSource string) bool {
+	if !installed || mode == "update" || mode == "install-official" {
+		return false
+	}
+	return current == target && installedSource == core.SourceBuild
+}
+
 func hasServerConfig() bool {
 	info, err := os.Stat(sysinfo.ConfigJSON)
 	return err == nil && info.Size() > 0
+}
+
+// configMatchesCore reports whether the deployed config was rendered for the counters the
+// installed core offers. Both directions of a mismatch matter: a config naming an API the
+// binary was not built with is rejected whole and the node never starts, while a config
+// that omits the API the binary does carry would count nothing at all.
+func configMatchesCore(ctx context.Context, capable bool) bool {
+	body, err := os.ReadFile(sysinfo.ConfigJSON)
+	if err != nil {
+		return false
+	}
+	if strings.Contains(string(body), "v2ray_api") != capable {
+		return false
+	}
+	return core.ConfigCheck(ctx, sysinfo.ConfigJSON)
 }
 
 // deployNode generates config.json, installs the service unit and starts the
@@ -147,116 +230,125 @@ func deployNode() actionFunc {
 	return func(a *App) tea.Cmd {
 		lang := a.lang
 		return a.startTask(lang.T("node_deploying"), func(ctx context.Context, r *taskReporter) error {
-			if !core.Installed() {
-				return errors.New(lang.T("node_need_core"))
-			}
-			cfg := state.Load()
-			if !cfg.AnyEnabled() {
-				return errors.New(lang.T("node_all_disabled"))
-			}
+			return runDeploy(ctx, r, lang)
+		})
+	}
+}
 
-			store, err := loadUsers()
+// runDeploy is the one deploy path: it renders the config for the accounts in use,
+// starts the service and refreshes everything derived from it. The node menu runs it
+// directly, and a core install runs it too when the newly installed core can no longer
+// express what the deployed config names — sing-box rejects such a config whole, so the
+// alternative would be a node that does not start.
+func runDeploy(ctx context.Context, r *taskReporter, lang i18n.Lang) error {
+	if !core.Installed() {
+		return errors.New(lang.T("node_need_core"))
+	}
+	cfg := state.Load()
+	if !cfg.AnyEnabled() {
+		return errors.New(lang.T("node_all_disabled"))
+	}
+
+	store, err := loadUsers()
+	if err != nil {
+		return err
+	}
+	if store.Len() == 0 {
+		// A node without accounts is legal and starts, but nobody can
+		// connect, so the operator is told rather than blocked.
+		r.Log(lang.T("node_no_users"))
+	}
+
+	// The node keeps only the material no account owns: the Reality
+	// keypair and short id, which the server side needs to complete a
+	// handshake.
+	if cfg.Enabled[state.ProtoVLESSReality] {
+		if cfg.RealityPriv == "" || cfg.RealityPub == "" {
+			priv, pub, err := core.RealityKeypair(ctx)
 			if err != nil {
 				return err
 			}
-			if store.Len() == 0 {
-				// A node without accounts is legal and starts, but nobody can
-				// connect, so the operator is told rather than blocked.
-				r.Log(lang.T("node_no_users"))
-			}
-
-			// The node keeps only the material no account owns: the Reality
-			// keypair and short id, which the server side needs to complete a
-			// handshake.
-			if cfg.Enabled[state.ProtoVLESSReality] {
-				if cfg.RealityPriv == "" || cfg.RealityPub == "" {
-					priv, pub, err := core.RealityKeypair(ctx)
-					if err != nil {
-						return err
-					}
-					cfg.RealityPriv, cfg.RealityPub = priv, pub
-					r.Log(lang.T("param_key_gen"))
-				}
-				if cfg.RealitySID == "" {
-					cfg.RealitySID = secret.ShortID()
-				}
-			}
-
-			if cfg.Domain == "" && cfg.CertDomain != "" {
-				cfg.Domain = cfg.CertDomain
-			}
-			if cfg.Domain == "" && config.ParamsFromState(cfg).NeedsCert() {
-				r.Log(lang.T("node_need_domain"))
-				r.Log("→ self-signed placeholder certificate")
-			}
-
-			if cfg.ServerIP == "" && cfg.Domain == "" {
-				if ip, err := netutil.PublicIP(ctx); err == nil {
-					cfg.ServerIP = ip
-					r.Log("server ip: " + ip)
-				}
-			}
-
-			// The counter source is a property of the installed core, so it is
-			// read here instead of assumed: the official builds carry no V2Ray
-			// API, and a config naming one is rejected whole. A core without it
-			// still deploys a working node, only the byte counters are absent.
-			cfg.StatsAPI = state.StatsAPINone
-			if core.SupportsV2RayStats(ctx) {
-				cfg.StatsAPI = ""
-			} else {
-				r.Log(lang.T("node_stats_unavailable"))
-			}
-
-			// The configuration is rendered for the accounts that are usable
-			// right now, so a deploy also revokes whatever expired meanwhile.
-			now := time.Now()
-			if _, err := deploy.WriteServerConfig(cfg, store.Routable(now)); err != nil {
-				return err
-			}
-			r.Log("write " + sysinfo.ConfigJSON)
-
-			if !core.ConfigCheck(ctx, sysinfo.ConfigJSON) {
-				return errors.New(lang.T("node_config_fail"))
-			}
-			r.Log(lang.T("node_config_ok"))
-
-			cfg.NodeDeployed = true
-			if err := cfg.Save(); err != nil {
-				return err
-			}
-			if err := service.WriteUnit(); err != nil {
-				return err
-			}
-			r.Log("write " + service.UnitPath())
-			if err := service.Do(ctx, "enable"); err != nil {
-				r.Log("enable: " + err.Error())
-			}
-			if err := service.Do(ctx, "restart"); err != nil {
-				return err
-			}
-			// The accounts in the core match the file again, which is what the
-			// accounting loop compares against.
-			store.MarkApplied(now)
-			if err := store.Save(); err != nil {
-				return err
-			}
-
-			if err := firewall.Apply(ctx, cfg, r.Log); err != nil {
-				r.Log("firewall: " + err.Error())
-			} else if err := firewall.WriteUnit(cfg); err == nil {
-				_ = firewall.UnitAction(ctx, "enable")
-			}
-
-			r.Log(lang.T("node_deploy_done"))
-			// Every account's subscription URL points at this service, so it is
-			// installed together with the node.
-			if err := installEndpoint(ctx, cfg, r.Log, lang); err != nil {
-				r.Log(lang.T("sub_svc_failed") + ": " + err.Error())
-			}
-			return nil
-		})
+			cfg.RealityPriv, cfg.RealityPub = priv, pub
+			r.Log(lang.T("param_key_gen"))
+		}
+		if cfg.RealitySID == "" {
+			cfg.RealitySID = secret.ShortID()
+		}
 	}
+
+	if cfg.Domain == "" && cfg.CertDomain != "" {
+		cfg.Domain = cfg.CertDomain
+	}
+	if cfg.Domain == "" && config.ParamsFromState(cfg).NeedsCert() {
+		r.Log(lang.T("node_need_domain"))
+		r.Log("→ self-signed placeholder certificate")
+	}
+
+	if cfg.ServerIP == "" && cfg.Domain == "" {
+		if ip, err := netutil.PublicIP(ctx); err == nil {
+			cfg.ServerIP = ip
+			r.Log("server ip: " + ip)
+		}
+	}
+
+	// The counter source is a property of the installed core, so it is
+	// read here instead of assumed: the official builds carry no V2Ray
+	// API, and a config naming one is rejected whole. A core without it
+	// still deploys a working node, only the byte counters are absent.
+	cfg.StatsAPI = state.StatsAPINone
+	if core.SupportsV2RayStats(ctx) {
+		cfg.StatsAPI = ""
+	} else {
+		r.Log(lang.T("node_stats_unavailable"))
+	}
+
+	// The configuration is rendered for the accounts that are usable
+	// right now, so a deploy also revokes whatever expired meanwhile.
+	now := time.Now()
+	if _, err := deploy.WriteServerConfig(cfg, store.Routable(now)); err != nil {
+		return err
+	}
+	r.Log("write " + sysinfo.ConfigJSON)
+
+	if !core.ConfigCheck(ctx, sysinfo.ConfigJSON) {
+		return errors.New(lang.T("node_config_fail"))
+	}
+	r.Log(lang.T("node_config_ok"))
+
+	cfg.NodeDeployed = true
+	if err := cfg.Save(); err != nil {
+		return err
+	}
+	if err := service.WriteUnit(); err != nil {
+		return err
+	}
+	r.Log("write " + service.UnitPath())
+	if err := service.Do(ctx, "enable"); err != nil {
+		r.Log("enable: " + err.Error())
+	}
+	if err := service.Do(ctx, "restart"); err != nil {
+		return err
+	}
+	// The accounts in the core match the file again, which is what the
+	// accounting loop compares against.
+	store.MarkApplied(now)
+	if err := store.Save(); err != nil {
+		return err
+	}
+
+	if err := firewall.Apply(ctx, cfg, r.Log); err != nil {
+		r.Log("firewall: " + err.Error())
+	} else if err := firewall.WriteUnit(cfg); err == nil {
+		_ = firewall.UnitAction(ctx, "enable")
+	}
+
+	r.Log(lang.T("node_deploy_done"))
+	// Every account's subscription URL points at this service, so it is
+	// installed together with the node.
+	if err := installEndpoint(ctx, cfg, r.Log, lang); err != nil {
+		r.Log(lang.T("sub_svc_failed") + ": " + err.Error())
+	}
+	return nil
 }
 
 // installEndpoint writes and starts the subscription service without wrapping it

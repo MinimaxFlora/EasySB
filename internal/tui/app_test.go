@@ -14,6 +14,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/MinimaxFlora/EasySB/internal/bbr"
+	"github.com/MinimaxFlora/EasySB/internal/core"
 	"github.com/MinimaxFlora/EasySB/internal/i18n"
 	"github.com/MinimaxFlora/EasySB/internal/prefs"
 	"github.com/MinimaxFlora/EasySB/internal/state"
@@ -253,7 +254,7 @@ func TestRootMenuHasNoNav(t *testing.T) {
 func TestKernelMenuEntries(t *testing.T) {
 	a := newTestApp(t)
 	a.push(buildKernel())
-	want := []string{"kernel-install-stable", "kernel-install-alpha", "kernel-switch", "kernel-update"}
+	want := []string{"kernel-install-stable", "kernel-install-alpha", "kernel-switch", "kernel-update", "kernel-install-official"}
 	if got := len(a.current().nodes); got != len(want) {
 		t.Fatalf("kernel menu has %d entries, want %d", got, len(want))
 	}
@@ -266,7 +267,7 @@ func TestKernelMenuEntries(t *testing.T) {
 		t.Fatalf("kernel menu should show a navigation row")
 	}
 	view := a.View().Content
-	for _, label := range []string{"安装正式版内核", "安装测试版内核", "切换内核", "更新内核（仅更新当前通道）", i18n.Chinese.T("nav_back")} {
+	for _, label := range []string{"安装正式版内核", "安装测试版内核", "切换内核", "更新内核（仅更新当前通道）", "切换到官方源内核", i18n.Chinese.T("nav_back")} {
 		if !strings.Contains(view, label) {
 			t.Fatalf("kernel menu view missing %q:\n%s", label, view)
 		}
@@ -1104,5 +1105,91 @@ func TestThemeEnvOverrideWins(t *testing.T) {
 	a = m.(*App)
 	if a.palette.Primary != theme.Light().Primary {
 		t.Fatal("a forced theme must ignore the detected background")
+	}
+}
+
+// The core page has to say whether the installed core came from this repository's builds
+// or from the official releases, and whether it can count traffic: the source decides
+// whether per-account accounting works at all.
+func TestCoreSourceLabel(t *testing.T) {
+	cases := []struct {
+		name    string
+		source  string
+		stats   bool
+		want    string
+		wantRow string
+	}{
+		{"recorded author source", core.SourceBuild, true, "作者源", "作者源 · 带流量统计"},
+		{"recorded author source, binary without counters", core.SourceBuild, false, "作者源", "作者源 · 无流量统计"},
+		{"recorded official source", core.SourceUpstream, false, "官方源", "官方源 · 无流量统计"},
+		{"no record, counters present", "", true, "作者源", "作者源 · 带流量统计"},
+		{"no record, no counters", "", false, "官方源", "官方源 · 无流量统计"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a := newTestApp(t)
+			a.status.CoreSource = tc.source
+			a.status.StatsCapable = tc.stats
+			if got := a.coreSourceLabel(); got != tc.want {
+				t.Fatalf("coreSourceLabel = %q, want %q", got, tc.want)
+			}
+			if got := a.coreSourceText(); got != tc.wantRow {
+				t.Fatalf("coreSourceText = %q, want %q", got, tc.wantRow)
+			}
+			// The version line names the source too, so the answer is on every page.
+			summary, _ := a.coreSummary()
+			if !strings.Contains(summary, tc.want) {
+				t.Fatalf("coreSummary = %q, want it to name %q", summary, tc.want)
+			}
+		})
+	}
+}
+
+// Taking the official core has to be reversible from the menu. The install guard used to
+// compare channels only, so after switching to the official source, "安装正式版内核" reported
+// "already on this channel" and did nothing — the entry that would bring the author's build
+// back was a no-op.
+func TestSameInstall(t *testing.T) {
+	cases := []struct {
+		name    string
+		mode    string
+		install bool
+		target  string
+		current string
+		source  string
+		want    bool
+	}{
+		{"author source, same channel", "install-stable", true, "stable", "stable", core.SourceBuild, true},
+		{"official source, same channel", "install-stable", true, "stable", "stable", core.SourceUpstream, false},
+		{"official source, other channel", "install-alpha", true, "alpha", "stable", core.SourceUpstream, false},
+		{"update always installs", "update", true, "stable", "stable", core.SourceBuild, false},
+		{"official entry always installs", "install-official", true, "stable", "stable", core.SourceBuild, false},
+		{"nothing installed yet", "install-stable", false, "stable", "", core.SourceUpstream, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sameInstall(tc.mode, tc.install, tc.target, tc.current, tc.source); got != tc.want {
+				t.Fatalf("sameInstall(%q, %v, %q, %q, %q) = %v, want %v",
+					tc.mode, tc.install, tc.target, tc.current, tc.source, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCoreSourceFrom(t *testing.T) {
+	cases := []struct {
+		recorded string
+		stats    bool
+		want     string
+	}{
+		{"build", false, core.SourceBuild},
+		{core.SourceUpstream, true, core.SourceUpstream},
+		{"", true, core.SourceBuild},
+		{"", false, core.SourceUpstream},
+	}
+	for _, tc := range cases {
+		if got := coreSourceFrom(tc.recorded, tc.stats); got != tc.want {
+			t.Errorf("coreSourceFrom(%q, %v) = %q, want %q", tc.recorded, tc.stats, got, tc.want)
+		}
 	}
 }
