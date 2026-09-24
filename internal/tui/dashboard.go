@@ -531,15 +531,7 @@ func (a *App) coreSummary() (string, ui.Kind) {
 // The source recorded at install time is used when there is one; otherwise it is read off
 // the binary's build tags, which also covers a core installed before the record existed.
 func (a *App) coreSourceLabel() string {
-	source := a.status.CoreSource
-	if source == "" {
-		if a.status.StatsCapable {
-			source = core.SourceBuild
-		} else {
-			source = core.SourceUpstream
-		}
-	}
-	if source == core.SourceBuild {
+	if coreSourceFrom(a.status.CoreSource, a.status.StatsCapable) == core.SourceBuild {
 		return a.lang.T("kernel_source_author")
 	}
 	return a.lang.T("kernel_source_official")

@@ -96,7 +96,12 @@ func kernelAction(mode string) actionFunc {
 				target = mode
 			}
 
-			if mode != "update" && mode != "install-official" && installed && current == target {
+			// "Already on this channel" is only true while the source matches as well:
+			// after taking the official core, asking for the author's build again is a
+			// real change, not a no-op — otherwise the way back from the official source
+			// would be a menu entry that silently does nothing.
+			installedSource := coreSourceFrom(cfg.CoreSource, core.SupportsV2RayStats(ctx))
+			if sameInstall(mode, installed, target, current, installedSource) {
 				r.Log(lang.T("kernel_already") + ": " + lang.T(channelKey(target)))
 				return nil
 			}
@@ -169,6 +174,34 @@ func kernelAction(mode string) actionFunc {
 			return nil
 		})
 	}
+}
+
+// coreSourceFrom reports which source an installed core came from: the recorded one when the
+// panel performed the install, and otherwise what the binary's own build tags say (the
+// `with_v2ray_api` tag is the only way to tell the two apart from the outside). One function
+// answers this for the 看板, the version line and the install guard, so what the operator
+// reads and what the panel decides cannot drift apart.
+func coreSourceFrom(recorded string, statsCapable bool) string {
+	if recorded != "" {
+		if recorded == core.SourceBuild {
+			return core.SourceBuild
+		}
+		return core.SourceUpstream
+	}
+	if statsCapable {
+		return core.SourceBuild
+	}
+	return core.SourceUpstream
+}
+
+// sameInstall reports whether an install request would change nothing: the wanted channel is
+// already installed from the author source. Updating always has work to do, and so does
+// taking the official core — that is a deliberate downgrade of what the core can express.
+func sameInstall(mode string, installed bool, target, current, installedSource string) bool {
+	if !installed || mode == "update" || mode == "install-official" {
+		return false
+	}
+	return current == target && installedSource == core.SourceBuild
 }
 
 func hasServerConfig() bool {

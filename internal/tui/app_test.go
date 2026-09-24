@@ -1144,3 +1144,52 @@ func TestCoreSourceLabel(t *testing.T) {
 		})
 	}
 }
+
+// Taking the official core has to be reversible from the menu. The install guard used to
+// compare channels only, so after switching to the official source, "安装正式版内核" reported
+// "already on this channel" and did nothing — the entry that would bring the author's build
+// back was a no-op.
+func TestSameInstall(t *testing.T) {
+	cases := []struct {
+		name    string
+		mode    string
+		install bool
+		target  string
+		current string
+		source  string
+		want    bool
+	}{
+		{"author source, same channel", "install-stable", true, "stable", "stable", core.SourceBuild, true},
+		{"official source, same channel", "install-stable", true, "stable", "stable", core.SourceUpstream, false},
+		{"official source, other channel", "install-alpha", true, "alpha", "stable", core.SourceUpstream, false},
+		{"update always installs", "update", true, "stable", "stable", core.SourceBuild, false},
+		{"official entry always installs", "install-official", true, "stable", "stable", core.SourceBuild, false},
+		{"nothing installed yet", "install-stable", false, "stable", "", core.SourceUpstream, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sameInstall(tc.mode, tc.install, tc.target, tc.current, tc.source); got != tc.want {
+				t.Fatalf("sameInstall(%q, %v, %q, %q, %q) = %v, want %v",
+					tc.mode, tc.install, tc.target, tc.current, tc.source, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCoreSourceFrom(t *testing.T) {
+	cases := []struct {
+		recorded string
+		stats    bool
+		want     string
+	}{
+		{"build", false, core.SourceBuild},
+		{core.SourceUpstream, true, core.SourceUpstream},
+		{"", true, core.SourceBuild},
+		{"", false, core.SourceUpstream},
+	}
+	for _, tc := range cases {
+		if got := coreSourceFrom(tc.recorded, tc.stats); got != tc.want {
+			t.Errorf("coreSourceFrom(%q, %v) = %q, want %q", tc.recorded, tc.stats, got, tc.want)
+		}
+	}
+}
