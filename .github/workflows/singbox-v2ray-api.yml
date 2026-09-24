@@ -20,7 +20,8 @@ name: sing-box with v2ray api
 # the panel can ask for, and a version.ini stamp describing the build.
 #
 # A channel is only rebuilt when upstream moved or when the workflow is dispatched by
-# hand, so the daily run is a no-op most days.
+# hand, so the daily run is a no-op most days. To force a rebuild without an API token,
+# push a commit that touches this file with [rebuild] in its message.
 #
 # Retention: the two channel tags are fixed on purpose (the panel polls one URL forever
 # and the release list never grows), but the archives inside them are named after the
@@ -76,7 +77,10 @@ jobs:
         id: plan
         env:
           WANTED: ${{ github.event.inputs.channels || 'both' }}
-          FORCE: ${{ github.event.inputs.force || 'false' }}
+          # A forced rebuild has to be askable without an API token: since this workflow
+          # only runs when this file is pushed, a commit message carrying [rebuild] is the
+          # trigger. Dispatch keeps working too (force=true, channels=both/stable/alpha).
+          FORCE: ${{ github.event.inputs.force || (contains(github.event.head_commit.message || '', '[rebuild]') && 'true') || 'false' }}
         run: |
           set -euo pipefail
           api="https://api.github.com/repos/${UPSTREAM}"

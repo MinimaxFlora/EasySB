@@ -59,7 +59,7 @@ def main() -> int:
     # Keep the scratch directory inside the repo: MSYS bash and native python disagree
     # about what /tmp means, and the shim has to be reachable by both.
     tmp = WORKFLOW.parents[2] / ".tmp-plan"
-    pass  # keep for inspection
+    shutil.rmtree(tmp, ignore_errors=True)
     tmp.mkdir(parents=True, exist_ok=True)
     msys = str(tmp).replace("\\", "/")  # native form: bash execs it, python opens it
     shim = tmp / "jq"
@@ -97,7 +97,7 @@ def main() -> int:
     if os.environ.get("EXPECT_EMPTY") == "1":
         assert decided == [], f"expected no builds, got {decided}"
         print("OK: nothing to rebuild, the schedule would skip")
-    pass  # keep for inspection
+    shutil.rmtree(tmp, ignore_errors=True)
     return 0
 
 
