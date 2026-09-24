@@ -122,7 +122,9 @@ jobs:
           echo "targets=${targets}" >> "${GITHUB_OUTPUT}"
 
   build:
-    name: ${{ matrix.target.channel }} · linux-${{ matrix.arch }}
+    # Skipped runs render the matrix expressions literally, so fall back to a plain name
+    # when there is nothing to build.
+    name: ${{ matrix.target.channel != '' && format('{0} · linux-{1}', matrix.target.channel, matrix.arch) || 'build' }}
     needs: resolve
     if: needs.resolve.outputs.targets != '[]'
     runs-on: ubuntu-latest
@@ -222,7 +224,7 @@ jobs:
           echo "published ${release}/${archive}"
 
   stamp:
-    name: stamp ${{ matrix.target.channel }}
+    name: ${{ matrix.target.channel != '' && format('stamp {0}', matrix.target.channel) || 'stamp' }}
     needs: [resolve, build]
     if: needs.resolve.outputs.targets != '[]'
     runs-on: ubuntu-latest
