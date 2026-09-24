@@ -1,6 +1,8 @@
 // Package state reads and writes the EasySB node state file
-// (/etc/sing-box/easysb.conf), keeping the on-disk format compatible with the
-// legacy shell implementation so both can inspect the same deployment.
+// (/etc/sing-box/easysb.conf). The key/value layout is kept from the legacy
+// shell implementation, but v4 drops the node-wide credential and the nginx
+// subscription keys: credentials belong to the accounts in internal/user, and
+// the endpoint is built from SUB_SERVE_PORT.
 package state
 
 import (
@@ -8,7 +10,9 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
 )
@@ -47,9 +51,16 @@ var DefaultPorts = map[string]string{
 const (
 	DefaultHopRange = "2080:3000"
 	DefaultSNI      = "apple.com"
-	DefaultSubPort  = "8443"
-	DefaultSubPath  = "/subscribe"
 	DefaultChannel  = "stable"
+
+	// DefaultSubServePort is the listen port of the built-in subscription
+	// service that replaced the nginx site.
+	DefaultSubServePort = 8443
+	// DefaultSubSyncSeconds is how often usage is read from the core.
+	DefaultSubSyncSeconds = 300
+	// MinSubSyncSeconds bounds the accounting interval. A shorter interval only
+	// adds gRPC round trips and config rewrites.
+	MinSubSyncSeconds = 30
 )
 
 // Config is the persisted node configuration.
@@ -61,14 +72,12 @@ type Config struct {
 	RealityPriv  string
 	RealityPub   string
 	RealitySID   string
-	UUID         string
-	Password     string
 	Domain       string
 	CertDomain   string
 	CoreChannel  string
 	NodeDeployed bool
-	SubPort      string
-	SubPath      string
+	SubServePort int
+	SubSyncSecs  int
 	ServerIP     string
 	raw          map[string]string
 }
@@ -81,8 +90,8 @@ func Default() Config {
 		HopRange:     DefaultHopRange,
 		RealitySNI:   DefaultSNI,
 		CoreChannel:  DefaultChannel,
-		SubPort:      DefaultSubPort,
-		SubPath:      DefaultSubPath,
+		SubServePort: DefaultSubServePort,
+		SubSyncSecs:  DefaultSubSyncSeconds,
 		NodeDeployed: false,
 		raw:          map[string]string{},
 	}
@@ -153,14 +162,16 @@ func (c *Config) applyRaw() {
 	set(&c.RealityPriv, "REALITY_PRIVATE")
 	set(&c.RealityPub, "REALITY_PUBLIC")
 	set(&c.RealitySID, "REALITY_SHORT_ID")
-	set(&c.UUID, "UUID")
-	set(&c.Password, "PASSWORD")
 	set(&c.Domain, "DOMAIN")
 	set(&c.CertDomain, "CERT_DOMAIN")
 	set(&c.CoreChannel, "CORE_CHANNEL")
-	set(&c.SubPort, "SUB_PORT")
-	set(&c.SubPath, "SUB_PATH")
 	set(&c.ServerIP, "SERVER_IP")
+	if n, err := strconv.Atoi(c.raw["SUB_SERVE_PORT"]); err == nil && n > 0 && n < 65536 {
+		c.SubServePort = n
+	}
+	if n, err := strconv.Atoi(c.raw["SUB_SYNC_SECONDS"]); err == nil && n > 0 {
+		c.SubSyncSecs = n
+	}
 	if v, ok := c.raw["NODE_DEPLOYED"]; ok {
 		c.NodeDeployed = strings.EqualFold(v, "yes")
 	}
@@ -185,6 +196,24 @@ func (c Config) Host() string {
 		return c.CertDomain
 	}
 	return c.ServerIP
+}
+
+// SyncInterval is the accounting interval, never shorter than
+// MinSubSyncSeconds however the state file was edited.
+func (c Config) SyncInterval() time.Duration {
+	secs := c.SubSyncSecs
+	if secs < MinSubSyncSeconds {
+		secs = MinSubSyncSeconds
+	}
+	return time.Duration(secs) * time.Second
+}
+
+// SubPort is the effective port of the subscription endpoint.
+func (c Config) SubPort() int {
+	if c.SubServePort > 0 {
+		return c.SubServePort
+	}
+	return DefaultSubServePort
 }
 
 // Save writes the state back to disk with 0600 permissions.
@@ -224,14 +253,12 @@ func (c Config) Save() error {
 		{"REALITY_PRIVATE", c.RealityPriv},
 		{"REALITY_PUBLIC", c.RealityPub},
 		{"REALITY_SHORT_ID", c.RealitySID},
-		{"UUID", c.UUID},
-		{"PASSWORD", c.Password},
 		{"DOMAIN", c.Domain},
 		{"CERT_DOMAIN", c.CertDomain},
 		{"CORE_CHANNEL", c.CoreChannel},
 		{"NODE_DEPLOYED", deployed},
-		{"SUB_PORT", c.SubPort},
-		{"SUB_PATH", c.SubPath},
+		{"SUB_SERVE_PORT", strconv.Itoa(c.SubServePort)},
+		{"SUB_SYNC_SECONDS", strconv.Itoa(c.SubSyncSecs)},
 		{"SERVER_IP", c.ServerIP},
 	}
 	for _, p := range pairs {
@@ -257,10 +284,9 @@ func (c Config) extraKeys() []string {
 		"PORT_ANYTLS": true, "PORT_HYSTERIA2": true, "PORT_TUIC": true,
 		"PORT_VLESS_REALITY": true, "PORT_VMESS_WS_TLS": true,
 		"HY2_HOP_RANGE": true, "REALITY_SNI": true, "REALITY_PRIVATE": true,
-		"REALITY_PUBLIC": true, "REALITY_SHORT_ID": true, "UUID": true,
-		"PASSWORD": true, "DOMAIN": true, "CERT_DOMAIN": true,
-		"CORE_CHANNEL": true, "NODE_DEPLOYED": true, "SUB_PORT": true,
-		"SUB_PATH": true, "SERVER_IP": true,
+		"REALITY_PUBLIC": true, "REALITY_SHORT_ID": true, "DOMAIN": true,
+		"CERT_DOMAIN": true, "CORE_CHANNEL": true, "NODE_DEPLOYED": true,
+		"SUB_SERVE_PORT": true, "SUB_SYNC_SECONDS": true, "SERVER_IP": true,
 	}
 	var out []string
 	for k := range c.raw {

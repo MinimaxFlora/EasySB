@@ -6,6 +6,7 @@ import (
 	"image/color"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -14,6 +15,7 @@ import (
 	"github.com/MinimaxFlora/EasySB/internal/state"
 	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
 	"github.com/MinimaxFlora/EasySB/internal/theme"
+	"github.com/MinimaxFlora/EasySB/internal/user"
 )
 
 func press(code rune) tea.KeyPressMsg {
@@ -113,7 +115,8 @@ func TestRecursiveNavigation(t *testing.T) {
 		t.Fatalf("expected params menu, got %s", a.current().id)
 	}
 
-	for i := 0; i < 3; i++ {
+	// ports is the second row of the params menu, right below the hop range.
+	for i := 0; i < 1; i++ {
 		m, _ = a.Update(press(tea.KeyDown))
 		a = m.(*App)
 	}
@@ -178,8 +181,8 @@ func TestRootMenuHasNoNav(t *testing.T) {
 	if a.hasNavRow() {
 		t.Fatalf("root menu should not show a navigation row")
 	}
-	if got := len(a.current().nodes); got != 7 {
-		t.Fatalf("root should have 7 entries, got %d", got)
+	if got := len(a.current().nodes); got != 8 {
+		t.Fatalf("root should have 8 entries, got %d", got)
 	}
 	var hasUninstall bool
 	for _, n := range a.current().nodes {
@@ -242,8 +245,13 @@ func TestNumberedMenuAndDigitSelection(t *testing.T) {
 	}
 	m, _ := a.Update(press('5'))
 	a = m.(*App)
+	if got := a.selected().id; got != "users" {
+		t.Fatalf("digit 5 should select accounts, got %s", got)
+	}
+	m, _ = a.Update(press('6'))
+	a = m.(*App)
 	if got := a.selected().id; got != "service" {
-		t.Fatalf("digit 5 should select service, got %s", got)
+		t.Fatalf("digit 6 should select service, got %s", got)
 	}
 	m, _ = a.Update(press(tea.KeyEnter))
 	a = m.(*App)
@@ -333,7 +341,10 @@ func TestDashboardPanelsAndIcons(t *testing.T) {
 
 func TestDashboardShowsLogoAndMenuDescriptions(t *testing.T) {
 	a := New("test", i18n.Chinese)
-	a.width, a.height = 100, 46
+	// Eight root entries need two more rows than the seven the menu had before
+	// accounts were added, and the banner is the first block dropped when the
+	// terminal is shorter than that.
+	a.width, a.height = 100, 48
 	a.sized = true
 	a.status = sysinfo.Collect("test")
 	a.ready = true
@@ -424,6 +435,23 @@ func TestEveryScreenUsesOneFixedFrame(t *testing.T) {
 		a.task = nil
 		a.openForm("t", "p", "", "", nil)
 		out["form"] = a.View().Content
+		a.form = nil
+
+		// The account screens carry the longest values in the panel: names,
+		// quotas and subscription URLs.
+		account := user.New("a-very-long-account-name-for-layout", state.Keys, time.Unix(0, 0))
+		account.QuotaBytes = 1 << 40
+		account.UsedBytes = 1 << 30
+		account.ExpireAt = time.Unix(0, 0).Add(48 * time.Hour)
+		a.accounts = []user.User{account}
+		a.push(a.usersMenu())
+		out["accounts"] = a.View().Content
+		a.push(a.userListMenu())
+		out["account-list"] = a.View().Content
+		a.push(a.userMenu(account.Token))
+		out["account-detail"] = a.View().Content
+		a.push(a.userProtocolsMenu(account.Token))
+		out["account-protocols"] = a.View().Content
 		return out
 	}
 	for _, w := range []int{20, 32, 60, 100, 140} {
@@ -449,15 +477,62 @@ func TestEveryScreenUsesOneFixedFrame(t *testing.T) {
 	}
 }
 
-func TestPublishSubscriptionNeedsHost(t *testing.T) {
+func TestLogEndpointNeedsHost(t *testing.T) {
 	var logged []string
-	err := publishSubscription(context.Background(), state.Config{},
-		func(s string) { logged = append(logged, s) }, i18n.Chinese)
-	if err != nil {
-		t.Fatalf("publishSubscription returned %v", err)
-	}
+	logEndpoint(state.Config{}, func(s string) { logged = append(logged, s) }, i18n.Chinese)
 	if len(logged) == 0 || !strings.Contains(logged[0], i18n.Chinese.T("sub_need_domain")) {
 		t.Fatalf("expected a need-domain hint, got %v", logged)
+	}
+}
+
+func TestLogEndpointWarnsWithoutCertificate(t *testing.T) {
+	cfg := state.Default()
+	// A server IP is enough for a host, but it is not a domain with a
+	// certificate, so the endpoint will speak plain HTTP.
+	cfg.ServerIP = "203.0.113.10"
+	var logged []string
+	logEndpoint(cfg, func(s string) { logged = append(logged, s) }, i18n.Chinese)
+	joined := strings.Join(logged, "\n")
+	if !strings.Contains(joined, i18n.Chinese.T("sub_plaintext_warning")) {
+		t.Fatalf("expected a plaintext warning, got %v", logged)
+	}
+	if !strings.Contains(joined, "http://203.0.113.10:8443/sub/") {
+		t.Fatalf("endpoint URL should match the plain listener: %v", logged)
+	}
+}
+
+func TestAccountScreensRenderAccount(t *testing.T) {
+	a := New("test", i18n.Chinese)
+	a.width, a.height = 100, 40
+	a.sized = true
+	a.status = sysinfo.Collect("test")
+	a.ready = true
+
+	account := user.New("alice", state.Keys, time.Now())
+	account.QuotaBytes = 1 << 40
+	account.UsedBytes = 1 << 30
+	a.accounts = []user.User{account}
+
+	a.push(a.userListMenu())
+	view := a.View().Content
+	if !strings.Contains(view, "alice") {
+		t.Fatalf("account list should show the account name:\n%s", view)
+	}
+	if !strings.Contains(view, i18n.Chinese.T("user_status_active")) {
+		t.Fatalf("account list should show the status:\n%s", view)
+	}
+
+	a.push(a.userMenu(account.Token))
+	view = a.View().Content
+	for _, want := range []string{
+		"alice",
+		i18n.Chinese.T("user_quota"),
+		i18n.Chinese.T("user_protocols"),
+		i18n.Chinese.T("user_sub"),
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("account detail missing %q:\n%s", want, view)
+		}
 	}
 }
 
@@ -510,7 +585,7 @@ func TestSubmenuShowsDescriptions(t *testing.T) {
 
 	a.push(buildSubscribe())
 	view := a.View().Content
-	for _, key := range []string{"desc_sub_regen", "desc_sub_url", "desc_sub_qr", "desc_sub_links"} {
+	for _, key := range []string{"desc_sub_url", "desc_sub_qr", "desc_sub_links", "desc_sub_svc_install"} {
 		if !strings.Contains(view, i18n.Chinese.T(key)) {
 			t.Fatalf("subscription submenu missing description %q:\n%s", key, view)
 		}

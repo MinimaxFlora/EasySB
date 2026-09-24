@@ -1,6 +1,7 @@
 // Package config renders the sing-box server configuration from the EasySB
-// state. The produced document matches the layout of the legacy shell tool so
-// existing deployments keep working after the Go rewrite.
+// state and the account list. Every protocol inbound authenticates the accounts
+// that selected it, and the stats API the panel accounts traffic through is
+// declared here, because the same member list has to drive both.
 package config
 
 import (
@@ -9,14 +10,19 @@ import (
 	"fmt"
 
 	"github.com/MinimaxFlora/EasySB/internal/state"
+	"github.com/MinimaxFlora/EasySB/internal/user"
 )
+
+// StatsListen is the loopback endpoint of the core's stats service. It is not
+// configurable: the panel is the only client, and a public stats port would leak
+// every account name.
+const StatsListen = "127.0.0.1:10085"
 
 // Params is the input needed to render config.json.
 type Params struct {
 	Enabled       map[string]bool
 	Ports         map[string]string
-	Password      string
-	UUID          string
+	Members       []Member
 	HopRange      string
 	RealitySNI    string
 	RealityPriv   string
@@ -30,13 +36,77 @@ func ParamsFromState(c state.Config) Params {
 	return Params{
 		Enabled:     c.Enabled,
 		Ports:       c.Ports,
-		Password:    c.Password,
-		UUID:        c.UUID,
 		HopRange:    c.HopRange,
 		RealitySNI:  c.RealitySNI,
 		RealityPriv: c.RealityPriv,
 		RealitySID:  c.RealitySID,
 	}
+}
+
+// Credentials is one member's secret fields for one protocol.
+type Credentials struct {
+	UUID     string
+	Password string
+}
+
+// Member is one account as the core sees it. Name is the core user name, which
+// EasySB sets to the account's subscription token: it is the identity the stats
+// service reports, so a renamed account keeps its counters.
+type Member struct {
+	Name      string
+	Protocols map[string]bool
+	Cred      map[string]Credentials
+}
+
+func (m Member) selects(key string) bool {
+	return m.Protocols[key]
+}
+
+func (m Member) credential(key string) Credentials {
+	return m.Cred[key]
+}
+
+// MembersFrom converts accounts into the renderer's member list.
+func MembersFrom(users []user.User) []Member {
+	out := make([]Member, 0, len(users))
+	for _, u := range users {
+		protocols := make(map[string]bool, len(u.Protocols))
+		cred := make(map[string]Credentials, len(u.Protocols))
+		for _, key := range u.Protocols {
+			protocols[key] = true
+			c := u.Credential(key)
+			cred[key] = Credentials{UUID: c.UUID, Password: c.Password}
+		}
+		out = append(out, Member{Name: u.Token, Protocols: protocols, Cred: cred})
+	}
+	return out
+}
+
+// selectMembers returns the members that may use one protocol, in name order.
+func (p Params) selectMembers(key string) []Member {
+	var out []Member
+	for _, m := range p.Members {
+		if m.selects(key) {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// protocolUsers renders the core user list of one protocol: one entry per
+// member that selected it. tweak adjusts the fields a protocol needs beyond the
+// credential itself, such as the VLESS flow.
+func (p Params) protocolUsers(key string, tweak func(*coreUser)) []coreUser {
+	var out []coreUser
+	for _, m := range p.selectMembers(key) {
+		cred := m.credential(key)
+		entry := coreUser{Name: m.Name, UUID: cred.UUID, Password: cred.Password}
+		if tweak != nil {
+			tweak(&entry)
+		}
+		out = append(out, entry)
+	}
+	return out
 }
 
 var paddingScheme = []string{
@@ -75,14 +145,46 @@ func Build(p Params) ([]byte, error) {
 		Log:       logConfig{Level: "info", Timestamp: true},
 		Inbounds:  inbounds,
 		Outbounds: []outbound{{Type: "direct", Tag: "direct"}},
+		Experimental: experimental{
+			V2RayAPI: v2rayAPI{
+				Listen: StatsListen,
+				Stats:  statsEntry{Enabled: true, Users: p.memberNames()},
+			},
+		},
 	}
 	return json.MarshalIndent(doc, "", "  ")
 }
 
+// memberNames lists the core user names the stats service should count. The
+// core counts nothing that is not named here, so this list and the inbounds are
+// always built from the same member slice.
+func (p Params) memberNames() []string {
+	out := make([]string, 0, len(p.Members))
+	for _, m := range p.Members {
+		out = append(out, m.Name)
+	}
+	return out
+}
+
 type serverConfig struct {
-	Log       logConfig  `json:"log"`
-	Inbounds  []any      `json:"inbounds"`
-	Outbounds []outbound `json:"outbounds"`
+	Log          logConfig    `json:"log"`
+	Inbounds     []any        `json:"inbounds"`
+	Outbounds    []outbound   `json:"outbounds"`
+	Experimental experimental `json:"experimental"`
+}
+
+type experimental struct {
+	V2RayAPI v2rayAPI `json:"v2ray_api"`
+}
+
+type v2rayAPI struct {
+	Listen string     `json:"listen"`
+	Stats  statsEntry `json:"stats"`
+}
+
+type statsEntry struct {
+	Enabled bool     `json:"enabled"`
+	Users   []string `json:"users"`
 }
 
 type logConfig struct {
@@ -95,7 +197,7 @@ type outbound struct {
 	Tag  string `json:"tag"`
 }
 
-type user struct {
+type coreUser struct {
 	Name     string `json:"name,omitempty"`
 	Password string `json:"password,omitempty"`
 	UUID     string `json:"uuid,omitempty"`
@@ -166,7 +268,7 @@ func buildInbounds(p Params) ([]any, error) {
 			return nil, err
 		}
 		m["type"] = "anytls"
-		m["users"] = []user{{Name: "easysb", Password: p.Password}}
+		m["users"] = p.protocolUsers(state.ProtoAnyTLS, nil)
 		m["padding_scheme"] = paddingScheme
 		m["tls"] = p.certTLS([]string{"h3", "h2", "http/1.1"})
 		out = append(out, m)
@@ -180,7 +282,7 @@ func buildInbounds(p Params) ([]any, error) {
 		m["type"] = "hysteria2"
 		m["up_mbps"] = 100
 		m["down_mbps"] = 20
-		m["users"] = []user{{Name: "easysb", Password: p.Password}}
+		m["users"] = p.protocolUsers(state.ProtoHysteria2, nil)
 		tls := p.certTLS([]string{"h3"})
 		m["tls"] = tls
 		out = append(out, m)
@@ -192,7 +294,7 @@ func buildInbounds(p Params) ([]any, error) {
 			return nil, err
 		}
 		m["type"] = "tuic"
-		m["users"] = []user{{UUID: p.UUID, Password: p.Password}}
+		m["users"] = p.protocolUsers(state.ProtoTUIC, nil)
 		m["congestion_control"] = "bbr"
 		m["auth_timeout"] = "3s"
 		m["zero_rtt_handshake"] = false
@@ -208,7 +310,9 @@ func buildInbounds(p Params) ([]any, error) {
 		}
 		m["type"] = "vless"
 		m["tag"] = state.ProtoVLESSReality
-		m["users"] = []user{{Name: "easysb", UUID: p.UUID, Flow: "xtls-rprx-vision"}}
+		m["users"] = p.protocolUsers(state.ProtoVLESSReality, func(u *coreUser) {
+			u.Flow = "xtls-rprx-vision"
+		})
 		m["tls"] = tlsConfig{
 			Enabled:    true,
 			ServerName: p.RealitySNI,
@@ -229,7 +333,9 @@ func buildInbounds(p Params) ([]any, error) {
 		}
 		zero := 0
 		m["type"] = "vmess"
-		m["users"] = []user{{Name: "easysb", UUID: p.UUID, AlterID: &zero}}
+		m["users"] = p.protocolUsers(state.ProtoVMessWSTLS, func(u *coreUser) {
+			u.AlterID = &zero
+		})
 		m["multiplex"] = map[string]any{"enabled": true, "padding": false}
 		m["transport"] = map[string]any{
 			"type":                   "ws",

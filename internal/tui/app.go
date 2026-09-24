@@ -11,10 +11,10 @@ import (
 
 	"github.com/MinimaxFlora/EasySB/internal/i18n"
 	"github.com/MinimaxFlora/EasySB/internal/icons"
-	"github.com/MinimaxFlora/EasySB/internal/state"
 	"github.com/MinimaxFlora/EasySB/internal/subscribe"
 	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
 	"github.com/MinimaxFlora/EasySB/internal/theme"
+	"github.com/MinimaxFlora/EasySB/internal/user"
 )
 
 type statusMsg sysinfo.Status
@@ -38,6 +38,9 @@ type App struct {
 	task          *progressModel
 	form          *formModel
 	links         *linksModel
+	// accounts is the snapshot the account menus render from; it is refreshed
+	// when the section is entered and after every task.
+	accounts []user.User
 }
 
 func New(scriptVersion string, lang i18n.Lang) *App {
@@ -206,16 +209,6 @@ func (a *App) startTask(title string, fn taskFunc) tea.Cmd {
 	return p.Init()
 }
 
-// startTaskLinks is startTask for subscription work: on success the log is
-// replaced by the copyable link grid.
-func (a *App) startTaskLinks(title string, fn taskFunc) tea.Cmd {
-	p := newProgress(title, fn)
-	p.afterLinks = true
-	p.resize(a.width, a.height)
-	a.task = &p
-	return p.Init()
-}
-
 // startTaskQR is startTask for the subscription QR codes: the log is a picture,
 // so the copy key is hidden.
 func (a *App) startTaskQR(title string, fn taskFunc) tea.Cmd {
@@ -224,25 +217,6 @@ func (a *App) startTaskQR(title string, fn taskFunc) tea.Cmd {
 	p.resize(a.width, a.height)
 	a.task = &p
 	return p.Init()
-}
-
-// openSubscriptionLinks builds the per-client subscription card grid from the
-// current state.
-func (a *App) openSubscriptionLinks() {
-	cfg := state.Load()
-	if cfg.Host() == "" {
-		a.setToast(a.lang.T("sub_need_domain"), true)
-		return
-	}
-	items := make([]linkItem, 0, len(subscribe.Clients))
-	for _, client := range subscribe.Clients {
-		items = append(items, linkItem{
-			label: subscriptionTitle(a.lang, client),
-			desc:  clientDescription(a.lang, client),
-			value: subscribe.ClientURL(cfg, client),
-		})
-	}
-	a.links = newLinksModel(a.lang.T("sub_url"), items)
 }
 
 // subscriptionTitle is the card title for a subscription endpoint, e.g.
@@ -256,33 +230,6 @@ func subscriptionTitle(lang i18n.Lang, client subscribe.Client) string {
 	default:
 		return lang.T("links_sub_v2ray")
 	}
-}
-
-// openShareLinks builds the share-link card grid for the enabled protocols.
-func (a *App) openShareLinks() {
-	cfg := state.Load()
-	if !cfg.AnyEnabled() {
-		a.setToast(a.lang.T("node_all_disabled"), true)
-		return
-	}
-	links := subscribe.ShareLinks(cfg)
-	order := []string{
-		state.ProtoAnyTLS,
-		state.ProtoHysteria2,
-		state.ProtoTUIC,
-		state.ProtoVMessWSTLS,
-		state.ProtoVLESSReality,
-	}
-	items := make([]linkItem, 0, len(links))
-	next := 0
-	for _, key := range order {
-		if !cfg.Enabled[key] || next >= len(links) {
-			continue
-		}
-		items = append(items, linkItem{label: state.Labels[key], desc: state.Labels[key], value: links[next]})
-		next++
-	}
-	a.links = newLinksModel(a.lang.T("sub_links"), items)
 }
 
 // openForm shows a single-value text prompt over the dashboard.
@@ -371,10 +318,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case taskDoneMsg:
 		if a.task != nil {
 			cmd := a.task.handle(msg)
-			if a.task.done && a.task.err == nil && a.task.afterLinks {
-				a.task = nil
-				a.openSubscriptionLinks()
-				cmd = nil
+			if a.task.done {
+				// The account file is what the account menus render from, so the
+				// snapshot is refreshed as soon as a task finishes.
+				a.loadAccounts()
 			}
 			return a, tea.Batch(cmd, collectStatus(a.scriptVersion))
 		}

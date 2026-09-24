@@ -13,6 +13,7 @@ Read `docs/` first, then the package you need:
 
 - `docs/architecture.md` - layout, runtime paths, package responsibilities
 - `docs/design.md` - the decisions behind the shape of the code
+- `docs/user-management.md` - accounts, the subscription service and usage accounting
 - `docs/conventions.md` - naming, language, versioning, commit and release rules
 - `docs/pitfalls.md` - known traps and how to avoid them
 
@@ -36,7 +37,14 @@ Render one TUI frame without a TTY (good for layout checks):
 - The release tag is always `v<VERSION>`. Derive it; never hardcode it in a
   second place. `install.sh`, the workflow, and `internal/update` share it.
 - Keep `/etc/sing-box/easysb.conf` compatible with the legacy shell tool. Add
-  keys, do not rename or repurpose them.
+  keys, do not rename or repurpose them. The one exception is a key that
+  described a component which no longer exists (v4 dropped `SUB_PORT` and
+  `SUB_PATH` with the nginx site); removing such a key is part of the same
+  change that removes the component, and the docs change with it.
+- The account store `/etc/sing-box/easysb-users.json` is the only source of
+  credentials. The core user name is the account token, and the inbound `users`
+  arrays and `stats.users` must both come from `user.Store.Routable`, or an
+  account is authenticated but never counted.
 - Every user-facing string goes through `internal/i18n` for both `C` and `E`.
 - Directories and paths are lowercase ASCII. `templates/` subdirectories are
   lowercase.

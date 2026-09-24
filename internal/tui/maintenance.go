@@ -7,10 +7,11 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/MinimaxFlora/EasySB/internal/cert"
 	"github.com/MinimaxFlora/EasySB/internal/firewall"
 	"github.com/MinimaxFlora/EasySB/internal/i18n"
-	"github.com/MinimaxFlora/EasySB/internal/nginx"
 	"github.com/MinimaxFlora/EasySB/internal/state"
+	"github.com/MinimaxFlora/EasySB/internal/subd"
 	"github.com/MinimaxFlora/EasySB/internal/subscribe"
 	"github.com/MinimaxFlora/EasySB/internal/uninstall"
 	"github.com/MinimaxFlora/EasySB/internal/update"
@@ -42,48 +43,83 @@ func clientDescription(lang i18n.Lang, client subscribe.Client) string {
 	}
 }
 
-// publishSubscription installs nginx when it is missing, renders subscribe.json
-// plus the nginx site, and reports the public subscription URL. It is shared by
-// node deployment and the manual regenerate action.
-func publishSubscription(ctx context.Context, cfg state.Config, log func(string), lang i18n.Lang) error {
-	if cfg.Host() == "" {
-		log(lang.T("sub_need_domain"))
-		return nil
-	}
-	if err := nginx.Ensure(ctx, log); err != nil {
-		return err
-	}
-	paths, err := subscribe.GenerateFiles(cfg)
-	if err != nil {
-		return err
-	}
-	for _, path := range paths {
-		log(lang.T("sub_generated") + ": " + path)
-	}
-	if err := nginx.WriteSite(cfg); err != nil {
-		return err
-	}
-	log(lang.T("svc_nginx_ok"))
-	return nil
-}
-
-// regenerateSubscription renders subscribe.json and publishes it over nginx.
-// On success the log is replaced by the copyable link grid.
-func regenerateSubscription() actionFunc {
+// installSubscriptionService writes the unit of the built-in subscription service
+// and starts it. v4 has no web server in front of the panel: this binary serves
+// /sub/<token> itself, so there is no document to regenerate and no site to
+// publish.
+func installSubscriptionService() actionFunc {
 	return func(a *App) tea.Cmd {
 		lang := a.lang
-		return a.startTaskLinks(lang.T("sub_regen"), func(ctx context.Context, log func(string)) error {
-			if !hasServerConfig() {
-				log(lang.T("sub_need_deploy"))
-				return nil
-			}
+		return a.startTask(lang.T("sub_svc_install"), func(ctx context.Context, log func(string)) error {
 			cfg := state.Load()
-			if cfg.Host() == "" {
-				return errors.New(lang.T("sub_need_domain"))
+			if !cfg.NodeDeployed {
+				return errors.New(lang.T("sub_need_deploy"))
 			}
-			return publishSubscription(ctx, cfg, log, lang)
+			if err := subd.WriteUnit(); err != nil {
+				return err
+			}
+			log("write " + subd.UnitPath())
+			if err := subd.Do(ctx, "enable"); err != nil {
+				log("enable: " + err.Error())
+			}
+			if err := subd.Do(ctx, "restart"); err != nil {
+				return err
+			}
+			log(lang.T("sub_svc_started"))
+			logEndpoint(cfg, log, lang)
+			return nil
 		})
 	}
+}
+
+// restartSubscriptionService restarts the endpoint service, which is what an
+// endpoint port change needs.
+func restartSubscriptionService() actionFunc {
+	return func(a *App) tea.Cmd {
+		lang := a.lang
+		return a.startTask(lang.T("sub_svc_restart"), func(ctx context.Context, log func(string)) error {
+			if err := subd.Do(ctx, "restart"); err != nil {
+				return err
+			}
+			log(lang.T("sub_svc_restarted"))
+			logEndpoint(state.Load(), log, lang)
+			return nil
+		})
+	}
+}
+
+// subscriptionServiceStatus reports whether the endpoint service is running and
+// where it listens.
+func subscriptionServiceStatus() actionFunc {
+	return func(a *App) tea.Cmd {
+		lang := a.lang
+		return a.startTask(lang.T("sub_svc_status"), func(ctx context.Context, log func(string)) error {
+			if subd.Active(ctx) {
+				log(lang.T("sub_svc_running"))
+			} else {
+				log(lang.T("sub_svc_stopped"))
+			}
+			logEndpoint(state.Load(), log, lang)
+			return nil
+		})
+	}
+}
+
+// logEndpoint prints the endpoint base URL and explains what has to be appended
+// to it, because the account token is what makes a subscription work.
+func logEndpoint(cfg state.Config, log func(string), lang i18n.Lang) {
+	if cfg.Host() == "" {
+		log(lang.T("sub_need_domain"))
+		return
+	}
+	// A subscription carries the account credentials, so an endpoint served over
+	// plain HTTP is called out instead of being left for the operator to notice
+	// from the scheme.
+	if !cert.Usable(cfg.Domain) {
+		log(lang.T("sub_plaintext_warning"))
+	}
+	log(lang.T("sub_endpoint") + ": " + subscribe.Endpoint(cfg))
+	log(lang.T("sub_endpoint_hint"))
 }
 
 // firewallApply opens ports, installs the hopping redirect and enables boot

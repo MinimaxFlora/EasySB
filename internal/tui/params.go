@@ -14,20 +14,26 @@ import (
 	"github.com/MinimaxFlora/EasySB/internal/state"
 )
 
-// editUUID prompts for the node UUID, auto-generating one on empty input.
-func editUUID() actionFunc {
+// editSubPort prompts for the subscription endpoint port. The port must not
+// collide with a protocol listener, and the endpoint service has to be
+// restarted for a change to take effect.
+func editSubPort() actionFunc {
 	return func(a *App) tea.Cmd {
 		lang := a.lang
 		cfg := state.Load()
-		a.openForm(lang.T("param_uuid"), lang.T("param_uuid_prompt"), cfg.UUID, lang.T("param_uuid_gen"), func(a *App, value string) (tea.Cmd, error) {
+		prompt := fmt.Sprintf(lang.T("param_sub_port_prompt"), state.DefaultSubServePort)
+		a.openForm(lang.T("param_sub_port"), prompt, fmt.Sprint(cfg.SubServePort), "", func(a *App, value string) (tea.Cmd, error) {
 			value = strings.TrimSpace(value)
-			if value == "" {
-				value = core.GenerateUUID(context.Background())
+			port, err := strconv.Atoi(value)
+			if err != nil || port < 1 || port > 65535 {
+				return nil, errors.New(lang.T("port_invalid"))
 			}
-			if value == "" {
-				return nil, errors.New(lang.T("invalid"))
+			for _, key := range state.Keys {
+				if cfg.Ports[key] == value {
+					return nil, errors.New(lang.T("port_conflict"))
+				}
 			}
-			cfg.UUID = value
+			cfg.SubServePort = port
 			if err := cfg.Save(); err != nil {
 				return nil, err
 			}
@@ -38,20 +44,19 @@ func editUUID() actionFunc {
 	}
 }
 
-// editPassword prompts for the shared protocol password.
-func editPassword() actionFunc {
+// editSubSync prompts for the accounting interval in seconds. The panel reads
+// traffic this often, which is also how quickly a quota or an expiry is enforced.
+func editSubSync() actionFunc {
 	return func(a *App) tea.Cmd {
 		lang := a.lang
 		cfg := state.Load()
-		a.openForm(lang.T("param_password"), lang.T("param_pw_prompt"), cfg.Password, lang.T("param_pw_gen"), func(a *App, value string) (tea.Cmd, error) {
-			value = strings.TrimSpace(value)
-			if value == "" {
-				value = secret.Password()
+		prompt := fmt.Sprintf(lang.T("param_sub_sync_prompt"), state.DefaultSubSyncSeconds, state.MinSubSyncSeconds)
+		a.openForm(lang.T("param_sub_sync"), prompt, fmt.Sprint(cfg.SubSyncSecs), "", func(a *App, value string) (tea.Cmd, error) {
+			seconds, err := strconv.Atoi(strings.TrimSpace(value))
+			if err != nil || seconds < state.MinSubSyncSeconds {
+				return nil, errors.New(lang.T("param_sub_sync_invalid"))
 			}
-			if value == "" {
-				return nil, errors.New(lang.T("invalid"))
-			}
-			cfg.Password = value
+			cfg.SubSyncSecs = seconds
 			if err := cfg.Save(); err != nil {
 				return nil, err
 			}

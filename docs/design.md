@@ -13,7 +13,11 @@ The binary is invoked as `sb` after `install.sh` links it.
 
 `/etc/sing-box/easysb.conf` keeps the KV layout of the old bash tool. A Go build
 and a shell build can inspect the same deployment. Do not change existing keys;
-add new ones instead.
+add new ones instead. The exception is a key that only described a component
+which no longer exists: v4 dropped `SUB_PORT` and `SUB_PATH` in the same change
+that deleted the nginx site they configured, because an unread key is dead
+weight. Removing a key requires removing its component and updating every doc
+that mentions it.
 
 ## Templates are readable first
 

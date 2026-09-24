@@ -4,53 +4,24 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/MinimaxFlora/EasySB/internal/state"
-	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
+	"github.com/MinimaxFlora/EasySB/internal/user"
 )
 
 //go:embed tun-fakeip.json
 var templateJSON []byte
 
-// tagFor maps a state protocol key to the tag used inside the client template.
-var tagFor = map[string]string{
-	state.ProtoAnyTLS:       "anytls",
-	state.ProtoHysteria2:    "hysteria2",
-	state.ProtoTUIC:         "tuic",
-	state.ProtoVMessWSTLS:   "vmess-ws-tls",
-	state.ProtoVLESSReality: "vless-vision-reality",
-}
-
-// tagOrder is the canonical template node order.
-var tagOrder = []string{"anytls", "hysteria2", "tuic", "vmess-ws-tls", "vless-vision-reality"}
-
-// EnabledTags returns the client tags for every enabled protocol, in canonical
-// order.
-func EnabledTags(cfg state.Config) []string {
-	var out []string
-	for _, tag := range tagOrder {
-		for _, key := range state.Keys {
-			if tagFor[key] == tag && cfg.Enabled[key] {
-				out = append(out, tag)
-				break
-			}
-		}
-	}
-	return out
-}
-
-// Generate renders the client subscription (subscribe.json) from the state.
-func Generate(cfg state.Config) ([]byte, error) {
+// Generate renders the sing-box client profile for one account.
+func Generate(cfg state.Config, u user.User) ([]byte, error) {
 	if cfg.Host() == "" {
 		return nil, fmt.Errorf("no server address")
 	}
-	enabled := EnabledTags(cfg)
-	if len(enabled) == 0 {
-		return nil, fmt.Errorf("no protocol enabled")
+	active := ActiveTags(cfg, u)
+	if len(active) == 0 {
+		return nil, fmt.Errorf("no protocol enabled for %q", u.Name)
 	}
 
 	root, err := parseOrderedJSON(stripJSONC(templateJSON))
@@ -71,6 +42,16 @@ func Generate(cfg state.Config) ([]byte, error) {
 		rsni = state.DefaultSNI
 	}
 
+	// The template tags become the per-account node names. The selector and the
+	// urltest group are rewritten from the same list, so a profile never
+	// references a node it dropped.
+	names := make(map[string]string, len(active))
+	display := make([]string, 0, len(active))
+	for _, tag := range active {
+		names[tag] = NodeName(u.Name, tag)
+		display = append(display, names[tag])
+	}
+
 	var kept []*jsonValue
 	for _, ob := range outbounds.arr {
 		tag := ob.get("tag").asString()
@@ -79,19 +60,20 @@ func Generate(cfg state.Config) ([]byte, error) {
 			kept = append(kept, ob)
 			continue
 		}
-		if !contains(enabled, tag) {
+		if !contains(active, tag) {
 			continue
 		}
-		applyNode(ob, tag, cfg, hop, rsni)
+		applyNode(ob, tag, cfg, u, hop, rsni)
+		ob.setString("tag", names[tag])
 		kept = append(kept, ob)
 	}
 
 	for _, ob := range kept {
 		switch ob.get("tag").asString() {
 		case "proxy":
-			ob.setStrings("outbounds", append([]string{"auto"}, enabled...))
+			ob.setStrings("outbounds", append([]string{"auto"}, display...))
 		case "auto":
-			ob.setStrings("outbounds", append([]string{}, enabled...))
+			ob.setStrings("outbounds", append([]string{}, display...))
 		}
 	}
 	outbounds.arr = kept
@@ -99,30 +81,31 @@ func Generate(cfg state.Config) ([]byte, error) {
 	return json.MarshalIndent(root, "", "  ")
 }
 
-func applyNode(ob *jsonValue, tag string, cfg state.Config, hop, rsni string) {
+func applyNode(ob *jsonValue, tag string, cfg state.Config, u user.User, hop, rsni string) {
 	host := cfg.Host()
 	ob.setString("server", host)
 	switch tag {
 	case "anytls":
 		ob.setNumber("server_port", portInt(cfg, state.ProtoAnyTLS))
-		ob.setString("password", cfg.Password)
+		ob.setString("password", u.Credential(state.ProtoAnyTLS).Password)
 		setServerName(ob, host)
 	case "hysteria2":
 		ob.setStrings("server_ports", []string{hop})
-		ob.setString("password", cfg.Password)
+		ob.setString("password", u.Credential(state.ProtoHysteria2).Password)
 		setServerName(ob, host)
 	case "tuic":
+		cred := u.Credential(state.ProtoTUIC)
 		ob.setNumber("server_port", portInt(cfg, state.ProtoTUIC))
-		ob.setString("uuid", cfg.UUID)
-		ob.setString("password", cfg.Password)
+		ob.setString("uuid", cred.UUID)
+		ob.setString("password", cred.Password)
 		setServerName(ob, host)
 	case "vmess-ws-tls":
 		ob.setNumber("server_port", portInt(cfg, state.ProtoVMessWSTLS))
-		ob.setString("uuid", cfg.UUID)
+		ob.setString("uuid", u.Credential(state.ProtoVMessWSTLS).UUID)
 		setServerName(ob, host)
 	case "vless-vision-reality":
 		ob.setNumber("server_port", portInt(cfg, state.ProtoVLESSReality))
-		ob.setString("uuid", cfg.UUID)
+		ob.setString("uuid", u.Credential(state.ProtoVLESSReality).UUID)
 		setServerName(ob, rsni)
 		if tls := ob.get("tls"); tls != nil {
 			if reality := tls.get("reality"); reality != nil {
@@ -146,42 +129,6 @@ func portInt(cfg state.Config, key string) int {
 	}
 	n, _ := strconv.Atoi(raw)
 	return n
-}
-
-// GenerateFiles renders every client subscription document plus the share-link
-// list into the subscribe directory and returns the files it wrote.
-func GenerateFiles(cfg state.Config) ([]string, error) {
-	jsonData, err := Generate(cfg)
-	if err != nil {
-		return nil, err
-	}
-	yamlData, err := GenerateMihomo(cfg)
-	if err != nil {
-		return nil, err
-	}
-	if err := os.MkdirAll(sysinfo.SubscribeDir, 0o755); err != nil {
-		return nil, err
-	}
-
-	files := []struct {
-		name string
-		data []byte
-	}{
-		{ClientFile(ClientSingBox), jsonData},
-		{ClientFile(ClientMihomo), yamlData},
-		{ClientFile(ClientV2Ray), []byte(V2RaySubscription(cfg) + "\n")},
-		{"share-links.txt", []byte(strings.Join(ShareLinks(cfg), "\n") + "\n")},
-	}
-
-	written := make([]string, 0, len(files))
-	for _, f := range files {
-		path := filepath.Join(sysinfo.SubscribeDir, f.name)
-		if err := os.WriteFile(path, f.data, 0o644); err != nil {
-			return written, err
-		}
-		written = append(written, path)
-	}
-	return written, nil
 }
 
 // stripJSONC removes // line comments that appear outside string literals.

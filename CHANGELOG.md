@@ -4,15 +4,23 @@
 
 程序的版本号与构建提交在编译期注入，内核版本独立于程序版本，由官方 `SagerNet/sing-box` Releases 提供。
 
-## [Unreleased]
+## [4.0.0] - 2026-09-24
+
+### 重大变更
+
+- 账号化：移除节点级 `UUID` 与 `密码`，改为 `/etc/sing-box/easysb-users.json` 中的多账号模型。每个账号拥有各协议独立凭据、流量限额、有效期、可用协议与启用开关；停用、过期、超额账号会自动从内核配置中移除，恢复后自动加回。客户端需要按账号重新导入订阅。
+- 订阅改为内置服务：删除 `internal/nginx` 与静态订阅目录 `/etc/sing-box/subscribe/`，由 `easysb --serve`（`easysb.service`）在 `SUB_SERVE_PORT`（默认 `8443`）上提供唯一端点 `/sub/<令牌>`，按 User-Agent 返回 sing-box JSON、mihomo YAML 或 Base64 分享链接文档。旧端点 `/subscribe`、`/singbox/<uuid>`、`/mihomo/<uuid>`、`/v2ray/<uuid>` 不再提供。
+- 流量统计与自动处置：订阅服务每 `SUB_SYNC_SECONDS`（默认 `300`）秒读取内核 `StatsService` 计数并累加到账号，跨过限额或到期时重启内核生效；响应头 `Subscription-Userinfo` 向客户端上报已用流量、限额与到期时间。
+- 状态键变更：新增 `SUB_SERVE_PORT`、`SUB_SYNC_SECONDS`，移除 `SUB_PORT`、`SUB_PATH`；菜单新增「账号与流量」，「订阅管理」改为订阅端点与服务管理。
+- 订阅地址的 TLS 判定统一走 `cert.Usable`：只有存在真实证书时才以 HTTPS 提供服务并输出 `https://` 地址，否则明文 HTTP 并在面板提示，避免客户端拿到与监听协议不符的地址。
 
 ### 新增
 
 - 设备信息面板扩充：本机 IPv4 与 IPv6 分列显示，新增运行时间、CPU 型号与核心数、系统负载、内存与磁盘占用。
 - 任务/二维码页新增复制与鼠标控制：按 `C` 通过 OSC52 将整段日志复制到系统剪贴板，按 `M` 释放鼠标以便拖拽选择文本。
 - 新增 `--theme auto|dark|light`（环境变量 `EASYSB_THEME`）：启动时自动探测终端背景色，亮色背景自动切换为浅色配色，也可手动强制指定，避免在白色终端下界面几乎不可读。
-- 订阅支持多客户端：新增 mihomo / Clash Meta 完整配置（`mihomo.yaml`）与 v2rayN 分享链接文档（`v2ray.txt`），nginx 分别以 `/singbox/<uuid>`、`/mihomo/<uuid>`、`/v2ray/<uuid>` 端点提供，旧 `/subscribe` 路径保留。
-- 适配 OpenWrt 客户端：`passwall`、`passwall2`、`homeproxy` 使用 `/v2ray/<uuid>` 的 Base64 分享链接文档；`luci-app-nikki` 使用 mihomo 内核，订阅需要含顶层 `proxies`，使用 `/mihomo/<uuid>` 的 YAML 配置。
+- 订阅支持多客户端：mihomo / Clash Meta 完整配置（`mihomo.yaml`）与 v2rayN 分享链接文档由同一个 `/sub/<令牌>` 端点按 User-Agent 提供，可用 `?client=` 强制指定格式。
+- 适配 OpenWrt 客户端：`passwall`、`passwall2`、`homeproxy` 使用 Base64 分享链接文档；`luci-app-nikki` 使用 mihomo 内核，订阅需要含顶层 `proxies`，因此返回 mihomo YAML 配置。
 - 订阅二维码按客户端分别生成导入链接：sing-box 使用 `sing-box://import-remote-profile?url=`，mihomo 与 v2rayN 使用纯订阅地址（Clash 系客户端的扫码导入会把二维码内容直接当作订阅 URL 抓取，`clash://install-config?url=` 仅适用于系统级深链点击）。
 - 新增 `templates/config/mihomo.yaml` 可读样例，与内嵌模板 `internal/subscribe/mihomo.yaml` 保持同步。
 - mihomo 配置对齐完整桌面方案：新增 `external-controller`（`0.0.0.0:9090`）、`secret`、`external-ui`、`external-ui-url`（Zashboard）、`unified-delay`，补全 fake-ip DNS 与 `fake-ip-filter`，策略组改为 `负载均衡` / `自动选择` / `🌍选择代理节点`，规则新增 `GEOIP,LAN,DIRECT` 与 `GEOSITE,CN,DIRECT`。
@@ -25,7 +33,7 @@
 - 修复 OpenWrt 客户端订阅后节点丢失密码：homeproxy 会丢弃含百分号转义的 userinfo，标准 Base64 密码（`+` `/` `=`）会静默丢失密码。生成密码现改为纯字母数字（22 字符），v2rayN、passwall、passwall2 与 homeproxy 均可正常读取。
 - 修复部分解析器读取 VMess 节点加密方式为空的问题：分享链接在 `scy` 之外同时写出 `security`，兼容只读 `security` 的解析器。
 - 修复 homeproxy 报「请输入有效 uuid」：VLESS 分享链接保持带连字符的标准 UUID，不再输出 32 位紧凑形式（homeproxy 会用 LuCI 的 `uuid` 校验节点）。
-- 订阅界面按插件列出兼容客户端：`/mihomo/<uuid>` 标注 mihomo / Clash Meta / luci-app-nikki，`/v2ray/<uuid>` 标注 v2rayN / passwall / passwall2 / homeproxy，并分别说明 YAML 与 Base64 两种格式。
+- 订阅界面按插件列出兼容客户端：mihomo YAML 面向 mihomo / Clash Meta / luci-app-nikki，Base64 文档面向 v2rayN / passwall / passwall2 / homeproxy，并分别说明两种格式。
 - 修复主菜单选中行光标长度随行内描述长短变化的问题：选中条现在统一填充到面板内宽。
 - 修复分享链接生成失败：AnyTLS 与 Hysteria2 URI 在查询串前缺少 `/`，且密码未做百分号编码，导致客户端拒绝导入。
 - 修复 mihomo 二维码无法被 FlClash 等 Clash 系客户端识别：二维码改为纯订阅地址，不再包装 `clash://install-config?url=`。

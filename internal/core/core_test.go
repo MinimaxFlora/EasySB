@@ -122,17 +122,23 @@ func TestGeneratedConfigValidLive(t *testing.T) {
 	params := config.Params{
 		Enabled:       map[string]bool{},
 		Ports:         map[string]string{},
-		Password:      "test-password",
-		UUID:          strings.TrimSpace(uuidOut),
 		RealitySNI:    "apple.com",
 		RealityPriv:   priv,
 		RealitySID:    "abcd1234",
 		CertFullchain: certPath,
 		CertKey:       keyPath,
 	}
+	// One account that authenticates every protocol, carrying the UUID the core
+	// just generated.
+	uuid := strings.TrimSpace(uuidOut)
+	protocols := map[string]bool{}
+	cred := map[string]config.Credentials{}
 	for _, k := range state.Keys {
 		params.Enabled[k] = true
+		protocols[k] = true
+		cred[k] = config.Credentials{UUID: uuid, Password: "test-password"}
 	}
+	params.Members = []config.Member{{Name: "test-account", Protocols: protocols, Cred: cred}}
 	data, err := config.Build(params)
 	if err != nil {
 		t.Fatalf("config.Build: %v", err)

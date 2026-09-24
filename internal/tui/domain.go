@@ -9,10 +9,12 @@ import (
 
 	"github.com/MinimaxFlora/EasySB/internal/cert"
 	"github.com/MinimaxFlora/EasySB/internal/core"
+	"github.com/MinimaxFlora/EasySB/internal/deploy"
 	"github.com/MinimaxFlora/EasySB/internal/i18n"
 	"github.com/MinimaxFlora/EasySB/internal/netutil"
 	"github.com/MinimaxFlora/EasySB/internal/service"
 	"github.com/MinimaxFlora/EasySB/internal/state"
+	"github.com/MinimaxFlora/EasySB/internal/subd"
 	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
 )
 
@@ -90,13 +92,19 @@ func issueCertTask(lang i18n.Lang, email, domain string) taskFunc {
 		log(lang.T("domain_issued") + ": " + domain)
 
 		if cfg.NodeDeployed && core.Installed() {
-			if err := writeConfig(cfg); err != nil {
+			accounts, err := loadUsers()
+			if err != nil {
 				return err
 			}
-			if err := service.Do(ctx, "restart"); err != nil {
+			if err := deploy.ApplyStore(ctx, cfg, accounts); err != nil {
 				return err
 			}
 			log(lang.T("domain_applied"))
+			// The endpoint serves the certificate of the active domain, so the
+			// subscription service is restarted with it.
+			if err := subd.Do(ctx, "restart"); err != nil {
+				log(lang.T("sub_svc_failed") + ": " + err.Error())
+			}
 		}
 		return nil
 	}
@@ -155,14 +163,18 @@ func switchCert(a *App, domain string) tea.Cmd {
 		return nil
 	}
 	return a.startTask(lang.T("domain_switch"), func(ctx context.Context, log func(string)) error {
-		if err := writeConfig(cfg); err != nil {
+		accounts, err := loadUsers()
+		if err != nil {
 			return err
 		}
-		if err := service.Do(ctx, "restart"); err != nil {
+		if err := deploy.ApplyStore(ctx, cfg, accounts); err != nil {
 			return err
 		}
 		log(lang.T("domain_switched") + ": " + domain)
 		log(lang.T("domain_applied"))
+		if err := subd.Do(ctx, "restart"); err != nil {
+			log(lang.T("sub_svc_failed") + ": " + err.Error())
+		}
 		return nil
 	})
 }

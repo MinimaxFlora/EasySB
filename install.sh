@@ -19,7 +19,7 @@
 
 set -euo pipefail
 
-VERSION='3.0.0'
+VERSION='4.0.0'
 REPO='MinimaxFlora/EasySB'
 RELEASE_TAG="v${VERSION}"
 PREFIX="${PREFIX:-/usr/local}"

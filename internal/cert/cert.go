@@ -59,6 +59,16 @@ func pair(dir, domain string) (string, string, bool) {
 	return "", "", false
 }
 
+// Usable reports whether a real, publicly trusted certificate is installed for
+// the domain. The subscription URL the panel prints and the listener the
+// subscription service opens must answer this question the same way, or clients
+// are handed an address that speaks the other protocol, so both ask it here. A
+// self-signed pair does not count: clients reject it.
+func Usable(domain string) bool {
+	_, _, ok := Paths(domain)
+	return ok
+}
+
 // Domains lists cert domains present in the acme.sh directory.
 func Domains() []string {
 	entries, err := os.ReadDir(ACMEDir())

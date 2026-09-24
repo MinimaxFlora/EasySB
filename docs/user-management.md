@@ -52,7 +52,7 @@ Out of scope, deliberately:
 | D8 | Quota resets on the **natural month**; expiry **disables** the user. | Matches the monthly plan habit; data is kept so renewing restores access. | Rolling N-day windows; deleting expired users. |
 | D9 | A disabled, expired or over-quota user gets **403 with a plain-text reason**, and still receives the `Subscription-Userinfo` header. | The client can show "used up" or "expired" while never receiving a half-valid profile (an empty `proxies` list is rejected by Clash-family parsers and an empty sing-box profile fails to parse). | Serving an empty node list; serving the full profile and letting connections time out. |
 | D10 | Nodes are named `EasySB-<user name>`. | Distinguishes users and protocols inside a client. | A fixed `EasySB` name. |
-| D11 | The top-level menu entry `订阅管理` becomes `用户管理`. | The feature is no longer about subscription files. | Keeping both entries. |
+| D11 | `订阅管理` keeps the client-facing side (endpoint prefix, service unit, "show one account's subscription") and a new top-level entry `账号与流量` owns the account lifecycle. | The old entry was about subscription files, but the new feature is two things: a service the operator restarts and a per-account lifecycle. One merged screen would carry fifteen rows and mix node-level with account-level actions. | Renaming `订阅管理` to `用户管理` and moving everything into it (one overloaded screen, and the endpoint actions lose their obvious home). |
 | D12 | New state keys replace the old ones: `SUB_SERVE_PORT`, `SUB_SYNC_SECONDS` are added, `SUB_PORT` and `SUB_PATH` are removed. | The old keys described an nginx static site; keeping unread keys in the file is dead weight. | Keeping them for legacy readers. |
 
 ## Data model
@@ -154,27 +154,39 @@ User-Agent mapping (normalised to lowercase, first match wins):
 | Match | Format | Content type |
 | :--- | :--- | :--- |
 | `sing-box`, `sfa`, `sfm`, `sfi` | sing-box JSON profile | `application/json` |
-| `clash`, `mihomo`, `verge`, `orbit`, `flclash`, `stash`, `quantumult`, `shadowrocket` | mihomo YAML profile | `text/yaml; charset=utf-8` |
-| `v2ray`, `passwall`, `homeproxy`, `quantumult%20x`, `loon` | Base64 share-link document | `text/plain; charset=utf-8` |
-| anything else (browsers, `curl`, empty) | Base64 share-link document | `text/plain; charset=utf-8` |
+| `clash`, `mihomo`, `stash`, `meta` | mihomo YAML profile | `text/yaml; charset=utf-8` |
+| anything else (`v2rayN`, `passwall`, `passwall2`, `homeproxy`, `quantumult x`, `loon`, browsers, `curl`, empty) | Base64 share-link document | `text/plain; charset=utf-8` |
+
+The Clash row is deliberately short: every Clash-derived client sends a
+User-Agent that already contains `clash` or `mihomo` (`Clash Verge Rev`,
+`clash-verge`, `FlClash`, `ClashMeta`, `Clash Orbit`, `luci-app-nikki`), so the
+extra markers v3 needed are not carried, and the Base64 fallback covers the
+rest. `?client=singbox|mihomo|v2ray` overrides the guess.
 
 Response headers on every `/sub/<token>` response:
 
 ```
 Subscription-Userinfo: upload=<bytes>; download=<bytes>; total=<bytes>; expire=<unix seconds>
-profile-update-interval: 24
-Content-Disposition: attachment; filename*=UTF-8''<user name>
+Content-Disposition: attachment; filename="<token>.<json|yaml|txt>"
 Cache-Control: no-store
 ```
 
 `total=0` means unlimited and `expire=0` never, which is what Clash Orbit,
 Clash Verge Rev and v2rayN already understand. The document body stays
 byte-compatible with what the v3 templates produced, so no client needs a new
-parser.
+parser. The download name uses the token rather than the display name: it is
+ASCII by construction and needs no RFC 5987 encoding, and the display name would
+otherwise have to be quoted into a header.
 
-TLS: when `DOMAIN` is set and `cert.ResolveActive` resolves a pair, the service
-listens with that certificate; otherwise it serves plaintext HTTP and the panel
-shows a warning, because a plaintext document carries the user's credentials.
+`expire` is omitted entirely when the account never expires, because a client
+reads `expire=0` as "already expired".
+
+TLS: when `cert.Usable(DOMAIN)` finds a real acme.sh pair, the service listens
+with that certificate; otherwise it serves plaintext HTTP and the panel warns,
+because a plaintext document carries the user's credentials. `cert.Usable` is the
+single predicate behind both the URL the panel prints and the certificate the
+listener loads, so a client is never handed an `https://` address for a listener
+that speaks HTTP. A self-signed pair does not count: clients reject it.
 
 ## Accounting and enforcement
 
@@ -198,20 +210,39 @@ a threshold, not on every cycle.
 
 ## TUI
 
+Two root entries share the work instead of one renamed entry (this narrows D11):
+
 ```
-用户管理
-├── 用户列表        # bubbles table: 用户名 · 状态 · 用量/配额 · 到期 · 协议 · 令牌
-└── 新建用户
+订阅管理                  账号与流量
+├── 订阅链接              ├── 账号列表        # 一行一个账号：名称 · 状态 · 用量/配额
+├── 订阅二维码            │   └── <账号>      # 订阅地址 / 订阅二维码 / 分享链接
+├── 各协议分享链接        │                   # 账号名称 / 备注 / 流量限额 / 有效期
+├── 安装订阅服务          │                   # 可用协议 / 启用状态 / 重置已用流量
+├── 重启订阅服务          │                   # 重置订阅令牌 / 删除账号
+└── 订阅服务状态          └── 新建账号
 ```
 
-List keys: `↑/↓` move, `/` filter, `N` new, `Enter` edit, `D` delete,
-`Space` enable/disable, `R` reset traffic, `C` copy subscription URL, `Q` QR
-code, `Esc` back. The user detail screen shows the subscription URL, a QR code
-per client format and the per-protocol share links for that user only.
+The first three entries of `订阅管理` ask which account first
+(`accountPicker`), then print the endpoint prefix plus that account's token, so
+the URL the panel shows and the URL a client uses are the same string.
 
-`节点参数` loses its `UUID` and `密码` entries. The deploy flow ends by
-requiring the first user, because after deployment there is nothing to connect
-with until one exists.
+`订阅管理` keeps everything client-facing — the endpoint prefix, the service
+unit and the "show one account's subscription" entry points — while `账号与流量`
+owns the account lifecycle. Merging both into one screen would put fifteen rows
+in a single menu and mix a device-level action (restart the service) with
+per-account ones. Accounts are listed as ordinary menu rows rather than a
+bubbles table: the list reuses the menu renderer the rest of the panel already
+uses, so it inherits the fixed frame, the numeric shortcuts and the layout test,
+and every action lives in the account's own submenu instead of behind
+single-letter hotkeys.
+
+The account detail screen shows the subscription URL and QR code per client
+format and the per-protocol share links for that account only.
+
+`节点参数` loses its `UUID` and `密码` entries and gains `订阅端口` and
+`流量统计间隔`. The deploy flow warns when the node has no account, because
+after deployment there is nothing to connect with until one exists; it is a
+warning rather than a refusal so a pre-created node can still be deployed.
 
 ## Verified sing-box behaviour
 
@@ -238,7 +269,7 @@ Facts checked against the sing-box `testing` branch source, not assumed:
 | `internal/subscribe` | keeps share links and profile rendering, now parameterised by a user |
 | `internal/config` | renders multi-user inbounds and the `v2ray_api` block |
 | `internal/state` | adds `SUB_SERVE_PORT`, `SUB_SYNC_SECONDS`, drops `SUB_PORT`, `SUB_PATH` |
-| `internal/tui` | user list, user form, per-user links and QR, menu rename, deploy flow |
+| `internal/tui` | account list, account form, per-account links and QR, new root entry, deploy flow |
 | `internal/service` | installs and controls `easysb.service` in addition to `sing-box.service` |
 | `internal/uninstall` | removes the subscription service, user store and unit |
 | `internal/i18n` | new strings in both languages |

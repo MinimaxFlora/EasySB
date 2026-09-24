@@ -12,7 +12,7 @@ func TestGenerateMihomo(t *testing.T) {
 	cfg.Enabled[state.ProtoTUIC] = false
 	cfg.Enabled[state.ProtoAnyTLS] = false
 
-	data, err := GenerateMihomo(cfg)
+	data, err := GenerateMihomo(cfg, testAccount())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestGenerateMihomoAnyTLS(t *testing.T) {
 	} {
 		cfg.Enabled[tag] = false
 	}
-	data, err := GenerateMihomo(cfg)
+	data, err := GenerateMihomo(cfg, testAccount())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func TestGenerateMihomoRequiresHost(t *testing.T) {
 	cfg := testConfig()
 	cfg.Domain = ""
 	cfg.ServerIP = ""
-	if _, err := GenerateMihomo(cfg); err == nil {
+	if _, err := GenerateMihomo(cfg, testAccount()); err == nil {
 		t.Fatal("expected error without a server address")
 	}
 }
@@ -88,7 +88,7 @@ func TestGenerateMihomoRequiresHost(t *testing.T) {
 // the document root and make the profile unparseable.
 func TestGenerateMihomoTemplateActionsNotInComments(t *testing.T) {
 	cfg := testConfig()
-	data, err := GenerateMihomo(cfg)
+	data, err := GenerateMihomo(cfg, testAccount())
 	if err != nil {
 		t.Fatal(err)
 	}

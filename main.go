@@ -5,19 +5,28 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/MinimaxFlora/EasySB/internal/config"
+	"github.com/MinimaxFlora/EasySB/internal/deploy"
 	"github.com/MinimaxFlora/EasySB/internal/firewall"
 	"github.com/MinimaxFlora/EasySB/internal/i18n"
 	"github.com/MinimaxFlora/EasySB/internal/state"
+	"github.com/MinimaxFlora/EasySB/internal/stats"
+	"github.com/MinimaxFlora/EasySB/internal/subd"
+	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
 	"github.com/MinimaxFlora/EasySB/internal/tui"
+	"github.com/MinimaxFlora/EasySB/internal/user"
 )
 
 var (
-	version = "3.0.0"
+	version = "4.0.0"
 	commit  = ""
 )
 
@@ -38,6 +47,7 @@ func main() {
 	showVersion := flag.Bool("version", false, "显示版本 / show version")
 	render := flag.Bool("render", false, "渲染一次仪表盘后退出 / render once and exit")
 	applyFirewall := flag.Bool("apply-firewall", false, "应用端口跳跃防火墙规则 / apply port-hopping firewall rules")
+	serve := flag.Bool("serve", false, "运行订阅服务 / run the subscription service")
 	width := flag.Int("width", 100, "渲染宽度 / render width")
 	height := flag.Int("height", 36, "渲染高度 / render height")
 	flag.Parse()
@@ -49,6 +59,11 @@ func main() {
 
 	if *applyFirewall {
 		runApplyFirewall()
+		return
+	}
+
+	if *serve {
+		runSubscribeService()
 		return
 	}
 
@@ -65,6 +80,31 @@ func main() {
 
 	program := tea.NewProgram(app)
 	if _, err := program.Run(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+// runSubscribeService serves the subscription endpoint and enforces the account
+// policy. It backs the easysb service unit and is the only long-running mode of
+// this binary.
+func runSubscribeService() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	logf := func(line string) { fmt.Printf("%s %s\n", time.Now().Format(time.RFC3339), line) }
+	logf("EasySB subscription service " + versionLine())
+
+	options := subd.Options{
+		Version:      resolveVersion(),
+		AccountsPath: sysinfo.UsersFile,
+		Dial:         func() (stats.Counter, error) { return stats.Dial(config.StatsListen) },
+		Apply: func(ctx context.Context, cfg state.Config, accounts []user.User) error {
+			return deploy.Apply(ctx, cfg, accounts)
+		},
+		Log: logf,
+	}
+	if err := options.Run(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

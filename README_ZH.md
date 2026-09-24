@@ -129,13 +129,14 @@ sb --language E
 
 | 能力 | 说明 |
 | :--- | :--- |
-| 五协议部署 | 五协议共享一个 UUID 与一个密码，安装时统一生成，端口逐一编排 |
+| 五协议部署 | 端口逐一编排；节点只保留不属于账号的材料（Reality 密钥对），账号凭据归各账号所有 |
+| 账号与流量 | 每个账号在每个协议上拥有独立凭据，支持流量限额、有效期、可用协议、启用开关、重置流量与更换令牌；停用、过期、超额账号自动从内核配置中移除 |
 | 内核版本管理 | 正式版 stable 与 alpha 内测版随时安装、替换、卸载，替换保留现有配置 |
 | 版本面板 | 菜单顶部常驻脚本版本、本地内核、正式版与 alpha 版，并标注可更新状态 |
 | 设备面板 | 本机 IPv4/IPv6、交换空间、运行时间、CPU 核心数与负载、内存、磁盘、主机、内核、系统与时区 |
 | 复制链接 | 订阅与分享链接以卡片网格呈现在与主菜单同尺寸的固定面板里；订阅卡片显示订阅名（sing-box / mihomo / Base64 订阅）与格式说明，分享链接卡片显示协议名，均不显示主机或完整 URL。`↑`/`↓`/`←`/`→`（或数字键）选择，`Enter` 复制当前项，`C` 复制全部，`Q` 退出程序，`Esc` 返回；复制成功的卡片变成成功色，复制全部在页头提示。窗口变窄变矮时网格自动减少列数并截断内容，面板不溢出。日志页 `C` 复制日志（OSC52） |
 | 证书管理 | acme.sh `--standalone` 申请与续期，支持列表、切换激活、删除，自动处理 80 / 443 占用 |
-| 订阅生成 | 渲染 `templates/config/tun-fakeip.json`（sing-box）与 `templates/config/mihomo.yaml`（mihomo），输出订阅文件、二维码与分享链接，nginx 静态托管 |
+| 订阅生成 | 每个账号一个订阅地址（`/sub/<令牌>`），由内置订阅服务按客户端自动选择格式（`templates/config/tun-fakeip.json`、`templates/config/mihomo.yaml` 或 Base64 分享链接），并通过 `Subscription-Userinfo` 上报用量；面板提供二维码与各协议分享链接 |
 | 端口跳跃 | Hysteria2 默认 `2080:3000`，自动下发 iptables / nftables DNAT，并生成开机恢复单元 |
 | 服务管理 | 启动、停止、重启、查看状态与开机自启 |
 | 脚本自更新 | 从本仓库拉取最新脚本，校验通过后替换 |
@@ -148,15 +149,16 @@ sb --language E
 ```text
 主菜单
 ├── 内核管理     安装正式版 / 测试版、切换内核、更新当前通道
-├── 节点管理     一键部署、启用协议、参数设置（UUID / 密码 / 端口跳跃 / 端口 / 偷用域名 / Reality 密钥）
+├── 节点管理     一键部署、启用协议、参数设置（端口跳跃 / 端口 / 偷用域名 / Reality 密钥 / 订阅端口 / 统计间隔）
 ├── 域名管理     申请 / 续期、查看、切换激活、删除证书
-├── 订阅管理     重新生成、订阅链接、订阅二维码、各协议分享链接
+├── 订阅管理     某账号的订阅地址 / 二维码 / 分享链接（先选账号，再输出订阅地址前缀）、订阅服务的安装 / 重启 / 状态
+├── 账号与流量   账号列表、新建、重命名、备注、流量限额、有效期、可用协议、启用 / 停用、重置流量、更换令牌、删除
 ├── 服务管理     启动 / 停止 / 重启 / 状态 / 开机自启、端口跳跃规则
 ├── 版本更新     拉取最新 EasySB 发行版
 └── 卸载脚本     完整卸载 EasySB
 ```
 
-对应文件：服务端配置 `/etc/sing-box/config.json`，状态 `/etc/sing-box/easysb.conf`，快捷指令 `/usr/local/bin/sb`。
+对应文件：服务端配置 `/etc/sing-box/config.json`，状态 `/etc/sing-box/easysb.conf`，账号 `/etc/sing-box/easysb-users.json`，快捷指令 `/usr/local/bin/sb`。
 
 ---
 
@@ -169,6 +171,7 @@ sb --language E
 | `--theme auto\|dark\|light` | 覆盖终端背景检测（默认 `auto`，亮色终端自动换用浅色配色） |
 | `--apply-firewall` | 仅恢复端口跳跃规则，供开机单元调用 |
 | `--render --width N --height N` | 渲染一次仪表盘后退出（调试用） |
+| `--serve` | 运行订阅服务与流量统计循环（`easysb.service` 使用该模式） |
 | `--version` | 显示版本与构建短哈希 |
 | `--help` | 显示用法 |
 
@@ -196,25 +199,29 @@ sing-box check -c templates/vless-vision-reality/config_server.json
 
 ## 订阅
 
-订阅分别基于 `templates/config/tun-fakeip.json`（sing-box）与 `templates/config/mihomo.yaml`（mihomo / Clash Meta）渲染，生成后通过三种方式交付：
+每个账号只有一个订阅地址，其文档分别基于 `templates/config/tun-fakeip.json`（sing-box）与 `templates/config/mihomo.yaml`（mihomo / Clash Meta）渲染，其余客户端使用 Base64 分享链接文档。交付方式：
 
-1. 本地订阅文件，位于 `/etc/sing-box/subscribe/`。
-2. 终端二维码，安装 `qrencode` 后可直接扫码导入。
-3. 五类分享链接，覆盖主流客户端。
+1. 内置订阅服务（面板中的「安装订阅服务」写入 `easysb.service`，以 `easysb --serve` 运行）在 `SUB_SERVE_PORT`（默认 `8443`）上响应 `/sub/<令牌>`。
+2. 各客户端格式的终端二维码，安装 `qrencode` 后可直接扫码导入。
+3. 每个账号五类分享链接，覆盖主流客户端。
 
-同时由 nginx 以轻量静态站点形式托管，默认端口 `8443`。旧路径 `/subscribe` 提供 sing-box JSON 配置，各客户端另有带 UUID token 的独立端点：
+格式由 User-Agent 协商，因此一个地址通用：
 
-| 客户端 | 订阅端点 | 内容 |
-| :--- | :--- | :--- |
-| sing-box（SFM / SFA / SFI） | `/singbox/<uuid>` | JSON 配置 |
-| mihomo / Clash Meta / luci-app-nikki | `/mihomo/<uuid>` | 完整 YAML 配置 |
-| v2rayN / passwall / passwall2 / homeproxy | `/v2ray/<uuid>` | Base64 分享链接文档 |
+| 客户端 | 返回内容 |
+| :--- | :--- |
+| sing-box（SFM / SFA / SFI） | JSON 配置 |
+| mihomo / Clash Meta / luci-app-nikki | 完整 YAML 配置 |
+| v2rayN / passwall / passwall2 / homeproxy | Base64 分享链接文档 |
 
-`/v2ray/<uuid>` 文档即通用格式。v2rayN 可直接导入，OpenWrt 上的 `passwall`、`passwall2`、`homeproxy` 也会先对同一份文档做 Base64 解码再逐行解析，一个端点即可覆盖。`luci-app-nikki` 使用 mihomo 内核，订阅必须含顶层 `proxies`，因此走 `/mihomo/<uuid>` 这份 YAML 配置。
+Base64 文档即通用格式。v2rayN 可直接导入，OpenWrt 上的 `passwall`、`passwall2`、`homeproxy` 也会先对同一份文档做 Base64 解码再逐行解析。`luci-app-nikki` 使用 mihomo 内核，订阅必须含顶层 `proxies`，mihomo 配置已包含该字段。可用 `?client=singbox|mihomo|v2ray` 强制指定格式。
 
 所有分享链接都保留标准的带连字符 UUID。`homeproxy` 会用 LuCI 的 `uuid` 校验节点，32 位无连字符形式会被判为无效，因此不能输出紧凑形式。
 
-UUID 即访问 token，请将订阅地址视为机密。sing-box 二维码会包装为 `sing-box://import-remote-profile?url=...` 以便扫码导入；mihomo 与 v2rayN 二维码使用纯订阅地址，因为 Clash 系客户端扫码后会把内容直接当作订阅 URL 抓取（`clash://install-config?url=...` 仅在浏览器点击深链时有效）。sing-box 直接监听 WebSocket，nginx 只负责静态文件，不做反向代理。
+订阅地址中的账号令牌即访问密钥，同时也是内核侧统计计数所使用的用户名。要单独收回某人权限，只需更换该账号令牌或停用该账号，其他人不受影响；重命名账号不会改变令牌，客户端导入无需重做。
+
+每次响应都会带上 `Subscription-Userinfo: upload=<字节>; download=<字节>; total=<字节>; expire=<unix 秒>`，Clash Verge Rev、Clash Orbit 与 v2rayN 可直接显示剩余流量与剩余天数。停用、过期或超额的账号不会收到「没有节点」的半成品配置，而是收到 `403` 与纯文本原因，并在下一个统计周期从内核配置中移除。流量每 `SUB_SYNC_SECONDS`（默认 `300`）秒采样一次。
+
+域名下存在真实证书时由订阅服务自行终结 TLS；否则以明文 HTTP 提供服务并在面板中提示，因为订阅内容包含账号凭据。sing-box 二维码会包装为 `sing-box://import-remote-profile?url=...` 以便扫码导入；mihomo 与 v2rayN 二维码使用纯订阅地址，因为 Clash 系客户端扫码后会把内容直接当作订阅 URL 抓取（`clash://install-config?url=...` 仅在浏览器点击深链时有效）。sing-box 直接监听 WebSocket，订阅服务只负责下发配置，不做流量转发。
 
 mihomo 配置对齐完整桌面方案：`external-controller` 监听 `0.0.0.0:9090` 并带 `secret`，通过 `external-ui-url` 加载 Zashboard 面板，DNS 使用 fake-ip 与 `fake-ip-filter`，策略组包含 `load-balance` / `url-test` / `select`，分流规则包含 `GEOSITE` / `GEOIP`。请仅在局域网内可信设备上导入。
 
@@ -253,7 +260,7 @@ NAT 规则重启即失效，因此脚本会生成开机恢复单元：
 | 安装 | 按架构下载并校验，写入 `/etc/sing-box/sing-box` |
 | 替换 | 只更换二进制，保留 `/etc/sing-box/config.json` |
 | 卸载 | 停止服务并移除内核 |
-| 程序发行 | `.github/workflows/easysb-go-release.yml` 交叉编译各平台二进制，以 tag `v<VERSION>`（当前 `v3.0.0`）发布 |
+| 程序发行 | `.github/workflows/easysb-go-release.yml` 交叉编译各平台二进制，以 tag `v<VERSION>`（当前 `v4.0.0`）发布 |
 
 ---
 

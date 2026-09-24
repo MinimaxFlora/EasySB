@@ -49,11 +49,11 @@ Traps already hit in this repository. Each entry names the symptom and the fix.
   form makes homeproxy flag the node as an invalid UUID through its LuCI `uuid`
   validation, even though sing-box's gofrs parser accepts it. Keep the
   hyphenated form in every share link.
-- **`/v2ray/<uuid>` is the universal Base64 document.** v2rayN reads it
-  directly; passwall, passwall2 and homeproxy base64-decode it first. No
-  separate "base" format is needed. `luci-app-nikki` runs the mihomo core and
-  validates for a top-level `proxies` key, so it uses the `/mihomo/<uuid>` YAML
-  profile instead.
+- **The Base64 document is the universal format.** v2rayN reads it directly;
+  passwall, passwall2 and homeproxy base64-decode it first. No separate "base"
+  format is needed. `luci-app-nikki` runs the mihomo core and validates for a
+  top-level `proxies` key, so it needs the mihomo YAML profile — which the one
+  `/sub/<token>` endpoint serves once it sees a Clash-family User-Agent.
 - **Template actions in comments are still expanded.** `text/template` executes
   `{{ ... }}` even inside YAML/JSON comments. A `{{ .Proxies }}` in a mihomo
   header comment injects uncommented proxy entries above the document root and
@@ -67,15 +67,25 @@ Traps already hit in this repository. Each entry names the symptom and the fix.
 - **Comments are invalid JSON.** `templates/` files are JSONC for humans. Strip
   comments before handing anything to `sing-box check`.
 
-## nginx site
+## Subscription service
 
-- **`;` does not separate directives without whitespace.** Emitting
-  `default_type text/yaml; charset=utf-8;` makes nginx parse `charset=utf-8` as
-  the directive name and abort with `unknown directive "charset=utf-8"`. Quote
-  the whole value instead: `default_type "text/yaml; charset=utf-8";`.
-- **Surface the `[emerg]` line.** The last line of `nginx -t` output only says
-  the test failed; report the first `[emerg]`/`[error]` line
-  (`nginx.errorLine`) so the real cause is visible.
+- **A client that cannot parse the profile must not receive one.** Refusing an
+  expired or over-quota account with `403` and a plain-text reason keeps a
+  half-valid profile out of a client: an empty `proxies` list is rejected by the
+  Clash-family parsers, and an empty sing-box profile fails to parse outright.
+- **The URL and the listener agree on the scheme.** Both ask
+  `cert.Usable(DOMAIN)`, which requires a real acme.sh pair. Publishing an
+  `https://` URL for a listener that fell back to HTTP (no certificate, or only
+  the self-signed one, which clients reject) breaks every import.
+- **The core user name is the subscription token.** The V2Ray counter key is
+  `user>>><name>>>traffic>>>…`, so the name is also a `QueryStats` regex
+  pattern: a token is ASCII by construction and survives a rename, while a display
+  name may be Chinese or contain regex metacharacters. The inbound `users` arrays
+  and `stats.users` must always come from the same predicate
+  (`user.Store.Routable`), or an account is authenticated but never counted.
+- **Counters are deltas, never absolutes.** The counters live in the running core
+  and reset on restart, so the accounting loop persists differences and clamps a
+  negative delta to zero.
 
 ## State and templates
 

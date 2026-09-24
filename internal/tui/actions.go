@@ -6,18 +6,20 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/MinimaxFlora/EasySB/internal/cert"
 	"github.com/MinimaxFlora/EasySB/internal/config"
 	"github.com/MinimaxFlora/EasySB/internal/core"
+	"github.com/MinimaxFlora/EasySB/internal/deploy"
 	"github.com/MinimaxFlora/EasySB/internal/firewall"
+	"github.com/MinimaxFlora/EasySB/internal/i18n"
 	"github.com/MinimaxFlora/EasySB/internal/netutil"
 	"github.com/MinimaxFlora/EasySB/internal/secret"
 	"github.com/MinimaxFlora/EasySB/internal/service"
 	"github.com/MinimaxFlora/EasySB/internal/state"
-	"github.com/MinimaxFlora/EasySB/internal/subscribe"
+	"github.com/MinimaxFlora/EasySB/internal/subd"
 	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
 )
 
@@ -139,74 +141,6 @@ func hasServerConfig() bool {
 	return err == nil && info.Size() > 0
 }
 
-// renderConfig resolves the active certificate and renders config.json bytes.
-func renderConfig(cfg state.Config) ([]byte, error) {
-	pair, err := cert.ResolveActive(cfg.Domain)
-	if err != nil {
-		return nil, err
-	}
-	params := config.ParamsFromState(cfg)
-	params.CertFullchain = pair.Fullchain
-	params.CertKey = pair.Key
-	return config.Build(params)
-}
-
-// writeConfig renders and writes config.json to the working directory.
-func writeConfig(cfg state.Config) error {
-	data, err := renderConfig(cfg)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(sysinfo.WorkDir, 0o755); err != nil {
-		return err
-	}
-	return os.WriteFile(sysinfo.ConfigJSON, data, 0o644)
-}
-
-func showSubscriptionURL() actionFunc {
-	return func(a *App) tea.Cmd {
-		a.openSubscriptionLinks()
-		return nil
-	}
-}
-
-func showSubscriptionQR() actionFunc {
-	return func(a *App) tea.Cmd {
-		lang := a.lang
-		return a.startTaskQR(lang.T("sub_qr"), func(ctx context.Context, log func(string)) error {
-			cfg := state.Load()
-			if cfg.Host() == "" {
-				log(lang.T("sub_need_domain"))
-				return nil
-			}
-			for _, client := range subscribe.Clients {
-				payload := subscribe.ClientLink(cfg, client)
-				log(clientLabel(lang, client) + " · " + lang.T("sub_import_link") + ":")
-				log(payload)
-				log("")
-				qr, err := subscribe.QRCode(payload)
-				if err != nil {
-					log(lang.T("sub_no_qrencode"))
-					log("")
-					continue
-				}
-				for _, line := range strings.Split(qr, "\n") {
-					log(line)
-				}
-				log("")
-			}
-			return nil
-		})
-	}
-}
-
-func showShareLinks() actionFunc {
-	return func(a *App) tea.Cmd {
-		a.openShareLinks()
-		return nil
-	}
-}
-
 // deployNode generates config.json, installs the service unit and starts the
 // node, auto-filling any missing credentials.
 func deployNode() actionFunc {
@@ -221,14 +155,19 @@ func deployNode() actionFunc {
 				return errors.New(lang.T("node_all_disabled"))
 			}
 
-			if cfg.UUID == "" {
-				cfg.UUID = core.GenerateUUID(ctx)
-				log(lang.T("param_uuid_gen") + ": " + cfg.UUID)
+			store, err := loadUsers()
+			if err != nil {
+				return err
 			}
-			if cfg.Password == "" {
-				cfg.Password = secret.Password()
-				log(lang.T("param_pw_gen"))
+			if store.Len() == 0 {
+				// A node without accounts is legal and starts, but nobody can
+				// connect, so the operator is told rather than blocked.
+				log(lang.T("node_no_users"))
 			}
+
+			// The node keeps only the material no account owns: the Reality
+			// keypair and short id, which the server side needs to complete a
+			// handshake.
 			if cfg.Enabled[state.ProtoVLESSReality] {
 				if cfg.RealityPriv == "" || cfg.RealityPub == "" {
 					priv, pub, err := core.RealityKeypair(ctx)
@@ -258,7 +197,10 @@ func deployNode() actionFunc {
 				}
 			}
 
-			if err := writeConfig(cfg); err != nil {
+			// The configuration is rendered for the accounts that are usable
+			// right now, so a deploy also revokes whatever expired meanwhile.
+			now := time.Now()
+			if _, err := deploy.WriteServerConfig(cfg, store.Routable(now)); err != nil {
 				return err
 			}
 			log("write " + sysinfo.ConfigJSON)
@@ -268,6 +210,7 @@ func deployNode() actionFunc {
 			}
 			log(lang.T("node_config_ok"))
 
+			cfg.NodeDeployed = true
 			if err := cfg.Save(); err != nil {
 				return err
 			}
@@ -281,9 +224,10 @@ func deployNode() actionFunc {
 			if err := service.Do(ctx, "restart"); err != nil {
 				return err
 			}
-
-			cfg.NodeDeployed = true
-			if err := cfg.Save(); err != nil {
+			// The accounts in the core match the file again, which is what the
+			// accounting loop compares against.
+			store.MarkApplied(now)
+			if err := store.Save(); err != nil {
 				return err
 			}
 
@@ -294,12 +238,33 @@ func deployNode() actionFunc {
 			}
 
 			log(lang.T("node_deploy_done"))
-			if err := publishSubscription(ctx, cfg, log, lang); err != nil {
-				log(lang.T("sub_need_nginx") + ": " + err.Error())
+			// Every account's subscription URL points at this service, so it is
+			// installed together with the node.
+			if err := installEndpoint(ctx, cfg, log, lang); err != nil {
+				log(lang.T("sub_svc_failed") + ": " + err.Error())
 			}
 			return nil
 		})
 	}
+}
+
+// installEndpoint writes and starts the subscription service without wrapping it
+// in a task, so node deployment can report its failure as a warning instead of
+// failing the deploy.
+func installEndpoint(ctx context.Context, cfg state.Config, log func(string), lang i18n.Lang) error {
+	if err := subd.WriteUnit(); err != nil {
+		return err
+	}
+	log("write " + subd.UnitPath())
+	if err := subd.Do(ctx, "enable"); err != nil {
+		log("enable: " + err.Error())
+	}
+	if err := subd.Do(ctx, "restart"); err != nil {
+		return err
+	}
+	log(lang.T("sub_svc_started"))
+	logEndpoint(cfg, log, lang)
+	return nil
 }
 
 func runCmd(ctx context.Context, name string, args ...string) (string, error) {

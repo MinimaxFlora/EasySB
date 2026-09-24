@@ -7,6 +7,7 @@ import (
 	"text/template"
 
 	"github.com/MinimaxFlora/EasySB/internal/state"
+	"github.com/MinimaxFlora/EasySB/internal/user"
 )
 
 //go:embed mihomo.yaml
@@ -14,27 +15,15 @@ var mihomoTemplate string
 
 var mihomoTpl = template.Must(template.New("mihomo").Parse(mihomoTemplate))
 
-// mihomoLabels maps a client template tag to the display name used in the
-// generated profile.
-var mihomoLabels = map[string]string{
-	"anytls":               "AnyTLS",
-	"hysteria2":            "Hysteria2",
-	"tuic":                 "TUIC",
-	"vmess-ws-tls":         "VMess-WS-TLS",
-	"vless-vision-reality": "VLESS-Reality",
-}
-
-// GenerateMihomo renders a complete mihomo / Clash Meta profile from the state.
-func GenerateMihomo(cfg state.Config) ([]byte, error) {
+// GenerateMihomo renders a complete mihomo / Clash Meta profile for one
+// account.
+func GenerateMihomo(cfg state.Config, u user.User) ([]byte, error) {
 	if cfg.Host() == "" {
 		return nil, fmt.Errorf("no server address")
 	}
-	if cfg.UUID == "" {
-		return nil, fmt.Errorf("no uuid")
-	}
-	enabled := EnabledTags(cfg)
-	if len(enabled) == 0 {
-		return nil, fmt.Errorf("no protocol enabled")
+	active := ActiveTags(cfg, u)
+	if len(active) == 0 {
+		return nil, fmt.Errorf("no protocol enabled for %q", u.Name)
 	}
 	hop := cfg.HopRange
 	if hop == "" {
@@ -46,8 +35,8 @@ func GenerateMihomo(cfg state.Config) ([]byte, error) {
 	}
 
 	var proxies, nodes strings.Builder
-	for _, tag := range enabled {
-		name, block := mihomoProxy(tag, cfg, hop, rsni)
+	for _, tag := range active {
+		name, block := mihomoProxy(tag, cfg, u, hop, rsni)
 		if block == "" {
 			continue
 		}
@@ -66,9 +55,9 @@ func GenerateMihomo(cfg state.Config) ([]byte, error) {
 }
 
 // mihomoProxy renders one proxy entry and returns its name and YAML block.
-func mihomoProxy(tag string, cfg state.Config, hop, rsni string) (string, string) {
+func mihomoProxy(tag string, cfg state.Config, u user.User, hop, rsni string) (string, string) {
 	host := cfg.Host()
-	name := "EasySB-" + mihomoLabels[tag]
+	name := NodeName(u.Name, tag)
 	var b strings.Builder
 
 	switch tag {
@@ -77,7 +66,7 @@ func mihomoProxy(tag string, cfg state.Config, hop, rsni string) (string, string
 		b.WriteString("    type: anytls\n")
 		yamlKV(&b, "server", host)
 		yamlInt(&b, "port", portInt(cfg, state.ProtoAnyTLS))
-		yamlKV(&b, "password", cfg.Password)
+		yamlKV(&b, "password", u.Credential(state.ProtoAnyTLS).Password)
 		b.WriteString("    client-fingerprint: chrome\n")
 		b.WriteString("    udp: true\n")
 		b.WriteString("    idle-session-check-interval: 30\n")
@@ -92,7 +81,7 @@ func mihomoProxy(tag string, cfg state.Config, hop, rsni string) (string, string
 		yamlKV(&b, "server", host)
 		yamlInt(&b, "port", portInt(cfg, state.ProtoHysteria2))
 		yamlKV(&b, "ports", strings.ReplaceAll(hop, ":", "-"))
-		yamlKV(&b, "password", cfg.Password)
+		yamlKV(&b, "password", u.Credential(state.ProtoHysteria2).Password)
 		yamlKV(&b, "sni", host)
 		b.WriteString("    alpn:\n      - h3\n")
 		b.WriteString("    up: \"20 Mbps\"\n")
@@ -105,8 +94,8 @@ func mihomoProxy(tag string, cfg state.Config, hop, rsni string) (string, string
 		b.WriteString("    type: tuic\n")
 		yamlKV(&b, "server", host)
 		yamlInt(&b, "port", portInt(cfg, state.ProtoTUIC))
-		yamlKV(&b, "uuid", cfg.UUID)
-		yamlKV(&b, "password", cfg.Password)
+		yamlKV(&b, "uuid", u.Credential(state.ProtoTUIC).UUID)
+		yamlKV(&b, "password", u.Credential(state.ProtoTUIC).Password)
 		yamlKV(&b, "sni", host)
 		b.WriteString("    alpn:\n      - h3\n")
 		b.WriteString("    reduce-rtt: false\n")
@@ -118,7 +107,7 @@ func mihomoProxy(tag string, cfg state.Config, hop, rsni string) (string, string
 		b.WriteString("    type: vmess\n")
 		yamlKV(&b, "server", host)
 		yamlInt(&b, "port", portInt(cfg, state.ProtoVMessWSTLS))
-		yamlKV(&b, "uuid", cfg.UUID)
+		yamlKV(&b, "uuid", u.Credential(state.ProtoVMessWSTLS).UUID)
 		b.WriteString("    alterId: 0\n")
 		b.WriteString("    cipher: auto\n")
 		b.WriteString("    udp: true\n")
@@ -136,7 +125,7 @@ func mihomoProxy(tag string, cfg state.Config, hop, rsni string) (string, string
 		b.WriteString("    type: vless\n")
 		yamlKV(&b, "server", host)
 		yamlInt(&b, "port", portInt(cfg, state.ProtoVLESSReality))
-		yamlKV(&b, "uuid", cfg.UUID)
+		yamlKV(&b, "uuid", u.Credential(state.ProtoVLESSReality).UUID)
 		b.WriteString("    network: tcp\n")
 		b.WriteString("    udp: true\n")
 		b.WriteString("    tls: true\n")

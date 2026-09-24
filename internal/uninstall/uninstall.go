@@ -13,9 +13,9 @@ import (
 
 	"github.com/MinimaxFlora/EasySB/internal/cert"
 	"github.com/MinimaxFlora/EasySB/internal/firewall"
-	"github.com/MinimaxFlora/EasySB/internal/nginx"
 	"github.com/MinimaxFlora/EasySB/internal/service"
 	"github.com/MinimaxFlora/EasySB/internal/state"
+	"github.com/MinimaxFlora/EasySB/internal/subd"
 	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
 )
 
@@ -66,6 +66,16 @@ func Run(ctx context.Context, log func(string)) error {
 		log("disable: " + err.Error())
 	}
 
+	// The subscription service serves the accounts to the outside world, so it
+	// goes before the files it reads do.
+	log("$ service stop/disable " + sysinfo.SubServiceName)
+	if err := subd.Do(ctx, "stop"); err != nil {
+		log("stop subscription: " + err.Error())
+	}
+	if err := subd.Do(ctx, "disable"); err != nil {
+		log("disable subscription: " + err.Error())
+	}
+
 	if err := firewall.Remove(ctx, cfg); err != nil {
 		log("firewall remove: " + err.Error())
 	}
@@ -79,8 +89,8 @@ func Run(ctx context.Context, log func(string)) error {
 	if err := service.RemoveUnit(); err != nil {
 		log("service unit: " + err.Error())
 	}
-	if err := nginx.RemoveSite(); err != nil {
-		log("nginx site: " + err.Error())
+	if err := subd.RemoveUnit(); err != nil {
+		log("subscription unit: " + err.Error())
 	}
 
 	if err := os.RemoveAll(sysinfo.WorkDir); err != nil {

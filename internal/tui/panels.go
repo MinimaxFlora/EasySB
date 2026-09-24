@@ -276,8 +276,8 @@ func (a *App) nodeSection(width int) []string {
 	cfg := state.Load()
 	return []string{
 		a.sectionTitle("panel_node"),
-		a.kvRow(a.lang.T("node_uuid"), cfg.UUID, width),
-		a.kvRow(a.lang.T("node_password"), cfg.Password, width),
+		a.kvRow(a.lang.T("param_sub_port"), fmt.Sprint(cfg.SubPort()), width),
+		a.kvRow(a.lang.T("param_sub_sync"), cfg.SyncInterval().String(), width),
 		a.kvRow(a.lang.T("param_hop"), cfg.HopRange, width),
 		a.kvRow(a.lang.T("param_ports"), portSummary(cfg), width),
 		a.kvRow(a.lang.T("param_sni"), cfg.RealitySNI, width),

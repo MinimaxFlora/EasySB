@@ -3,30 +3,24 @@ package config
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/MinimaxFlora/EasySB/internal/state"
+	"github.com/MinimaxFlora/EasySB/internal/user"
 )
 
 func fullParams() Params {
 	c := state.Default()
-	c.UUID = "11111111-2222-3333-4444-555555555555"
-	c.Password = "secret"
 	c.RealityPriv = "priv"
 	c.RealityPub = "pub"
 	c.RealitySID = "abcd1234"
 	c.RealitySNI = "apple.com"
-	return Params{
-		Enabled:       c.Enabled,
-		Ports:         c.Ports,
-		Password:      c.Password,
-		UUID:          c.UUID,
-		HopRange:      c.HopRange,
-		RealitySNI:    c.RealitySNI,
-		RealityPriv:   c.RealityPriv,
-		RealitySID:    c.RealitySID,
-		CertFullchain: "/etc/sing-box/cert/fullchain.cer",
-		CertKey:       "/etc/sing-box/cert/private.key",
-	}
+	account := user.New("demo", state.Keys, time.Unix(0, 0))
+	p := ParamsFromState(c)
+	p.CertFullchain = "/etc/sing-box/cert/fullchain.cer"
+	p.CertKey = "/etc/sing-box/cert/private.key"
+	p.Members = MembersFrom([]user.User{account})
+	return p
 }
 
 type parsedConfig struct {
