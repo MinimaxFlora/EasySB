@@ -128,88 +128,11 @@ func (a *App) panelValue(v string) string {
 	return v
 }
 
-func (a *App) sectionTitle(key string) string {
-	return "  " + a.palette.Bold(a.palette.Primary, a.lang.T(key))
-}
-
-// overviewRows renders the runtime overview: service and node state, version
-// and core, then domain and listening ports.
-func (a *App) overviewRows(width int) []string {
-	s := a.status
-
-	corePlain := a.lang.T("ver_not_installed")
-	coreStyle := func(v string) string { return a.palette.Dim(v) }
-	if s.CoreVersion != "" {
-		corePlain = s.CoreVersion + " [" + a.lang.T(channelTagKey(s.CoreChannel)) + "]"
-		if s.CoreChannel == "alpha" {
-			coreStyle = func(v string) string { return a.palette.Colored(a.palette.Warn, v) }
-		} else {
-			coreStyle = func(v string) string { return a.palette.Colored(a.palette.OK, v) }
-		}
-	}
-
-	svcKey, svcOK, svcWarn, svcKnown := "state_unknown", false, false, false
-	switch s.Service {
-	case "running":
-		svcKey, svcOK, svcKnown = "state_running", true, true
-	case "stopped":
-		svcKey, svcWarn, svcKnown = "state_stopped", true, true
-	}
-	svcStyle := func(v string) string { return a.stateValue(v, svcOK, svcWarn, svcKnown) }
-
-	nodeKey, nodeOK, nodeKnown := "node_not_deployed", false, false
-	if s.Deployed {
-		nodeKey, nodeOK, nodeKnown = "node_deployed", true, true
-	}
-	nodeStyle := func(v string) string { return a.stateValue(v, nodeOK, false, nodeKnown) }
-
-	// The EasySB version shares the stable-channel green so the two version
-	// readouts look consistent.
-	versionStyle := func(v string) string { return a.palette.Colored(a.palette.OK, v) }
-
-	return []string{
-		a.styledTwoCols(width,
-			a.lang.T("ov_service"), "● "+a.lang.T(svcKey), svcStyle,
-			a.lang.T("ov_node"), "● "+a.lang.T(nodeKey), nodeStyle),
-		a.styledTwoCols(width, a.lang.T("ov_version"), a.scriptVersion, versionStyle,
-			a.lang.T("ov_core"), corePlain, coreStyle),
-		a.styledTwoCols(width, a.lang.T("status_domain"), a.panelValue(s.Domain), a.palette.Value,
-			a.lang.T("status_ports"), a.panelValue(enabledPorts(s.Ports)), a.palette.Value),
-	}
-}
-
 func channelTagKey(channel string) string {
 	if channel == "alpha" {
 		return "ver_channel_test"
 	}
 	return "ver_channel_stable"
-}
-
-// stateValue renders a colored status token, dimming it while the state is not
-// yet known.
-func (a *App) stateValue(text string, ok, warn, known bool) string {
-	if !known {
-		return a.palette.Dim(text)
-	}
-	return a.palette.State(text, ok, warn)
-}
-
-// deviceSection renders the host description: local IPv4/IPv6, swap and uptime,
-// CPU and load, memory and disk, then hostname, kernel, OS and timezone.
-func (a *App) deviceSection(width int) []string {
-	s := a.status
-	if !a.ready {
-		return []string{"  " + a.palette.Dim(a.lang.T("loading")+"…")}
-	}
-	return []string{
-		a.sectionTitle("panel_device"),
-		a.twoCols(width, "device_local_ipv4", s.LocalIPv4, "device_local_ipv6", s.LocalIPv6),
-		a.twoCols(width, "device_swap", usageCell(s.SwapTotal, s.SwapFree), "device_uptime", humanDuration(s.Uptime)),
-		a.twoCols(width, "device_cpu", a.cpuSummary(), "device_load", s.LoadAvg),
-		a.twoCols(width, "device_memory", usageCell(s.MemTotal, s.MemAvail), "device_disk", usageCell(s.DiskTotal, s.DiskFree)),
-		a.twoCols(width, "device_host", s.Hostname, "device_kernel", s.Kernel),
-		a.twoCols(width, "device_os", s.OS, "device_timezone", s.Timezone),
-	}
 }
 
 // cpuSummary renders the processor core count, e.g. "8 cores".
@@ -269,21 +192,6 @@ func humanDuration(d time.Duration) string {
 	}
 	fmt.Fprintf(&b, "%dm", mins)
 	return b.String()
-}
-
-// nodeSection renders every node parameter, shown inside node management.
-func (a *App) nodeSection(width int) []string {
-	cfg := state.Load()
-	return []string{
-		a.sectionTitle("panel_node"),
-		a.kvRow(a.lang.T("node_uuid"), cfg.UUID, width),
-		a.kvRow(a.lang.T("node_password"), cfg.Password, width),
-		a.kvRow(a.lang.T("param_hop"), cfg.HopRange, width),
-		a.kvRow(a.lang.T("param_ports"), portSummary(cfg), width),
-		a.kvRow(a.lang.T("param_sni"), cfg.RealitySNI, width),
-		a.kvRow(a.lang.T("node_privkey"), cfg.RealityPriv, width),
-		a.kvRow(a.lang.T("node_shortid"), cfg.RealitySID, width),
-	}
 }
 
 // styledTwoCols aligns two cells into a two-column row, truncating each value to

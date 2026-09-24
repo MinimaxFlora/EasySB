@@ -8,6 +8,11 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
+// Palette is one resolved set of colors. The first group predates the skins;
+// the second group is what the card-based screens use. TextFaint is tertiary
+// text (group headings, units), the two borders separate a resting card from a
+// focused one, Surface and SurfaceAlt fill tinted cards, and GradA/GradB are the
+// two stops of a header or meter gradient.
 type Palette struct {
 	Primary color.Color
 	Accent  color.Color
@@ -19,40 +24,26 @@ type Palette struct {
 	Border  color.Color
 	SelBg   color.Color
 	SelFg   color.Color
+
+	TextFaint    color.Color
+	BorderStrong color.Color
+	Surface      color.Color
+	SurfaceAlt   color.Color
+	GradA        color.Color
+	GradB        color.Color
+	// BarFg is the ink for text sitting on a filled Primary bar, which is how a
+	// skin with the HeaderBar card header draws its titles.
+	BarFg  color.Color
+	IsDark bool
 }
 
-func Dark() Palette {
-	return Palette{
-		Primary: lipgloss.Color("#22d3ee"),
-		Accent:  lipgloss.Color("#3b82f6"),
-		OK:      lipgloss.Color("#34d399"),
-		Warn:    lipgloss.Color("#fbbf24"),
-		Err:     lipgloss.Color("#f87171"),
-		Text:    lipgloss.Color("#e5e7eb"),
-		Muted:   lipgloss.Color("#7c8aa0"),
-		Border:  lipgloss.Color("#155e75"),
-		SelBg:   lipgloss.Color("#164e63"),
-		SelFg:   lipgloss.Color("#f0fdff"),
-	}
-}
+// Dark is the default skin's dark palette.
+func Dark() Palette { return DefaultSkin().Dark }
 
-// Light is the palette for terminals with a light background. The hues match
-// Dark, but every color is darkened so it stays readable on white: the dark
-// palette's pastel accents and near-white body text all but disappear there.
-func Light() Palette {
-	return Palette{
-		Primary: lipgloss.Color("#0e7490"),
-		Accent:  lipgloss.Color("#1d4ed8"),
-		OK:      lipgloss.Color("#047857"),
-		Warn:    lipgloss.Color("#b45309"),
-		Err:     lipgloss.Color("#b91c1c"),
-		Text:    lipgloss.Color("#1f2937"),
-		Muted:   lipgloss.Color("#4b5563"),
-		Border:  lipgloss.Color("#0891b2"),
-		SelBg:   lipgloss.Color("#bae6fd"),
-		SelFg:   lipgloss.Color("#0c4a6e"),
-	}
-}
+// Light is the default skin's light palette. The hues match Dark, but every
+// color is darkened so it stays readable on white: the dark palette's pastel
+// accents and near-white body text all but disappear there.
+func Light() Palette { return DefaultSkin().Light }
 
 func (p Palette) Bold(c color.Color, s string) string {
 	return lipgloss.NewStyle().Bold(true).Foreground(c).Render(s)

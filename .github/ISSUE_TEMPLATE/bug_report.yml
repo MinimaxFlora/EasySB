@@ -32,6 +32,7 @@ body:
         - EasySB 一键脚本
         - 配置模板
         - 订阅模板
+        - 账号与流量统计
         - CI 工作流
         - 文档
     validations:
@@ -66,7 +67,7 @@ body:
         - VLESS + Vision + Reality
         - VMess + WebSocket + TLS
         - 证书 / acme.sh
-        - 订阅 / nginx
+        - 订阅服务 / subd
     validations:
       required: false
 

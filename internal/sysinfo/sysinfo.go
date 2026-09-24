@@ -11,7 +11,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -25,11 +24,21 @@ const (
 	CertDir        = WorkDir + "/cert"
 	SelfSignedCert = CertDir + "/fullchain.cer"
 	SelfSignedKey  = CertDir + "/private.key"
-	SubscribeDir   = WorkDir + "/subscribe"
 	LogFile        = WorkDir + "/easysb.log"
 
 	SystemdUnit = "/etc/systemd/system/sing-box.service"
 	OpenRCUnit  = "/etc/init.d/sing-box"
+
+	// UsersFile holds the accounts that replaced the node-wide credential.
+	UsersFile = WorkDir + "/easysb-users.json"
+	// SubLogFile collects the subscription service log.
+	SubLogFile = WorkDir + "/easysb-sub.log"
+
+	// The subscription service is its own unit so the panel can restart it
+	// without touching the core.
+	SubServiceName = "easysb"
+	SubSystemdUnit = "/etc/systemd/system/easysb.service"
+	SubOpenRCUnit  = "/etc/init.d/easysb"
 )
 
 type Status struct {
@@ -39,8 +48,8 @@ type Status struct {
 	Service       string
 	Autostart     string
 	Domain        string
-	UUID          string
-	Password      string
+	SubPort       int
+	SubSyncSecs   int
 	Hop           string
 	Ports         []PortInfo
 	Deployed      bool
@@ -102,8 +111,8 @@ func Collect(scriptVersion string) Status {
 	if st.Domain == "" {
 		st.Domain = state["CERT_DOMAIN"]
 	}
-	st.UUID = state["UUID"]
-	st.Password = state["PASSWORD"]
+	st.SubPort, _ = strconv.Atoi(state["SUB_SERVE_PORT"])
+	st.SubSyncSecs, _ = strconv.Atoi(state["SUB_SYNC_SECONDS"])
 	st.Hop = state["HY2_HOP_RANGE"]
 
 	inbounds := readInbounds()
@@ -264,14 +273,6 @@ func parseKB(s string) uint64 {
 		return 0
 	}
 	return n * 1024
-}
-
-func diskUsage(path string) (uint64, uint64) {
-	var st syscall.Statfs_t
-	if err := syscall.Statfs(path, &st); err != nil {
-		return 0, 0
-	}
-	return st.Blocks * uint64(st.Bsize), st.Bavail * uint64(st.Bsize)
 }
 
 func uptime() time.Duration {

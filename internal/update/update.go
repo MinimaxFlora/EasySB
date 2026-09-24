@@ -10,6 +10,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/MinimaxFlora/EasySB/internal/core"
 )
@@ -76,8 +77,9 @@ func RemoteVersion(ctx context.Context) (string, error) {
 
 // Apply downloads the current architecture binary and replaces the running
 // executable. It returns false when the installed binary already matches the
-// remote build. current is the running EasySB version string.
-func Apply(ctx context.Context, current string, log func(string)) (bool, string, error) {
+// remote build. current is the running EasySB version string. The binary download
+// reports itself to progress, which the panel turns into a bar.
+func Apply(ctx context.Context, current string, log func(string), progress core.Progress) (bool, string, error) {
 	remote, err := RemoteVersion(ctx)
 	if err != nil {
 		log("cannot read remote version: " + err.Error())
@@ -107,7 +109,7 @@ func Apply(ctx context.Context, current string, log func(string)) (bool, string,
 	tmp := exe + ".new"
 
 	log("GET " + url)
-	if err := core.Download(ctx, url, tmp); err != nil {
+	if err := core.DownloadWithProgress(ctx, url, tmp, 5*time.Minute, progress); err != nil {
 		return false, remote, err
 	}
 	if err := os.Chmod(tmp, 0o755); err != nil {

@@ -47,8 +47,14 @@ func buildRoot() *menu {
 			{id: "kernel", label: tk("kernel_title"), desc: tk("menu_kernel"), icon: func(s icons.Set) string { return s.Core }, sub: buildKernel()},
 			{id: "node", label: tk("node_title"), desc: tk("menu_node"), icon: func(s icons.Set) string { return s.Rocket }, sub: buildNode()},
 			{id: "domain", label: tk("domain_title"), desc: tk("menu_domain"), icon: func(s icons.Set) string { return s.Globe }, sub: buildDomain()},
-			{id: "subscribe", label: tk("sub_title"), desc: tk("menu_subscribe"), icon: func(s icons.Set) string { return s.Link }, sub: buildSubscribe()},
+			{id: "subscribe", label: tk("sub_title"), desc: tk("menu_subscribe"), icon: func(s icons.Set) string { return s.Subscribe }, sub: buildSubscribe()},
+			{id: "users", label: tk("users_title"), desc: tk("menu_users"), icon: func(s icons.Set) string { return s.Account }, action: enterUsers()},
 			{id: "service", label: tk("svc_title"), desc: tk("menu_service"), icon: func(s icons.Set) string { return s.Service }, sub: buildService()},
+			iconLeaf("system", "menu_system", "menu_system_desc", func(s icons.Set) string { return s.System }, func(a *App) tea.Cmd {
+				a.openSystem()
+				return nil
+			}),
+			{id: "bbr", label: tk("bbr_title"), desc: tk("menu_bbr"), icon: func(s icons.Set) string { return s.Speed }, sub: buildBBR()},
 			iconLeaf("script-update", "menu_script_update", "menu_script_update_desc", func(s icons.Set) string { return s.Refresh }, scriptUpdate()),
 			iconLeaf("uninstall", "menu_uninstall", "menu_uninstall_desc", func(s icons.Set) string { return s.Trash }, uninstallAction()),
 		},
@@ -110,13 +116,13 @@ func buildParams() *menu {
 		id:    "params",
 		title: tk("node_params"),
 		nodes: []*node{
-			leaf("param-uuid", "param_uuid", "desc_param_uuid", editUUID()),
-			leaf("param-password", "param_password", "desc_param_password", editPassword()),
 			leaf("param-hop", "param_hop", "desc_param_hop", editHop()),
 			{id: "param-ports", label: tk("param_ports"), desc: tk("desc_param_ports"), sub: buildPorts()},
 			{id: "param-sni", label: tk("param_sni"), desc: tk("desc_param_sni"), sub: buildSNI()},
 			leaf("param-privkey", "param_privkey", "desc_param_privkey", regenRealityKeys()),
 			leaf("param-shortid", "param_shortid", "desc_param_shortid", regenShortID()),
+			leaf("param-sub-port", "param_sub_port", "desc_param_sub_port", editSubPort()),
+			leaf("param-sub-sync", "param_sub_sync", "desc_param_sub_sync", editSubSync()),
 		},
 	}
 }
@@ -160,6 +166,8 @@ func buildDomain() *menu {
 		title: tk("domain_title"),
 		nodes: []*node{
 			leaf("domain-issue", "domain_issue", "desc_domain_issue", issueCertAction()),
+			leaf("domain-renew", "domain_renew", "desc_domain_renew", renewCertAction()),
+			leaf("domain-timer", "domain_timer", "desc_domain_timer", renewTimerAction()),
 			leaf("domain-list", "domain_list", "desc_domain_list", listCerts()),
 			leaf("domain-switch", "domain_switch", "desc_domain_switch", switchCertAction()),
 			leaf("domain-remove", "domain_remove", "desc_domain_remove", removeCertAction()),
@@ -172,10 +180,12 @@ func buildSubscribe() *menu {
 		id:    "subscribe",
 		title: tk("sub_title"),
 		nodes: []*node{
-			leaf("sub-regen", "sub_regen", "desc_sub_regen", regenerateSubscription()),
-			leaf("sub-url", "sub_url", "desc_sub_url", showSubscriptionURL()),
-			leaf("sub-qr", "sub_qr", "desc_sub_qr", showSubscriptionQR()),
-			leaf("sub-links", "sub_links", "desc_sub_links", showShareLinks()),
+			leaf("sub-url", "sub_url", "desc_sub_url", pickAccount("sub_url", showUserSubscription)),
+			leaf("sub-qr", "sub_qr", "desc_sub_qr", pickAccount("sub_qr", showUserQR)),
+			leaf("sub-links", "sub_links", "desc_sub_links", pickAccount("sub_links", showUserLinks)),
+			leaf("sub-svc-install", "sub_svc_install", "desc_sub_svc_install", installSubscriptionService()),
+			leaf("sub-svc-restart", "sub_svc_restart", "desc_sub_svc_restart", restartSubscriptionService()),
+			leaf("sub-svc-status", "sub_svc_status", "desc_sub_svc_status", subscriptionServiceStatus()),
 		},
 	}
 }

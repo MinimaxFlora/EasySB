@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/MinimaxFlora/EasySB/internal/state"
+	"github.com/MinimaxFlora/EasySB/internal/user"
 )
 
 func TestStripJSONC(t *testing.T) {
@@ -25,20 +27,35 @@ func TestStripJSONC(t *testing.T) {
 func testConfig() state.Config {
 	cfg := state.Default()
 	cfg.Domain = "node.example.com"
-	cfg.UUID = "11111111-2222-3333-4444-555555555555"
-	cfg.Password = "secret"
 	cfg.RealityPub = "PUBKEY"
 	cfg.RealitySID = "abcd1234"
 	cfg.RealitySNI = "apple.com"
 	return cfg
 }
 
+// testAccount is the subscriber the generated documents are rendered for. The
+// UUIDs are pinned so the assertions stay readable; the panel always ships
+// generated ones.
+func testAccount() user.User {
+	account := user.New("demo", state.Keys, time.Unix(0, 0))
+	for key, cred := range account.Credentials {
+		if cred.UUID != "" {
+			cred.UUID = testUUID
+		}
+		account.Credentials[key] = cred
+	}
+	return account
+}
+
+// testUUID is the canonical UUID every rendered credential carries.
+const testUUID = "11111111-2222-3333-4444-555555555555"
+
 func TestGenerateIncludesOnlyEnabled(t *testing.T) {
 	cfg := testConfig()
 	cfg.Enabled[state.ProtoTUIC] = false
 	cfg.Enabled[state.ProtoAnyTLS] = false
 
-	data, err := Generate(cfg)
+	data, err := Generate(cfg, testAccount())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,10 +90,13 @@ func TestGenerateIncludesOnlyEnabled(t *testing.T) {
 			proxyList = ob.Outbounds
 		}
 	}
-	if tags["tuic"] || tags["anytls"] {
+	// Every node is named after the account and the protocol, so a client that
+	// imports several accounts can tell them apart.
+	name := func(tag string) string { return NodeName("demo", tag) }
+	if tags[name("tuic")] || tags[name("anytls")] {
 		t.Fatalf("disabled protocols leaked into subscription: %v", tags)
 	}
-	if !tags["hysteria2"] || !tags["vmess-ws-tls"] || !tags["vless-vision-reality"] {
+	if !tags[name("hysteria2")] || !tags[name("vmess-ws-tls")] || !tags[name("vless-vision-reality")] {
 		t.Fatalf("enabled protocols missing: %v", tags)
 	}
 	if len(proxyList) == 0 || proxyList[0] != "auto" {
@@ -84,7 +104,7 @@ func TestGenerateIncludesOnlyEnabled(t *testing.T) {
 	}
 
 	for _, ob := range doc.Outbounds {
-		if ob.Tag == "vless-vision-reality" {
+		if ob.Tag == name("vless-vision-reality") {
 			if ob.Server != "node.example.com" || ob.ServerP.String() != "8003" {
 				t.Fatalf("vless server fields wrong: %+v", ob)
 			}
@@ -92,7 +112,7 @@ func TestGenerateIncludesOnlyEnabled(t *testing.T) {
 				t.Fatalf("reality fields wrong: %+v", ob.TLS)
 			}
 		}
-		if ob.Tag == "hysteria2" {
+		if ob.Tag == name("hysteria2") {
 			if len(ob.Ports) != 1 || ob.Ports[0] != state.DefaultHopRange {
 				t.Fatalf("hop range wrong: %v", ob.Ports)
 			}
@@ -101,7 +121,7 @@ func TestGenerateIncludesOnlyEnabled(t *testing.T) {
 }
 
 func TestGeneratePreservesTemplateOrder(t *testing.T) {
-	data, err := Generate(testConfig())
+	data, err := Generate(testConfig(), testAccount())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +161,7 @@ func TestGenerateRequiresHost(t *testing.T) {
 	cfg := testConfig()
 	cfg.Domain = ""
 	cfg.ServerIP = ""
-	if _, err := Generate(cfg); err == nil {
+	if _, err := Generate(cfg, testAccount()); err == nil {
 		t.Fatal("expected error without a server address")
 	}
 }

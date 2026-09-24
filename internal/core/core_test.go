@@ -5,10 +5,15 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,6 +21,57 @@ import (
 	"github.com/MinimaxFlora/EasySB/internal/config"
 	"github.com/MinimaxFlora/EasySB/internal/state"
 )
+
+// TestDownloadReportsProgress covers the readings the panel draws its download bar
+// from: a local server so the test stays offline, and the readings have to end on the
+// whole file rather than a tick short of it.
+func TestDownloadReportsProgress(t *testing.T) {
+	body := bytes.Repeat([]byte("x"), 1<<20)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+		if _, err := w.Write(body); err != nil {
+			t.Errorf("write: %v", err)
+		}
+	}))
+	defer srv.Close()
+
+	dest := filepath.Join(t.TempDir(), "sing-box.tar.gz")
+	var mu sync.Mutex
+	var readings []int64
+	var label string
+	var total int64
+	err := DownloadWithProgress(context.Background(), srv.URL+"/sing-box-1.14.1-linux-amd64.tar.gz", dest, time.Minute,
+		func(l string, done, size int64) {
+			mu.Lock()
+			defer mu.Unlock()
+			readings = append(readings, done)
+			label, total = l, size
+		})
+	if err != nil {
+		t.Fatalf("DownloadWithProgress: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(readings) == 0 {
+		t.Fatal("no progress readings")
+	}
+	if last := readings[len(readings)-1]; last != int64(len(body)) {
+		t.Fatalf("last reading is %d bytes, want %d", last, len(body))
+	}
+	if total != int64(len(body)) {
+		t.Fatalf("announced total is %d, want %d", total, len(body))
+	}
+	if label != "sing-box-1.14.1-linux-amd64.tar.gz" {
+		t.Fatalf("label is %q, want the file name", label)
+	}
+	got, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if !bytes.Equal(got, body) {
+		t.Fatalf("downloaded %d bytes, want %d", len(got), len(body))
+	}
+}
 
 // TestFetchReleasesLive hits the real GitHub API. It is opt-in so the default
 // test run stays offline: set EASYSB_LIVE=1 to enable it.
@@ -122,17 +178,23 @@ func TestGeneratedConfigValidLive(t *testing.T) {
 	params := config.Params{
 		Enabled:       map[string]bool{},
 		Ports:         map[string]string{},
-		Password:      "test-password",
-		UUID:          strings.TrimSpace(uuidOut),
 		RealitySNI:    "apple.com",
 		RealityPriv:   priv,
 		RealitySID:    "abcd1234",
 		CertFullchain: certPath,
 		CertKey:       keyPath,
 	}
+	// One account that authenticates every protocol, carrying the UUID the core
+	// just generated.
+	uuid := strings.TrimSpace(uuidOut)
+	protocols := map[string]bool{}
+	cred := map[string]config.Credentials{}
 	for _, k := range state.Keys {
 		params.Enabled[k] = true
+		protocols[k] = true
+		cred[k] = config.Credentials{UUID: uuid, Password: "test-password"}
 	}
+	params.Members = []config.Member{{Name: "test-account", Protocols: protocols, Cred: cred}}
 	data, err := config.Build(params)
 	if err != nil {
 		t.Fatalf("config.Build: %v", err)
@@ -236,7 +298,9 @@ func TestExtractBinary(t *testing.T) {
 		t.Fatalf("binary content = %q", data)
 	}
 	info, _ := os.Stat(dest)
-	if info.Mode().Perm()&0o111 == 0 {
+	// Windows reports no permission bits at all, so the execute bit only means
+	// something on the platforms the core actually runs on.
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0o111 == 0 {
 		t.Fatalf("binary is not executable: %v", info.Mode())
 	}
 }

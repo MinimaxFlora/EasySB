@@ -7,6 +7,9 @@
   (`anytls`, `hysteria2`, `tuic`, `vmess-websocket-tls`,
   `vless-vision-reality`, `config`).
 - Go packages stay lowercase single words (`state`, `subscribe`, `sysinfo`).
+  Interfaces and stores are named after what they model, not after the UI
+  screen: the account model is `internal/user` with a `Store`, while the panel
+  labels it 「账号与流量」.
 - Protocol display names keep their brand casing in prose (`AnyTLS`,
   `Hysteria2`, `TUIC v5`), while protocol keys and paths are lowercase.
 

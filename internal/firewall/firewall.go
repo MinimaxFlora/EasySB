@@ -116,8 +116,8 @@ func OpenPorts(ctx context.Context, cfg state.Config, log func(string)) {
 	if cfg.Enabled[state.ProtoHysteria2] {
 		udp = append(udp, cfg.Ports[state.ProtoHysteria2])
 	}
-	if cfg.SubPort != "" {
-		tcp = append(tcp, cfg.SubPort)
+	if cfg.SubServePort > 0 {
+		tcp = append(tcp, fmt.Sprint(cfg.SubServePort))
 	}
 	if len(tcp) == 0 && len(udp) == 0 {
 		return

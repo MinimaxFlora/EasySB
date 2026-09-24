@@ -3,15 +3,12 @@
 #  EasySB Go 版一键安装脚本 / one-click installer for the Go build
 #  项目地址 Homepage : https://github.com/MinimaxFlora/EasySB
 # ==============================================================================
-#  做三件事 / does three things:
+#  做两件事 / does two things:
 #    1. 检测并安装运行与构建依赖（curl / openssl / jq / qrencode / tar / Go）
 #    2. 安装 EasySB 二进制到 /usr/local/bin，并创建 sb 快捷指令
-#    3. 在本地图形环境下安装 Nerd Font（终端字体随客户端决定，服务器无需安装）
 #
 #  用法 / Usage:
 #    bash install.sh                # 安装或升级
-#    bash install.sh --no-font      # 跳过 Nerd Font 安装
-#    bash install.sh --font-only    # 只安装 Nerd Font
 #    bash install.sh --from-source  # 强制从源码构建
 #    bash install.sh --binary PATH  # 使用本地已编译好的二进制
 #    bash install.sh --lang E       # 英文输出
@@ -19,17 +16,13 @@
 
 set -euo pipefail
 
-VERSION='3.0.0'
+VERSION='4.2.2'
 REPO='MinimaxFlora/EasySB'
 RELEASE_TAG="v${VERSION}"
 PREFIX="${PREFIX:-/usr/local}"
 BIN_NAME='easysb'
-FONT_NAME='JetBrainsMono'
-FONT_DIR="${HOME}/.local/share/fonts/${FONT_NAME}NerdFont"
 
 LANG_MODE='C'
-DO_FONT=1
-FONT_ONLY=0
 FROM_SOURCE=0
 LOCAL_BINARY=''
 SUDO=''
@@ -71,11 +64,15 @@ usage() {
 EasySB install.sh
 
   --lang C|E        输出语言 / output language
-  --no-font         跳过 Nerd Font 安装 / skip Nerd Font install
-  --font-only       只安装 Nerd Font / install Nerd Font only
   --from-source     强制从源码构建 / force build from source
   --binary PATH     使用指定二进制 / use a local binary
   -h, --help        显示帮助 / show this help
+
+面板只用终端自带字形，不再安装 Nerd Font；为兼容旧脚本，--no-font 与
+--font-only 仍被接受，但不再做任何事。
+The panel only uses glyphs shipped with terminal fonts and no longer installs
+a Nerd Font; --no-font and --font-only are still accepted for old scripts but
+no longer do anything.
 EOF
 }
 
@@ -83,8 +80,7 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --lang) LANG_MODE="${2:-C}"; shift 2 ;;
     --lang=*) LANG_MODE="${1#*=}"; shift ;;
-    --no-font) DO_FONT=0; shift ;;
-    --font-only) FONT_ONLY=1; shift ;;
+    --no-font|--font-only) shift ;;
     --from-source) FROM_SOURCE=1; shift ;;
     --binary) LOCAL_BINARY="${2:-}"; shift 2 ;;
     --binary=*) LOCAL_BINARY="${1#*=}"; shift ;;
@@ -185,8 +181,12 @@ pkg_install() {
 # 运行时依赖 / Runtime dependencies
 ensure_runtime_deps() {
   log "$(say '检查运行时依赖' 'Checking runtime dependencies')"
+  # socat: acme.sh 的 standalone 验证需要一个能监听 80 端口的工具，缺它时申请证书只会
+  # 在最后一步报错。若仓库里没有 socat，面板也会在申请前直接提示。
+  # socat: acme.sh standalone validation needs a tool that can listen on port 80;
+  # without it issuance only fails at the last step. The panel also checks first.
   local missing=()
-  for cmd in curl openssl jq tar gzip; do
+  for cmd in curl openssl jq tar gzip socat; do
     command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
   done
 
@@ -195,7 +195,7 @@ ensure_runtime_deps() {
     local pkgs=("${missing[@]}")
     pkg_install "${pkgs[@]}" || warn "$(say '部分依赖安装失败，请手动安装' 'some packages failed, install manually')"
   fi
-  for cmd in curl openssl jq tar gzip; do
+  for cmd in curl openssl jq tar gzip socat; do
     command -v "$cmd" >/dev/null 2>&1 && ok "$cmd" || warn "$cmd $(say '缺失' 'missing')"
   done
 
@@ -303,68 +303,6 @@ install_binary() {
 }
 
 # ------------------------------------------------------------------------------
-# Nerd Font 安装 / Nerd Font installation
-# ------------------------------------------------------------------------------
-# 字体在用户的终端上生效，服务器通常无需安装；仅当存在本地图形/字体环境时安装。
-# Fonts live on the user's terminal; servers rarely need them. Install only when
-# a local desktop/font environment is detected.
-_render_font_note() {
-  say "提示：Nerd Font 需要安装在你的本地终端，而不是服务器" \
-      "Note: Nerd Font belongs to your local terminal, not the server"
-  dim "$(say '请从 https://www.nerdfonts.com/fonts 下载并启用' 'Download and enable it from https://www.nerdfonts.com/fonts')"
-  dim "$(say '也可用 EASYSB_ICONS=0 或 --icons off 关闭图标' 'Or disable icons with EASYSB_ICONS=0 / --icons off')"
-}
-
-install_nerd_font() {
-  if ! command -v fc-cache >/dev/null 2>&1; then
-    if printf '%s' "${XDG_CURRENT_DESKTOP:-}${DISPLAY:-}${WAYLAND_DISPLAY:-}" | grep -q .; then
-      case "$PKG_MGR" in
-        apt)    pkg_install fontconfig || true ;;
-        dnf|yum) pkg_install fontconfig || true ;;
-        apk)    pkg_install fontconfig || true ;;
-        pacman) pkg_install fontconfig || true ;;
-        zypper) pkg_install fontconfig || true ;;
-      esac
-    fi
-  fi
-
-  if ! command -v fc-cache >/dev/null 2>&1; then
-    dim "$(say '未检测到 fontconfig（无桌面环境），跳过字体安装' 'no fontconfig (headless), skipping font install')"
-    _render_font_note
-    return 0
-  fi
-
-  if fc-list 2>/dev/null | grep -qi "${FONT_NAME} Nerd"; then
-    ok "$(say '已安装' 'already installed'): ${FONT_NAME} Nerd Font"
-    return 0
-  fi
-
-  local url="https://github.com/ryanoasis/nerd-fonts/releases/latest/download/${FONT_NAME}.zip"
-  local tmp
-  tmp="$(mktemp -d)"
-  log "$(say '安装 Nerd Font' 'Installing Nerd Font'): ${FONT_NAME}"
-
-  mkdir -p "$FONT_DIR"
-  if curl -fsSL --connect-timeout 20 -o "$tmp/font.zip" "$url"; then
-    if command -v unzip >/dev/null 2>&1 || pkg_install unzip >/dev/null 2>&1; then
-      if unzip -oq "$tmp/font.zip" -d "$FONT_DIR" -x '*.txt' '*.md' 2>/dev/null; then
-        fc-cache -f "$FONT_DIR" >/dev/null 2>&1 || true
-        ok "$(say 'Nerd Font 已安装到' 'Nerd Font installed to') $FONT_DIR"
-        dim "$(say '请在终端设置中把字体切换为' 'Set your terminal font to') ${FONT_NAME} Nerd Font"
-      else
-        warn "$(say '解压字体失败' 'failed to extract font')"
-      fi
-    else
-      warn "$(say '缺少 unzip' 'unzip missing')"
-    fi
-  else
-    warn "$(say '下载字体失败' 'failed to download font')"
-  fi
-  rm -rf "$tmp"
-  _render_font_note
-}
-
-# ------------------------------------------------------------------------------
 # 主流程 / Main
 # ------------------------------------------------------------------------------
 main() {
@@ -373,14 +311,8 @@ main() {
   sync_version_from_tree
   log "EasySB installer · ${OS_ID}/${ARCH} · pkg=${PKG_MGR} · v${VERSION}"
 
-  if [ "$FONT_ONLY" -eq 1 ]; then
-    install_nerd_font
-    return 0
-  fi
-
   ensure_runtime_deps
   install_binary
-  [ "$DO_FONT" -eq 1 ] && install_nerd_font
 
   printf '\n'
   ok "$(say '安装完成，运行 sb 启动' 'Installation complete, run sb to start')"

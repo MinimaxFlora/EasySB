@@ -49,11 +49,11 @@ Traps already hit in this repository. Each entry names the symptom and the fix.
   form makes homeproxy flag the node as an invalid UUID through its LuCI `uuid`
   validation, even though sing-box's gofrs parser accepts it. Keep the
   hyphenated form in every share link.
-- **`/v2ray/<uuid>` is the universal Base64 document.** v2rayN reads it
-  directly; passwall, passwall2 and homeproxy base64-decode it first. No
-  separate "base" format is needed. `luci-app-nikki` runs the mihomo core and
-  validates for a top-level `proxies` key, so it uses the `/mihomo/<uuid>` YAML
-  profile instead.
+- **The Base64 document is the universal format.** v2rayN reads it directly;
+  passwall, passwall2 and homeproxy base64-decode it first. No separate "base"
+  format is needed. `luci-app-nikki` runs the mihomo core and validates for a
+  top-level `proxies` key, so it needs the mihomo YAML profile — which the one
+  `/sub/<token>` endpoint serves once it sees a Clash-family User-Agent.
 - **Template actions in comments are still expanded.** `text/template` executes
   `{{ ... }}` even inside YAML/JSON comments. A `{{ .Proxies }}` in a mihomo
   header comment injects uncommented proxy entries above the document root and
@@ -67,15 +67,85 @@ Traps already hit in this repository. Each entry names the symptom and the fix.
 - **Comments are invalid JSON.** `templates/` files are JSONC for humans. Strip
   comments before handing anything to `sing-box check`.
 
-## nginx site
+## Subscription service
 
-- **`;` does not separate directives without whitespace.** Emitting
-  `default_type text/yaml; charset=utf-8;` makes nginx parse `charset=utf-8` as
-  the directive name and abort with `unknown directive "charset=utf-8"`. Quote
-  the whole value instead: `default_type "text/yaml; charset=utf-8";`.
-- **Surface the `[emerg]` line.** The last line of `nginx -t` output only says
-  the test failed; report the first `[emerg]`/`[error]` line
-  (`nginx.errorLine`) so the real cause is visible.
+- **A client that cannot parse the profile must not receive one.** Refusing an
+  expired or over-quota account with `403` and a plain-text reason keeps a
+  half-valid profile out of a client: an empty `proxies` list is rejected by the
+  Clash-family parsers, and an empty sing-box profile fails to parse outright.
+- **The URL and the listener agree on the scheme.** Both ask
+  `cert.Usable(DOMAIN)`, which requires a real acme.sh pair. Publishing an
+  `https://` URL for a listener that fell back to HTTP (no certificate, or only
+  the self-signed one, which clients reject) breaks every import.
+- **The core user name is the subscription token.** The V2Ray counter key is
+  `user>>><name>>>traffic>>>…`, so the name is also a `QueryStats` regex
+  pattern: a token is ASCII by construction and survives a rename, while a display
+  name may be Chinese or contain regex metacharacters. The inbound `users` arrays
+  and `stats.users` must always come from the same predicate
+  (`user.Store.Routable`), or an account is authenticated but never counted.
+- **Counters are deltas, never absolutes.** The counters live in the running core
+  and reset on restart, so the accounting loop persists differences and clamps a
+  negative delta to zero.
+
+## Certificates
+
+- **acme.sh must be installed with `--nocron`.** `get.acme.sh` (the wrapper the
+  project used first) always reaches for a crontab, and on a minimal image
+  without cron it stops at `Pre-check failed, cannot install` while printing a
+  China-mirror wiki link as the last line, so the real reason is hidden. The
+  project downloads the release script and runs
+  `./acme.sh --install --nocron --noprofile --home <dir>` from the directory it
+  was downloaded into; acme.sh copies `acme.sh` from the working directory, so
+  invoking it from anywhere else fails with `cannot stat 'acme.sh'`.
+- **Without a crontab nothing renews.** Installing with `--nocron` moves the
+  responsibility to `easysb-acme.timer` (or the OpenRC script), which runs
+  `easysb --renew-certs`. Certificates that are renewed but not reloaded are
+  still the old ones in a running core: `--renew-certs` restarts sing-box and the
+  subscription service for that reason. If issuance ever moves off `--nocron`,
+  the timer must be removed in the same change or renewals happen twice.
+- **The acme.sh directory is not `$HOME/.acme.sh` until proven.** The install
+  script, sudo and the systemd units each supply a different `HOME`, so
+  `cert.ACMEDir()` probes for an installation and every acme.sh call passes
+  `--home`, which is what makes the write location and the read location the same.
+- **`--standalone` needs socat or python**, and it needs port 80 free: the
+  installer depends on socat, and `cert.CheckPort80()` runs after the core is
+  stopped, because a running core is usually what holds the port. Both checks
+  happen before an ACME attempt is spent. Debian 13 minimal images ship socat and
+  python3 but no cron and no crontab, which is the combination that made the
+  wrapper script unusable there.
+- **A failing challenge usually means DNS, not acme.sh.** A domain behind a CDN
+  (or the Cloudflare orange cloud) answers HTTP-01 from the CDN and never reaches
+  the host, which shows up as `Verify error` in acme.sh output. The preflight
+  report compares the resolved addresses with the host's public IP and says so;
+  `EASYSB_ACME_STAGING=1` lets the whole flow be tried without consuming the
+  Let's Encrypt rate limit.
+- **A stale A record next to a correct one also fails the order.** Let's Encrypt
+  validates the challenge against *every* address a domain resolves to, so a
+  leftover record pointing at a host that no longer answers fails the issuance
+  even though this server answers correctly. The error names the address
+  (`During secondary validation: <ip>: … Connection refused`), which reads like a
+  server fault; `Report.Others()` warns before the attempt and
+  `cert.StrayAddress()` names the record afterwards. Check with the zone's own
+  nameservers before doubting the box: `nslookup -type=A <name> <ns>` gives the
+  authoritative answer, and a name that resolves to two addresses has two records
+  (a wildcard would also have answered for a random subdomain, and a CDN proxy
+  would have answered with the CDN's addresses).
+- **The CA must be pinned, not inherited.** acme.sh's default CA is ZeroSSL (it
+  used to be Let's Encrypt), so leaving `--server` out makes the signing CA depend
+  on the installed acme.sh version and splits it from the staging switch, which
+  points at Let's Encrypt's test endpoint. `issueArgs()` always passes
+  `--server letsencrypt` (`letsencrypt_test` when staging). The CA is recorded per
+  domain in `<domain>_ecc/<domain>.conf` as `Le_API`, so a pinned flag only
+  affects new issuances; an existing certificate keeps renewing from its own CA
+  until it is removed and reissued.
+- **`acme.sh --remove` unregisters but does not delete.** It prints `The key and
+  cert files are in <dir>` and leaves them there, so reissuing immediately fails
+  with `Error creating domain key` until the `_ecc` directory is deleted. Remove
+  both when replacing a certificate.
+- **Reissuing a valid certificate is not a failure.** acme.sh exits non-zero with
+  `Domains not changed. | Skipping. Next renewal time is: …`, which `errorDetail()`
+  would otherwise report as a broken issuance to someone who simply clicked the
+  button twice. `Issue()` recognises that sentence and returns success.
 
 ## State and templates
 
@@ -103,8 +173,10 @@ Traps already hit in this repository. Each entry names the symptom and the fix.
 - **Interactive behavior needs a PTY.** For one-shot frame checks use
   `--render --width W --height H`, which prints a single frame without a TTY.
   Use it to catch overflow and alignment regressions.
-- **Icons assume a Nerd Font.** Users without one set `EASYSB_ICONS=0` or pass
-  `--icons off`. Never make layout depend on icons being present.
+- **Icons assume a Unicode terminal, not a patched font.** The default palette is
+  a set of single-column geometric glyphs that ordinary monospace fonts already
+  ship; `--icons ascii` (or `EASYSB_ICONS=ascii`) covers terminals without
+  Unicode. Never make layout depend on a glyph being wider than one column.
 - **Mouse reporting steals click-drag selection.** While the task/QR screen
   enables `MouseModeCellMotion` for wheel scrolling, the terminal stops
   selecting text on drag, so users cannot copy a subscription URL the usual way.

@@ -2,31 +2,26 @@ package config
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/MinimaxFlora/EasySB/internal/state"
+	"github.com/MinimaxFlora/EasySB/internal/user"
 )
 
 func fullParams() Params {
 	c := state.Default()
-	c.UUID = "11111111-2222-3333-4444-555555555555"
-	c.Password = "secret"
 	c.RealityPriv = "priv"
 	c.RealityPub = "pub"
 	c.RealitySID = "abcd1234"
 	c.RealitySNI = "apple.com"
-	return Params{
-		Enabled:       c.Enabled,
-		Ports:         c.Ports,
-		Password:      c.Password,
-		UUID:          c.UUID,
-		HopRange:      c.HopRange,
-		RealitySNI:    c.RealitySNI,
-		RealityPriv:   c.RealityPriv,
-		RealitySID:    c.RealitySID,
-		CertFullchain: "/etc/sing-box/cert/fullchain.cer",
-		CertKey:       "/etc/sing-box/cert/private.key",
-	}
+	account := user.New("demo", state.Keys, time.Unix(0, 0))
+	p := ParamsFromState(c)
+	p.CertFullchain = "/etc/sing-box/cert/fullchain.cer"
+	p.CertKey = "/etc/sing-box/cert/private.key"
+	p.Members = MembersFrom([]user.User{account})
+	return p
 }
 
 type parsedConfig struct {
@@ -119,5 +114,49 @@ func TestNeedsCert(t *testing.T) {
 	p.Enabled = map[string]bool{state.ProtoVLESSReality: true}
 	if p.NeedsCert() {
 		t.Fatal("reality alone should not require a cert")
+	}
+}
+
+// TestBuildStatsBlockFollowsCore keeps the V2Ray API block tied to the core that
+// will read it: sing-box refuses the whole config when the block names an API the
+// binary was not built with, so a core without it has to deploy without the block
+// rather than fail.
+func TestBuildStatsBlockFollowsCore(t *testing.T) {
+	p := fullParams()
+	p.Stats = true
+	withStats, err := Build(p)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if !strings.Contains(string(withStats), `"v2ray_api"`) {
+		t.Fatal("a stats-capable core should get the v2ray_api block")
+	}
+	if !strings.Contains(string(withStats), `"users"`) {
+		t.Fatal("the block should whitelist the accounts to count")
+	}
+
+	p.Stats = false
+	without, err := Build(p)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if strings.Contains(string(without), "v2ray_api") || strings.Contains(string(without), "experimental") {
+		t.Fatalf("a core without the API should get a config without it:\n%s", without)
+	}
+	if !strings.Contains(string(without), `"inbounds"`) {
+		t.Fatal("the rest of the config should still be there")
+	}
+}
+
+// TestParamsFromStateCarriesStatsChoice checks the state key that records the core
+// choice, including the historical deployments that never wrote it.
+func TestParamsFromStateCarriesStatsChoice(t *testing.T) {
+	cfg := state.Default()
+	if !ParamsFromState(cfg).Stats {
+		t.Fatal("a state file without the key keeps the counters")
+	}
+	cfg.StatsAPI = state.StatsAPINone
+	if ParamsFromState(cfg).Stats {
+		t.Fatal("StatsAPI=none should render a config without the counters")
 	}
 }

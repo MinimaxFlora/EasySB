@@ -2,18 +2,47 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"strings"
+	"sync"
 
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/MinimaxFlora/EasySB/internal/i18n"
 	"github.com/MinimaxFlora/EasySB/internal/icons"
 	"github.com/MinimaxFlora/EasySB/internal/theme"
+	"github.com/MinimaxFlora/EasySB/internal/ui"
 )
 
-type taskFunc func(ctx context.Context, log func(string)) error
+// taskFunc is one unit of work the panel runs on its own goroutine: it writes lines
+// through the reporter and returns the error that ends the task.
+type taskFunc func(ctx context.Context, r *taskReporter) error
+
+// taskReporter is a running task's link back to the screen that started it: Log for a
+// line of output, Progress for a download that is still arriving. A task never touches
+// the interface directly, so every screen sees its output in the order it was produced.
+type taskReporter struct {
+	log  func(string)
+	prog func(label string, done, total int64)
+}
+
+// Log appends one line to the task's output.
+func (r *taskReporter) Log(line string) {
+	if r.log != nil {
+		r.log(line)
+	}
+}
+
+// Progress reports a download in flight, which the task screen draws as a bar rather
+// than as a line of output: a line would either flood the log or say nothing.
+func (r *taskReporter) Progress(label string, done, total int64) {
+	if r.prog != nil {
+		r.prog(label, done, total)
+	}
+}
 
 // progressScrollStep is how many lines one arrow key scrolls the finished log.
 // Three matches the feel of a browser wheel.
@@ -22,6 +51,15 @@ const progressScrollStep = 3
 type logLineMsg string
 type logsClosedMsg struct{}
 type taskDoneMsg struct{ err error }
+
+// downloadReading is the live state of the download a task is doing. The task
+// goroutine writes it and the render goroutine reads it, so the model guards it.
+type downloadReading struct {
+	label string
+	done  int64
+	total int64
+	live  bool
+}
 
 type progressModel struct {
 	title  string
@@ -42,10 +80,15 @@ type progressModel struct {
 	noCopy bool
 	width  int
 	height int
+	// mu guards dl, which the task goroutine writes while the screen is drawn.
+	mu sync.Mutex
+	dl downloadReading
 }
 
-func newProgress(title string, fn taskFunc) progressModel {
-	p := progressModel{
+// newProgress builds the model for one task. It returns a pointer because the task
+// goroutine records its download readings on the same value the screen draws.
+func newProgress(title string, fn taskFunc) *progressModel {
+	p := &progressModel{
 		title: title,
 		fn:    fn,
 		ch:    make(chan string, 256),
@@ -64,11 +107,78 @@ func (p *progressModel) Init() tea.Cmd {
 	ch := p.ch
 	errCh := p.errCh
 	go func() {
-		err := fn(ctx, func(s string) { ch <- s })
+		r := &taskReporter{
+			log:  func(s string) { ch <- s },
+			prog: p.setDownload,
+		}
+		err := fn(ctx, r)
 		errCh <- err
 		close(ch)
 	}()
 	return tea.Batch(p.tickCmd(), waitLog(ch))
+}
+
+// setDownload records one reading of a download. It is called from the task
+// goroutine, so it never touches anything but the reading itself.
+func (p *progressModel) setDownload(label string, done, total int64) {
+	p.mu.Lock()
+	p.dl = downloadReading{label: label, done: done, total: total, live: true}
+	p.mu.Unlock()
+}
+
+// reading returns the current download state.
+func (p *progressModel) reading() downloadReading {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.dl
+}
+
+// clearDownload drops the bar: the task is over, so a reading that is no longer
+// moving would only be a stale number on a finished screen.
+func (p *progressModel) clearDownload() {
+	p.mu.Lock()
+	p.dl = downloadReading{}
+	p.mu.Unlock()
+}
+
+// downloadBar draws the download a task is doing: the file, a bar sized to the row and
+// the bytes, or the bytes alone when the server announced no length. An empty string
+// means nothing is downloading, which is the case for every task that only reads local
+// state.
+func downloadBar(style theme.Style, ic icons.Set, dl downloadReading, w int) string {
+	if !dl.live || w < 24 {
+		return ""
+	}
+	tail := humanBytes(uint64(dl.done))
+	if dl.total > 0 {
+		tail = fmt.Sprintf("%d%%  %s / %s", dl.done*100/dl.total,
+			humanBytes(uint64(dl.done)), humanBytes(uint64(dl.total)))
+	}
+	head := " " + ic.Download + " "
+	barW := w / 3
+	if barW < 8 {
+		barW = 8
+	}
+	// The numbers and the bar matter more than the file name, so the label gets
+	// whatever is left over once they have their room.
+	if labelW := w - lipgloss.Width(head) - lipgloss.Width(tail) - barW - 3; labelW < 8 {
+		barW = w - lipgloss.Width(head) - lipgloss.Width(tail) - 11
+		if barW < 4 {
+			barW = 4
+		}
+	}
+	labelW := w - lipgloss.Width(head) - lipgloss.Width(tail) - barW - 3
+	if labelW < 1 {
+		labelW = 1
+	}
+	label := theme.Truncate(dl.label, labelW)
+	bar := style.Faint(strings.Repeat("░", barW))
+	if dl.total > 0 {
+		bar = ui.Meter(style, float64(dl.done)/float64(dl.total), barW)
+	}
+	line := style.Faint(head) + style.Value(label) + strings.Repeat(" ", labelW-lipgloss.Width(label)) +
+		" " + bar + "  " + style.Value(tail)
+	return theme.Pad(theme.Truncate(line, w), w)
 }
 
 func (p *progressModel) tickCmd() tea.Cmd {
@@ -103,6 +213,7 @@ func (p *progressModel) handle(msg tea.Msg) tea.Cmd {
 	case taskDoneMsg:
 		p.done = true
 		p.err = m.err
+		p.clearDownload()
 		if m.err != nil {
 			p.appendLog("✗ " + m.err.Error())
 		}
@@ -155,15 +266,27 @@ func (p *progressModel) resize(w, h int) {
 	if inner < 10 {
 		inner = 10
 	}
-	// The viewport fills the frame between the top/bottom borders, the header
-	// row and its trailing blank.
-	vh := panelBodyHeight(h) - 2
+	// The log sits in a card under the status strip, so the viewport is what is
+	// left after the strip, the card borders and the hint bar.
+	vh := h - 4 - taskHintRows(h)
 	if vh < 1 {
 		vh = 1
 	}
 	p.vp.SetWidth(inner)
 	p.vp.SetHeight(vh)
 	p.refresh()
+}
+
+// taskHintRows is how many rows the hint bar takes, matching the dashboard: a
+// boxed hint on a roomy terminal, one line when there is almost no room.
+func taskHintRows(h int) int {
+	switch {
+	case h >= 22:
+		return 3
+	case h >= 6:
+		return 1
+	}
+	return 0
 }
 
 func (p *progressModel) appendLog(line string) {
@@ -179,27 +302,53 @@ func (p *progressModel) refresh() {
 	}
 }
 
-func (p *progressModel) View(w, h int, pal theme.Palette, lang i18n.Lang, ic icons.Set) string {
+// body is the card's content: the live download bar on top while something is
+// arriving, then the log. The bar takes the first row and the log gives up its last
+// one, so the frame keeps its size and the screen does not jump when a download starts
+// or finishes.
+func (p *progressModel) body(style theme.Style, ic icons.Set, width int) []string {
+	lines := strings.Split(p.vp.View(), "\n")
+	bar := downloadBar(style, ic, p.reading(), ui.InnerWidth(style, width))
+	if bar == "" {
+		return lines
+	}
+	if len(lines) < 2 {
+		// A one-row card has no room for both, and the live reading is the more
+		// useful half of it.
+		return []string{bar}
+	}
+	body := make([]string, 0, len(lines))
+	body = append(body, bar)
+	return append(body, lines[:len(lines)-1]...)
+}
+
+// View draws the task the way the dashboard draws everything else: the live
+// status strip on top, the log in a card titled with the task, and the keys on the
+// bottom bar. The task screen is where the subscription service, the kernel
+// install and the deployment all end up, so it is the one screen that has to look
+// like the rest of the panel rather than like a raw console.
+func (p *progressModel) View(w, h int, strip string, style theme.Style, lang i18n.Lang, ic icons.Set) string {
 	width := panelWidth(w)
 	if width != p.width || h != p.height {
 		p.resize(width, h)
 	}
+	pal := style.Palette
 
-	var status string
+	badge := pal.Colored(pal.Primary, p.spin.View()+" "+lang.T("task_running"))
 	if p.done {
 		if p.err != nil {
-			status = pal.State(ic.Err+" "+lang.T("task_failed"), false, false)
+			badge = pal.State(ic.Err+" "+lang.T("task_failed"), false, false)
 		} else {
-			status = pal.State(ic.OK+" "+lang.T("task_done"), true, false)
+			badge = pal.State(ic.OK+" "+lang.T("task_done"), true, false)
 		}
-	} else {
-		status = pal.Colored(pal.Primary, p.spin.View()+" "+lang.T("task_running"))
 	}
 
-	header := " " + status + "  " + pal.Dim(theme.Truncate(p.title, width-24))
-	body := make([]string, 0, p.vp.Height()+2)
-	body = append(body, header, "")
-	body = append(body, strings.Split(p.vp.View(), "\n")...)
+	card := ui.Card(style, p.title, badge, p.body(style, ic, width), width)
+	lines := make([]string, 0, h)
+	if strip != "" {
+		lines = append(lines, strip, "")
+	}
+	lines = append(lines, card...)
 
 	var hint string
 	if p.done {
@@ -212,5 +361,11 @@ func (p *progressModel) View(w, h int, pal theme.Palette, lang i18n.Lang, ic ico
 	} else {
 		hint = lang.T("hint_back") + "  " + lang.T("cancelled")
 	}
-	return framePanel(pal, lang, width, h, body, pal.Dim(hint))
+	switch taskHintRows(h) {
+	case 3:
+		lines = append(lines, hintBoxFor(pal, lang, hint, width)...)
+	case 1:
+		lines = append(lines, hintLineFor(pal, lang, hint, width))
+	}
+	return ui.Fit(lines, width, h)
 }

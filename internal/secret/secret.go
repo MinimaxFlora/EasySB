@@ -4,6 +4,7 @@ package secret
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"io"
 )
 
@@ -28,6 +29,44 @@ func Password() string {
 			continue
 		}
 		out[i] = passwordAlphabet[int(buf[0])%len(passwordAlphabet)]
+		i++
+	}
+	return string(out)
+}
+
+// UUID returns a random v4 UUID in canonical 8-4-4-4-12 form. Per-user
+// credentials are generated locally so the panel never has to run the core
+// binary once per account.
+func UUID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return ""
+	}
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
+
+// tokenAlphabet omits the characters a human confuses when reading a
+// subscription URL back from a screen: l, o, 0 and 1.
+const tokenAlphabet = "abcdefghijkmnpqrstuvwxyz23456789"
+
+// Token returns a 16 character subscription token (about 80 bits) built only
+// from tokenAlphabet, so it stays ASCII and free of the regex metacharacters
+// the stats user filter would otherwise have to escape.
+func Token() string {
+	const length = 16
+	limit := 256 - 256%len(tokenAlphabet)
+	out := make([]byte, length)
+	buf := make([]byte, 1)
+	for i := 0; i < length; {
+		if _, err := io.ReadFull(rand.Reader, buf); err != nil {
+			return ""
+		}
+		if int(buf[0]) >= limit {
+			continue
+		}
+		out[i] = tokenAlphabet[int(buf[0])%len(tokenAlphabet)]
 		i++
 	}
 	return string(out)

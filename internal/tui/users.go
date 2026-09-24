@@ -1,0 +1,669 @@
+package tui
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strconv"
+	"strings"
+	"time"
+
+	tea "charm.land/bubbletea/v2"
+
+	"github.com/MinimaxFlora/EasySB/internal/deploy"
+	"github.com/MinimaxFlora/EasySB/internal/i18n"
+	"github.com/MinimaxFlora/EasySB/internal/secret"
+	"github.com/MinimaxFlora/EasySB/internal/state"
+	"github.com/MinimaxFlora/EasySB/internal/subscribe"
+	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
+	"github.com/MinimaxFlora/EasySB/internal/user"
+)
+
+// v4 replaces the node-wide credential with one account per subscriber, so the
+// panel needs a place to create, edit, disable and delete accounts and to hand
+// out each account's subscription endpoint and QR code.
+//
+// The list the menus render from is a snapshot taken on entering the section and
+// refreshed after every change, because menu labels are drawn on every frame and
+// reading the account file per frame would be wasteful.
+
+// loadAccounts refreshes the snapshot the account menus render from.
+func (a *App) loadAccounts() {
+	store, err := loadUsers()
+	if err != nil {
+		a.setToast(err.Error(), true)
+		return
+	}
+	a.accounts = store.Users()
+}
+
+// loadUsers opens the account file. The panel and the subscription service share
+// it, so every action reloads it instead of caching a store.
+func loadUsers() (*user.Store, error) {
+	return user.Load(sysinfo.UsersFile)
+}
+
+// accountByToken returns the current state of one account.
+func accountByToken(token string) (user.User, bool) {
+	store, err := loadUsers()
+	if err != nil {
+		return user.User{}, false
+	}
+	return store.ByToken(token)
+}
+
+// accountsChange builds the body of an account task: load the file, apply the
+// change, save it and then push the result to the core.
+func accountsChange(lang i18n.Lang, change func(*user.Store, time.Time) error) taskFunc {
+	return func(ctx context.Context, r *taskReporter) error {
+		now := time.Now()
+		store, err := loadUsers()
+		if err != nil {
+			return err
+		}
+		if err := change(store, now); err != nil {
+			return err
+		}
+		if err := store.Save(); err != nil {
+			return err
+		}
+		return applyAccounts(ctx, lang, store, r.Log)
+	}
+}
+
+// applyAccounts pushes the account list to the core. A node that was never
+// deployed has no certificate and no service yet, so the change is only stored
+// and the operator is told.
+func applyAccounts(ctx context.Context, lang i18n.Lang, store *user.Store, log func(string)) error {
+	cfg := state.Load()
+	if !cfg.NodeDeployed {
+		log(lang.T("users_need_deploy"))
+		return nil
+	}
+	if err := deploy.ApplyStore(ctx, cfg, store); err != nil {
+		return err
+	}
+	log(lang.T("users_applied"))
+	return nil
+}
+
+// accountsAction turns an account change into a menu action.
+func accountsAction(titleKey string, change func(*user.Store, time.Time) error) actionFunc {
+	return func(a *App) tea.Cmd {
+		return a.startTask(a.lang.T(titleKey), accountsChange(a.lang, change))
+	}
+}
+
+// enterUsers refreshes the snapshot and pushes the account section.
+func enterUsers() actionFunc {
+	return func(a *App) tea.Cmd {
+		a.loadAccounts()
+		a.push(a.usersMenu())
+		return nil
+	}
+}
+
+func (a *App) usersMenu() *menu {
+	return &menu{id: "users", title: tk("users_title"), nodes: []*node{
+		{id: "users-list", label: tk("users_list"), desc: tk("desc_users_list"), sub: a.userListMenu()},
+		leaf("users-new", "users_new", "desc_users_new", newUserAction()),
+	}}
+}
+
+// userListMenu lists every account; opening one pushes its own menu.
+func (a *App) userListMenu() *menu {
+	nodes := make([]*node, 0, len(a.accounts)+1)
+	for _, account := range a.accounts {
+		token := account.Token
+		nodes = append(nodes, &node{
+			id:     "user-" + token,
+			label:  func(l i18n.Lang) string { return a.accountLabel(l, token) },
+			desc:   tk("desc_user_open"),
+			action: openUser(token),
+		})
+	}
+	if len(nodes) == 0 {
+		nodes = append(nodes, &node{
+			id:     "user-none",
+			label:  tk("users_empty"),
+			desc:   tk("desc_users_new"),
+			action: newUserAction(),
+		})
+	}
+	return &menu{id: "user-list", title: tk("users_list"), nodes: nodes}
+}
+
+// accountLabel renders one account as "name · status · traffic".
+func (a *App) accountLabel(l i18n.Lang, token string) string {
+	account, ok := a.account(token)
+	if !ok {
+		return token
+	}
+	used := formatSize(account.UploadBytes + account.DownloadBytes)
+	if account.QuotaBytes > 0 {
+		used += " / " + formatSize(account.QuotaBytes)
+	}
+	parts := []string{account.Name, l.T(statusKey(account.Status(time.Now()))), used}
+	return strings.Join(parts, " · ")
+}
+
+// account returns one account from the rendered snapshot.
+func (a *App) account(token string) (user.User, bool) {
+	for _, account := range a.accounts {
+		if account.Token == token {
+			return account, true
+		}
+	}
+	return user.User{}, false
+}
+
+// openUser pushes one account's menu. Every action inside looks the account up by
+// token, so a rename cannot leave the menu pointing at the wrong account.
+func openUser(token string) actionFunc {
+	return func(a *App) tea.Cmd {
+		a.push(a.userMenu(token))
+		return nil
+	}
+}
+
+// pickAccount pushes a menu of every account and runs act on the one the operator
+// chooses. The subscription, QR and share-link screens all start this way, because
+// each of them belongs to exactly one account.
+func pickAccount(titleKey string, act func(token string) actionFunc) actionFunc {
+	return func(a *App) tea.Cmd {
+		a.loadAccounts()
+		a.push(a.accountPicker(titleKey, act))
+		return nil
+	}
+}
+
+func (a *App) accountPicker(titleKey string, act func(token string) actionFunc) *menu {
+	nodes := make([]*node, 0, len(a.accounts)+1)
+	for _, account := range a.accounts {
+		token := account.Token
+		nodes = append(nodes, &node{
+			id:     "pick-" + token,
+			label:  func(l i18n.Lang) string { return a.accountLabel(l, token) },
+			desc:   tk("desc_user_pick"),
+			action: act(token),
+		})
+	}
+	if len(nodes) == 0 {
+		nodes = append(nodes, &node{
+			id:     "pick-none",
+			label:  tk("users_empty"),
+			desc:   tk("desc_users_new"),
+			action: newUserAction(),
+		})
+	}
+	return &menu{id: "account-picker", title: tk(titleKey), nodes: nodes}
+}
+
+func (a *App) userMenu(token string) *menu {
+	field := func(key string, value func(user.User, i18n.Lang) string) func(i18n.Lang) string {
+		return func(l i18n.Lang) string {
+			label := l.T(key)
+			if account, ok := a.account(token); ok {
+				if extra := value(account, l); extra != "" {
+					return label + " · " + extra
+				}
+			}
+			return label
+		}
+	}
+	// The title names the account, so an operator who opened several detail
+	// screens in a row always knows whose quotas they are editing.
+	title := func(l i18n.Lang) string {
+		if account, ok := a.account(token); ok {
+			return l.T("user_detail") + " · " + account.Name
+		}
+		return l.T("user_detail")
+	}
+	return &menu{id: "user-detail", title: title, nodes: []*node{
+		leaf("user-sub", "user_sub", "desc_user_sub", showUserSubscription(token)),
+		leaf("user-qr", "user_qr", "desc_user_qr", showUserQR(token)),
+		leaf("user-links", "user_links", "desc_user_links", showUserLinks(token)),
+		leaf("user-name", "user_name", "desc_user_name", renameUser(token)),
+		leaf("user-remark", "user_remark", "desc_user_remark", editUserRemark(token)),
+		{id: "user-quota", label: field("user_quota", quotaText), desc: tk("desc_user_quota"), action: editUserQuota(token)},
+		{id: "user-expiry", label: field("user_expiry", expiryText), desc: tk("desc_user_expiry"), action: editUserExpiry(token)},
+		{id: "user-protocols", label: field("user_protocols", protocolText), desc: tk("desc_user_protocols"), sub: a.userProtocolsMenu(token)},
+		{id: "user-toggle", label: field("user_toggle", statusText), desc: tk("desc_user_toggle"), action: toggleUser(token)},
+		leaf("user-reset", "user_reset", "desc_user_reset", resetUserUsage(token)),
+		leaf("user-rotate", "user_rotate", "desc_user_rotate", rotateUserToken(token)),
+		leaf("user-delete", "user_delete", "desc_user_delete", deleteUser(token)),
+	}}
+}
+
+func quotaText(account user.User, _ i18n.Lang) string {
+	used := formatSize(account.UploadBytes + account.DownloadBytes)
+	if account.QuotaBytes <= 0 {
+		return used
+	}
+	return used + " / " + formatSize(account.QuotaBytes)
+}
+
+func expiryText(account user.User, _ i18n.Lang) string {
+	if account.ExpireAt.IsZero() {
+		return ""
+	}
+	return account.ExpireAt.Local().Format("2006-01-02")
+}
+
+func statusText(account user.User, l i18n.Lang) string {
+	return l.T(statusKey(account.Status(time.Now())))
+}
+
+func protocolText(account user.User, l i18n.Lang) string {
+	names := make([]string, 0, len(account.Protocols))
+	for _, key := range state.Keys {
+		if account.Selects(key) {
+			names = append(names, state.Labels[key])
+		}
+	}
+	if len(names) == 0 {
+		return l.T("user_protocols_none")
+	}
+	return strings.Join(names, ", ")
+}
+
+// userProtocolsMenu chooses which nodes one account may use. The selection is
+// stored per account and the core configuration is rebuilt from it, so a
+// protocol switched off stops accepting that account's credentials.
+func (a *App) userProtocolsMenu(token string) *menu {
+	nodes := make([]*node, 0, len(state.Keys))
+	for _, key := range state.Keys {
+		key := key
+		nodes = append(nodes, &node{
+			id: "user-proto-" + key,
+			label: func(i18n.Lang) string {
+				mark := "[ ]"
+				if account, ok := a.account(token); ok && account.Selects(key) {
+					mark = "[x]"
+				}
+				return mark + " " + state.Labels[key]
+			},
+			desc:   tk("desc_user_proto_toggle"),
+			action: toggleUserProtocol(token, key),
+		})
+	}
+	return &menu{id: "user-protocols", title: tk("user_protocols"), nodes: nodes}
+}
+
+// newUserAction creates an account with every protocol the node offers, no quota
+// and no expiry: the operator narrows it afterwards.
+func newUserAction() actionFunc {
+	return func(a *App) tea.Cmd {
+		lang := a.lang
+		a.openForm(lang.T("users_new"), lang.T("users_new_prompt"), "", "", func(a *App, value string) (tea.Cmd, error) {
+			name := strings.TrimSpace(value)
+			if name == "" {
+				return nil, errors.New(lang.T("users_name_required"))
+			}
+			cfg := state.Load()
+			return a.startTask(lang.T("users_new"), accountsChange(lang, func(store *user.Store, now time.Time) error {
+				return store.Add(user.New(name, enabledProtocols(cfg), now))
+			})), nil
+		})
+		return nil
+	}
+}
+
+// enabledProtocols lists the protocols the node offers, which is the default
+// selection of a new account.
+func enabledProtocols(cfg state.Config) []string {
+	var out []string
+	for _, key := range state.Keys {
+		if cfg.Enabled[key] {
+			out = append(out, key)
+		}
+	}
+	return out
+}
+
+// accountForm opens a one-field prompt for one account. The current value is
+// pre-filled and apply decides what the text means for that field.
+func accountForm(a *App, token, titleKey, promptKey, hintKey string, current func(user.User) string, apply func(*user.User, string, time.Time) error) tea.Cmd {
+	lang := a.lang
+	account, ok := accountByToken(token)
+	if !ok {
+		a.setToast(lang.T("users_missing"), true)
+		return nil
+	}
+	name := account.Name
+	a.openForm(lang.T(titleKey), lang.T(promptKey), current(account), lang.T(hintKey), func(a *App, value string) (tea.Cmd, error) {
+		change := func(store *user.Store, now time.Time) error {
+			return store.Update(name, func(u *user.User) error {
+				return apply(u, strings.TrimSpace(value), now)
+			})
+		}
+		return a.startTask(lang.T(titleKey), accountsChange(lang, change)), nil
+	})
+	return nil
+}
+
+func renameUser(token string) actionFunc {
+	return func(a *App) tea.Cmd {
+		return accountForm(a, token, "user_name", "user_name_prompt", "", func(account user.User) string {
+			return account.Name
+		}, func(u *user.User, value string, _ time.Time) error {
+			if value == "" {
+				return errors.New(a.lang.T("users_name_required"))
+			}
+			u.Name = value
+			return nil
+		})
+	}
+}
+
+func editUserRemark(token string) actionFunc {
+	return func(a *App) tea.Cmd {
+		return accountForm(a, token, "user_remark", "user_remark_prompt", "", func(account user.User) string {
+			return account.Remark
+		}, func(u *user.User, value string, _ time.Time) error {
+			u.Remark = value
+			return nil
+		})
+	}
+}
+
+func editUserQuota(token string) actionFunc {
+	return func(a *App) tea.Cmd {
+		return accountForm(a, token, "user_quota", "user_quota_prompt", "user_quota_hint", func(account user.User) string {
+			if account.QuotaBytes <= 0 {
+				return "0"
+			}
+			return formatSize(account.QuotaBytes)
+		}, func(u *user.User, value string, _ time.Time) error {
+			size, err := parseSize(value)
+			if err != nil {
+				return err
+			}
+			u.QuotaBytes = size
+			return nil
+		})
+	}
+}
+
+func editUserExpiry(token string) actionFunc {
+	return func(a *App) tea.Cmd {
+		return accountForm(a, token, "user_expiry", "user_expiry_prompt", "user_expiry_hint", func(account user.User) string {
+			if account.ExpireAt.IsZero() {
+				return ""
+			}
+			return account.ExpireAt.Local().Format("2006-01-02")
+		}, func(u *user.User, value string, now time.Time) error {
+			expiry, err := parseExpiry(value, now)
+			if err != nil {
+				return err
+			}
+			u.ExpireAt = expiry
+			return nil
+		})
+	}
+}
+
+// toggleUser switches an account on or off. A disabled account keeps its
+// counters and its credentials, so switching it back on restores access.
+func toggleUser(token string) actionFunc {
+	return accountsAction("user_toggle", func(store *user.Store, _ time.Time) error {
+		account, ok := store.ByToken(token)
+		if !ok {
+			return errors.New("account not found")
+		}
+		return store.Update(account.Name, func(u *user.User) error {
+			u.Enabled = !u.Enabled
+			return nil
+		})
+	})
+}
+
+// resetUserUsage zeroes an account's counters, which also lifts a quota
+// suspension and moves the monthly reset to today.
+func resetUserUsage(token string) actionFunc {
+	return accountsAction("user_reset", func(store *user.Store, now time.Time) error {
+		account, ok := store.ByToken(token)
+		if !ok {
+			return errors.New("account not found")
+		}
+		return store.Update(account.Name, func(u *user.User) error {
+			u.ResetCounters(now)
+			return nil
+		})
+	})
+}
+
+// rotateUserToken invalidates the account's subscription URL and issues a new
+// one. The credentials stay, so an existing client keeps working until its
+// profile is refreshed from the old URL, which by then is dead.
+func rotateUserToken(token string) actionFunc {
+	return accountsAction("user_rotate", func(store *user.Store, _ time.Time) error {
+		account, ok := store.ByToken(token)
+		if !ok {
+			return errors.New("account not found")
+		}
+		return store.Update(account.Name, func(u *user.User) error {
+			u.Token = secret.Token()
+			return nil
+		})
+	})
+}
+
+func toggleUserProtocol(token, key string) actionFunc {
+	return accountsAction("user_protocols", func(store *user.Store, _ time.Time) error {
+		account, ok := store.ByToken(token)
+		if !ok {
+			return errors.New("account not found")
+		}
+		return store.Update(account.Name, func(u *user.User) error {
+			if u.Selects(key) {
+				u.Deselect(key)
+			} else {
+				u.Select(key)
+			}
+			return nil
+		})
+	})
+}
+
+// deleteUser removes an account after a yes/no confirmation typed as a form.
+func deleteUser(token string) actionFunc {
+	return func(a *App) tea.Cmd {
+		lang := a.lang
+		account, ok := accountByToken(token)
+		if !ok {
+			a.setToast(lang.T("users_missing"), true)
+			return nil
+		}
+		name := account.Name
+		a.openForm(lang.T("user_delete"), fmt.Sprintf(lang.T("user_delete_confirm"), name), "", "y/N", func(a *App, value string) (tea.Cmd, error) {
+			switch strings.ToLower(strings.TrimSpace(value)) {
+			case "y", "yes":
+				return a.startTask(lang.T("user_delete"), accountsChange(lang, func(store *user.Store, _ time.Time) error {
+					return store.Remove(name)
+				})), nil
+			default:
+				return nil, errors.New(lang.T("cancelled"))
+			}
+		})
+		return nil
+	}
+}
+
+// showUserSubscription opens the card grid with one account's client endpoints.
+// One URL serves every client, so the cards differ only in the client they are
+// meant for.
+func showUserSubscription(token string) actionFunc {
+	return func(a *App) tea.Cmd {
+		lang := a.lang
+		account, ok := accountByToken(token)
+		if !ok {
+			a.setToast(lang.T("users_missing"), true)
+			return nil
+		}
+		cfg := state.Load()
+		if cfg.Host() == "" {
+			a.setToast(lang.T("sub_need_domain"), true)
+			return nil
+		}
+		items := make([]linkItem, 0, len(subscribe.Clients))
+		for _, client := range subscribe.Clients {
+			items = append(items, linkItem{
+				label: subscriptionTitle(lang, client),
+				desc:  account.Name + " · " + clientDescription(lang, client),
+				value: subscribe.ClientLink(cfg, account.Token, client),
+			})
+		}
+		a.links = newLinksModel(lang.T("user_sub")+" · "+account.Name, items)
+		return nil
+	}
+}
+
+// showUserQR renders the account's import links, and the QR code of each, in the
+// task panel: a QR code is a picture, so it cannot live in the card grid.
+func showUserQR(token string) actionFunc {
+	return func(a *App) tea.Cmd {
+		lang := a.lang
+		return a.startTaskQR(lang.T("user_qr"), func(_ context.Context, r *taskReporter) error {
+			cfg := state.Load()
+			if cfg.Host() == "" {
+				r.Log(lang.T("sub_need_domain"))
+				return nil
+			}
+			account, ok := accountByToken(token)
+			if !ok {
+				return errors.New(lang.T("users_missing"))
+			}
+			for _, client := range subscribe.Clients {
+				payload := subscribe.ClientLink(cfg, account.Token, client)
+				r.Log(clientLabel(lang, client) + " · " + lang.T("sub_import_link") + ":")
+				r.Log(payload)
+				r.Log("")
+				qr, err := subscribe.QRCode(payload)
+				if err != nil {
+					r.Log(lang.T("sub_no_qrencode"))
+					r.Log("")
+					continue
+				}
+				for _, line := range strings.Split(qr, "\n") {
+					r.Log(line)
+				}
+				r.Log("")
+			}
+			return nil
+		})
+	}
+}
+
+// showUserLinks opens the card grid with the account's share links, one card per
+// protocol, for clients that import a single node instead of a subscription.
+func showUserLinks(token string) actionFunc {
+	return func(a *App) tea.Cmd {
+		lang := a.lang
+		account, ok := accountByToken(token)
+		if !ok {
+			a.setToast(lang.T("users_missing"), true)
+			return nil
+		}
+		cfg := state.Load()
+		if cfg.Host() == "" {
+			a.setToast(lang.T("sub_need_domain"), true)
+			return nil
+		}
+		links := subscribe.ShareLinks(cfg, account)
+		if len(links) == 0 {
+			a.setToast(lang.T("users_link_empty"), true)
+			return nil
+		}
+		items := make([]linkItem, 0, len(links))
+		for _, link := range links {
+			label := state.Labels[link.Key]
+			items = append(items, linkItem{label: label, desc: account.Name + " · " + label, value: link.URI})
+		}
+		a.links = newLinksModel(lang.T("user_links")+" · "+account.Name, items)
+		return nil
+	}
+}
+
+// statusKey maps an account status to its translation key.
+func statusKey(status user.Status) string {
+	switch status {
+	case user.StatusDisabled:
+		return "user_status_disabled"
+	case user.StatusExpired:
+		return "user_status_expired"
+	case user.StatusQuota:
+		return "user_status_quota"
+	default:
+		return "user_status_active"
+	}
+}
+
+// parseSize reads a quota in bytes. A bare number counts bytes; a suffix may be
+// KB, MB, GB or TB and is binary, and 0 means unlimited.
+func parseSize(s string) (int64, error) {
+	text := strings.ToUpper(strings.TrimSpace(s))
+	if text == "" {
+		return 0, errors.New("empty quota")
+	}
+	multiplier := int64(1)
+	for _, unit := range []struct {
+		suffix string
+		factor int64
+	}{
+		{"TB", 1 << 40},
+		{"GB", 1 << 30},
+		{"MB", 1 << 20},
+		{"KB", 1 << 10},
+	} {
+		if strings.HasSuffix(text, unit.suffix) {
+			multiplier = unit.factor
+			text = strings.TrimSpace(strings.TrimSuffix(text, unit.suffix))
+			break
+		}
+	}
+	value, err := strconv.ParseFloat(strings.TrimSpace(text), 64)
+	if err != nil || value < 0 {
+		return 0, errors.New("invalid quota")
+	}
+	return int64(value * float64(multiplier)), nil
+}
+
+// parseExpiry reads an expiry. It accepts a date, a day offset such as "30d", or
+// "0" and "never" for a permanent account. A date lasts to the end of that day,
+// so the operator does not lose a day to the timezone.
+func parseExpiry(s string, now time.Time) (time.Time, error) {
+	text := strings.ToLower(strings.TrimSpace(s))
+	switch text {
+	case "", "0", "never", "none":
+		return time.Time{}, nil
+	}
+	if strings.HasSuffix(text, "d") {
+		days, err := strconv.Atoi(strings.TrimSuffix(text, "d"))
+		if err != nil || days < 0 {
+			return time.Time{}, errors.New("invalid expiry")
+		}
+		return now.AddDate(0, 0, days), nil
+	}
+	date, err := time.ParseInLocation("2006-01-02", text, time.Local)
+	if err != nil {
+		return time.Time{}, errors.New("invalid expiry")
+	}
+	return date.AddDate(0, 0, 1).Add(-time.Second), nil
+}
+
+// formatSize renders a byte count the way the panel shows quotas.
+func formatSize(bytes int64) string {
+	switch {
+	case bytes >= 1<<40:
+		return fmt.Sprintf("%.1f TB", float64(bytes)/(1<<40))
+	case bytes >= 1<<30:
+		return fmt.Sprintf("%.1f GB", float64(bytes)/(1<<30))
+	case bytes >= 1<<20:
+		return fmt.Sprintf("%.0f MB", float64(bytes)/(1<<20))
+	case bytes >= 1<<10:
+		return fmt.Sprintf("%.0f KB", float64(bytes)/(1<<10))
+	default:
+		return fmt.Sprintf("%d B", bytes)
+	}
+}

@@ -1,0 +1,403 @@
+package subd
+
+import (
+	"context"
+	"encoding/base64"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/MinimaxFlora/EasySB/internal/state"
+	"github.com/MinimaxFlora/EasySB/internal/user"
+)
+
+// endpointNow is the clock every endpoint test runs on.
+var endpointNow = time.Date(2026, 3, 10, 12, 0, 0, 0, time.UTC)
+
+// nodeConfig is the node the subscription documents are rendered for.
+func nodeConfig() state.Config {
+	cfg := state.Default()
+	cfg.ServerIP = "203.0.113.10"
+	return cfg
+}
+
+// freePort asks the kernel for a port nothing listens on, so the service test
+// never competes with a real deployment for 8443.
+func freePort() (int, error) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
+	}
+	defer listener.Close()
+	return listener.Addr().(*net.TCPAddr).Port, nil
+}
+
+// endpoint is a subscription service backed by one temp account file, driven
+// through its handler rather than a real listener.
+type endpoint struct {
+	handler http.Handler
+	path    string
+	store   *user.Store
+}
+
+// newEndpoint writes the accounts the test asks for and returns the handler.
+func newEndpoint(t *testing.T, accounts ...user.User) *endpoint {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "users.json")
+	store, err := user.Load(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	for _, account := range accounts {
+		if err := store.Add(account); err != nil {
+			t.Fatalf("add %s: %v", account.Name, err)
+		}
+	}
+	if err := store.Save(); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	o := Options{
+		AccountsPath: path,
+		Node:         nodeConfig,
+		Now:          func() time.Time { return endpointNow },
+		Log:          func(string) {},
+	}
+	return &endpoint{handler: o.handler(), path: path, store: store}
+}
+
+// account builds one active account whose token is derived from its name.
+func account(name string, edit func(*user.User)) user.User {
+	u := user.New(name, state.Keys, endpointNow)
+	u.Token = "token-" + name
+	if edit != nil {
+		edit(&u)
+	}
+	return u
+}
+
+// get performs one subscription request with a User-Agent.
+func (e *endpoint) get(token, ua string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodGet, SubPath+token, nil)
+	if ua != "" {
+		req.Header.Set("User-Agent", ua)
+	}
+	rec := httptest.NewRecorder()
+	e.handler.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestEndpointServesSingBoxProfile(t *testing.T) {
+	e := newEndpoint(t, account("alice", nil))
+	rec := e.get("token-alice", "sing-box 1.10.0")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %q", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Fatalf("content type = %q", ct)
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("cache control = %q, a subscription carries credentials", got)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "$schema") || !strings.Contains(body, "EasySB-alice") {
+		t.Fatalf("unexpected sing-box profile:\n%s", body)
+	}
+}
+
+func TestEndpointServesMihomoProfile(t *testing.T) {
+	e := newEndpoint(t, account("alice", nil))
+	rec := e.get("token-alice", "clash-verge/v2.0 mihomo")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %q", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/yaml") {
+		t.Fatalf("content type = %q", ct)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "proxies:") {
+		t.Fatalf("unexpected mihomo profile:\n%s", body)
+	}
+}
+
+func TestEndpointServesBase64ForUnknownClients(t *testing.T) {
+	e := newEndpoint(t, account("alice", nil))
+	rec := e.get("token-alice", "v2rayN/6.0")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %q", rec.Code, rec.Body.String())
+	}
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(rec.Body.String()))
+	if err != nil {
+		t.Fatalf("body is not base64: %v", err)
+	}
+	if !strings.Contains(string(raw), "vless://") {
+		t.Fatalf("base64 document missing share links:\n%s", raw)
+	}
+}
+
+func TestEndpointClientOverride(t *testing.T) {
+	e := newEndpoint(t, account("alice", nil))
+	req := httptest.NewRequest(http.MethodGet, SubPath+"token-alice?client=mihomo", nil)
+	req.Header.Set("User-Agent", "sing-box 1.10.0")
+	rec := httptest.NewRecorder()
+	e.handler.ServeHTTP(rec, req)
+
+	if body := rec.Body.String(); !strings.Contains(body, "proxies:") {
+		t.Fatalf("client override ignored:\n%s", body)
+	}
+}
+
+func TestEndpointRefusesInactiveAccounts(t *testing.T) {
+	cases := []struct {
+		name    string
+		account user.User
+		want    int
+		reason  string
+	}{
+		{"disabled", account("off", func(u *user.User) { u.Enabled = false }), http.StatusForbidden, "disabled"},
+		{"expired", account("old", func(u *user.User) {
+			u.ExpireAt = endpointNow.Add(-time.Hour)
+		}), http.StatusForbidden, "expired"},
+		{"over quota", account("full", func(u *user.User) {
+			u.QuotaBytes = 100
+			u.UsedBytes = 100
+		}), http.StatusForbidden, "quota"},
+		{"no protocol", account("bare", func(u *user.User) {
+			for _, key := range state.Keys {
+				u.Deselect(key)
+			}
+		}), http.StatusForbidden, "protocol"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEndpoint(t, tc.account)
+			rec := e.get(tc.account.Token, "sing-box 1.10.0")
+			if rec.Code != tc.want {
+				t.Fatalf("status = %d, want %d", rec.Code, tc.want)
+			}
+			if !strings.Contains(strings.ToLower(rec.Body.String()), tc.reason) {
+				t.Fatalf("body %q should mention %q", rec.Body.String(), tc.reason)
+			}
+		})
+	}
+}
+
+func TestEndpointRefusesUnknownToken(t *testing.T) {
+	e := newEndpoint(t, account("alice", nil))
+	for _, token := range []string{"token-bob", "", "%20"} {
+		rec := e.get(token, "sing-box 1.10.0")
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("token %q: status = %d, want 404", token, rec.Code)
+		}
+	}
+}
+
+func TestEndpointUnknownPathsAreNotFound(t *testing.T) {
+	e := newEndpoint(t, account("alice", nil))
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	e.handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+func TestEndpointRejectsWriteMethods(t *testing.T) {
+	e := newEndpoint(t, account("alice", nil))
+	req := httptest.NewRequest(http.MethodPost, SubPath+"token-alice", nil)
+	rec := httptest.NewRecorder()
+	e.handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want 405", rec.Code)
+	}
+	if allow := rec.Header().Get("Allow"); !strings.Contains(allow, "GET") {
+		t.Fatalf("allow = %q", allow)
+	}
+}
+
+func TestEndpointHEADHasNoBody(t *testing.T) {
+	e := newEndpoint(t, account("alice", nil))
+	req := httptest.NewRequest(http.MethodHead, SubPath+"token-alice", nil)
+	req.Header.Set("User-Agent", "sing-box 1.10.0")
+	rec := httptest.NewRecorder()
+	e.handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if rec.Body.Len() != 0 {
+		t.Fatalf("HEAD returned a body: %q", rec.Body.String())
+	}
+}
+
+func TestEndpointIgnoresExtraPathSegments(t *testing.T) {
+	e := newEndpoint(t, account("alice", nil))
+	// Clients append their own suffixes and query strings to the URL the panel
+	// shows, and those must not break the lookup.
+	rec := e.get("token-alice/extra?x=1", "sing-box 1.10.0")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %q", rec.Code, rec.Body.String())
+	}
+}
+
+func TestEndpointReportsUserinfo(t *testing.T) {
+	e := newEndpoint(t, account("alice", func(u *user.User) {
+		u.QuotaBytes = 10 << 30
+		u.UploadBytes = 1 << 20
+		u.DownloadBytes = 2 << 20
+		u.ExpireAt = endpointNow.Add(48 * time.Hour)
+	}))
+	rec := e.get("token-alice", "clash-verge")
+	got := rec.Header().Get("Subscription-Userinfo")
+	want := "upload=1048576; download=2097152; total=10737418240; expire=" +
+		strconv.FormatInt(endpointNow.Add(48*time.Hour).Unix(), 10)
+	if got != want {
+		t.Fatalf("userinfo = %q, want %q", got, want)
+	}
+}
+
+func TestEndpointReflectsAccountEdits(t *testing.T) {
+	e := newEndpoint(t, account("alice", nil))
+	if rec := e.get("token-alice", "sing-box"); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d before the edit", rec.Code)
+	}
+	// The panel edits the same file while the service runs; the service must
+	// pick the change up without a restart.
+	if err := e.store.Update("alice", func(u *user.User) error {
+		u.Enabled = false
+		return nil
+	}); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if rec := e.get("token-alice", "sing-box"); rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d after disabling the account", rec.Code)
+	}
+}
+
+func TestEndpointLoadsAccountsPerRequest(t *testing.T) {
+	e := newEndpoint(t, account("alice", nil))
+	// A second account appears while the service is running.
+	other := account("bob", nil)
+	if err := e.store.Add(other); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	if rec := e.get(other.Token, "sing-box"); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d for a freshly added account", rec.Code)
+	}
+}
+
+func TestTokenOf(t *testing.T) {
+	cases := map[string]string{
+		"/sub/abc":             "abc",
+		"/sub/abc/":            "abc",
+		"/sub/abc/def":         "abc",
+		"/sub/":                "",
+		"/other/abc":           "",
+		"/sub/abc/../def":      "abc",
+		"/sub/a%20b":           "a%20b",
+		"/sub/token-with-dash": "token-with-dash",
+	}
+	for path, want := range cases {
+		if got := tokenOf(path); got != want {
+			t.Errorf("tokenOf(%q) = %q, want %q", path, got, want)
+		}
+	}
+}
+
+func TestClientFromUserAgent(t *testing.T) {
+	cases := map[string]string{
+		"sing-box 1.10.0":   "singbox",
+		"SFA/1.9.0":         "singbox",
+		"clash-verge/1.5.0": "mihomo",
+		"mihomo/1.18.0":     "mihomo",
+		"v2rayN/6.31":       "v2ray",
+		"":                  "v2ray",
+		"some/scanner":      "v2ray",
+	}
+	for ua, want := range cases {
+		if got := string(clientFromUserAgent(ua)); got != want {
+			t.Errorf("clientFromUserAgent(%q) = %q, want %q", ua, got, want)
+		}
+	}
+}
+
+func TestUserinfoOmitsUnsetExpiry(t *testing.T) {
+	got := userinfo(user.User{QuotaBytes: 1024})
+	if strings.Contains(got, "expire") {
+		t.Fatalf("an account without an expiry should not report one: %q", got)
+	}
+	if want := "upload=0; download=0; total=1024"; got != want {
+		t.Fatalf("userinfo = %q, want %q", got, want)
+	}
+}
+
+func TestTransportUsesPlainHTTPWithoutCertificate(t *testing.T) {
+	o := Options{}
+	cfg := nodeConfig()
+	addr, certFile, keyFile := o.transport(cfg)
+	if !strings.HasSuffix(addr, ":8443") {
+		t.Fatalf("addr = %q, want the default subscription port", addr)
+	}
+	if certFile != "" || keyFile != "" {
+		t.Fatalf("no certificate should be used without a domain: %q %q", certFile, keyFile)
+	}
+}
+
+func TestRunServesAndStops(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "users.json")
+	store, err := user.Load(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if err := store.Add(account("alice", nil)); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+
+	// Bind an ephemeral port by asking the node state for a port the test found
+	// free, so the run loop is exercised without touching the real 8443.
+	probe, err := freePort()
+	if err != nil {
+		t.Fatalf("probe: %v", err)
+	}
+	cfg := nodeConfig()
+	cfg.SubServePort = probe
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ready := make(chan string, 1)
+	done := make(chan error, 1)
+	go func() {
+		done <- Options{
+			AccountsPath: path,
+			Node:         func() state.Config { return cfg },
+			Now:          func() time.Time { return endpointNow },
+			Log:          func(string) {},
+			Ready:        ready,
+		}.Run(ctx)
+	}()
+
+	addr := <-ready
+	resp, err := http.Get("http://" + addr + SubPath + "token-alice")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("run: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run did not stop after the context was cancelled")
+	}
+}

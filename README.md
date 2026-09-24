@@ -58,7 +58,7 @@ EasySB is a 5-in-1 sing-box deployment script for Linux VPS. It brings protocol 
 ```text
 .
 ├── main.go                       # Go entrypoint (TUI)
-├── install.sh                    # One-click installer (deps / binary / Nerd Font)
+├── install.sh                    # One-click installer (deps / binary)
 ├── VERSION                       # Single source of truth for the release tag
 ├── AGENTS.md                     # Guide for AI agents and contributors
 ├── go.mod                        # Go module definition
@@ -97,7 +97,7 @@ Ports are prompted one by one: Enter takes the default, `r` picks a random port,
 
 ## Quick Start
 
-One-click install (detects the system and architecture, fills in runtime dependencies, prefers a prebuilt binary with a source-build fallback, and installs a Nerd Font in local graphical environments):
+One-click install (detects the system and architecture, fills in runtime dependencies, prefers a prebuilt binary with a source-build fallback):
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/MinimaxFlora/EasySB/master/install.sh)
@@ -127,15 +127,18 @@ Supports Debian / Ubuntu (systemd) and Alpine (OpenRC); run as root.
 
 | Capability | Description |
 | :--- | :--- |
-| 5-in-1 deployment | One shared UUID and password, generated at install; ports allocated one by one |
+| 5-in-1 deployment | Ports allocated one by one; the node keeps only what no account owns (the Reality keypair), because credentials belong to accounts |
+| Accounts and traffic | Per-account credentials for every protocol, traffic quota, expiry date, protocol selection, enable switch, usage reset and token rotation; disabled, expired and over-quota accounts drop out of the core automatically |
 | Core management | Install, replace or remove stable and alpha builds; replace keeps the existing config |
 | Version panel | Script version, local core, stable and alpha versions on top of the menu with update markers |
 | Device panel | Local IPv4/IPv6, swap, uptime, CPU cores and load, memory, disk, host, kernel, OS and timezone |
+| System info | The runtime the panel is running on, and the one place the look changes from inside the interface: `↑`/`↓` + `Enter` or `A`-`D` picks a skin, `T` flips dark/light, `I` swaps Unicode markers for ASCII. Every choice lands on the next frame, and the glyph preview row shows before a card anywhere else does whether the terminal font can draw the markers. The status strip and the hints stay put while the body swaps |
 | Copy links | Subscription and share-link results render as a card grid inside the same fixed panel as the main menu. Subscription cards show the subscription name (sing-box / mihomo / Base64) plus a format note, share-link cards show the protocol name, and neither draws the host or the full URL. Select with `↑`/`↓`/`←`/`→` (or a number key), `Enter` copies the card, `C` copies all, `Q` quits the program, `Esc` returns. A copied card turns green and copy-all reports in the header. Narrow or short windows reflow the grid and truncate content, never overflowing the panel. On log screens `C` copies the log (OSC52) |
-| Certificates | acme.sh `--standalone` issue and renew, list, switch active, remove; handles 80 / 443 occupancy |
-| Subscription | Renders `templates/config/tun-fakeip.json` (sing-box) and `templates/config/mihomo.yaml` (mihomo), outputs files, QR codes and share links, hosted by nginx |
+| Certificates | acme.sh `--standalone` issue, list, switch active and remove; the preflight check covers socat and DNS before an attempt is spent, the core is stopped to free port 80 during the challenge, and acme.sh is installed with `--nocron` because a minimal image has no cron: renewal is driven by the panel's own systemd timer (or OpenRC script), which also reloads sing-box and the subscription service |
+| Subscription | One URL per account (`/sub/<token>`) served by the built-in service, which picks the format from the client (`templates/config/tun-fakeip.json`, `templates/config/mihomo.yaml` or Base64 share links) and reports usage in `Subscription-Userinfo`; QR codes and per-protocol share links in the panel |
 | Port hopping | Hysteria2 defaults to `2080:3000`, auto-applies iptables / nftables DNAT and a boot restore unit |
 | Service control | Start, stop, restart, status and enable-on-boot |
+| BBR acceleration | Shows the running kernel, congestion control, queue discipline and installed kernels; enabling BBR loads `tcp_bbr`, writes `net.core.default_qdisc` and `net.ipv4.tcp_congestion_control` and persists them in `/etc/sysctl.d/99-easysb-bbr.conf` and `/etc/modules-load.d/easysb-bbr.conf` so the choice survives a reboot; installs a prebuilt BBRv3 kernel published by [Linux-BBR-v3](https://github.com/MinimaxFlora/Linux-BBR-v3) (standard or Max, x86_64 and arm64, downloaded straight from the release), or lists every published version to pick one from; the kernel and its settings can be removed from the panel again. Versions come from the kernel project itself — its version stamp and release list — so a kernel published there shows up here without a release of this panel |
 | Self-update | Pulls the latest script from this repository and replaces it after validation |
 | Bilingual | Language picked on first screen, consistent Chinese and English throughout |
 
@@ -144,17 +147,20 @@ Supports Debian / Ubuntu (systemd) and Alpine (OpenRC); run as root.
 ## Interactive Menu
 
 ```text
-Main menu
+Main menu (one card, two columns, ten entries)
 ├── Core management      Install stable / alpha, switch channel, update current channel
 ├── Node management      One-click deploy, enable protocols, parameters (UUID / password / hop / ports / SNI / Reality keys)
-├── Domain management    Issue / renew, list, switch active and remove certificates
-├── Subscription         Regenerate, subscription URL, QR code and per-protocol share links
+├── Domain management    Issue (with preflight checks), renew now, renewal timer, list, switch active and remove certificates
+├── Subscription         One account's URL, QR code and share links (pick the account first, then the panel prints the endpoint prefix); install / restart / status of the subscription service
+├── Accounts             List, create, rename, remark, quota, expiry, protocol selection, enable / disable, usage reset, token rotation, delete
 ├── Service management   Start, stop, restart, status, enable / disable and port-hopping rules
+├── System info          Runtime, and the one place the look changes from inside the interface: skin / palette / markers / language, terminal and host details
+├── BBR                  Status (kernel, congestion control, queue discipline, installed kernels), enable BBR with fq / fq_codel / fq_pie / cake, install the standard or Max BBRv3 kernel, pick any published version from a list, remove it, clear the settings
 ├── Update version       Pull the latest EasySB release
 └── Uninstall script     Remove EasySB completely
 ```
 
-Files: server config `/etc/sing-box/config.json`, state `/etc/sing-box/easysb.conf`, shortcut `/usr/local/bin/sb`.
+Files: server config `/etc/sing-box/config.json`, state `/etc/sing-box/easysb.conf`, accounts `/etc/sing-box/easysb-users.json`, shortcut `/usr/local/bin/sb`.
 
 ---
 
@@ -163,10 +169,15 @@ Files: server config `/etc/sing-box/config.json`, state `/etc/sing-box/easysb.co
 | Flag | Description |
 | :--- | :--- |
 | `--language C\|E` | Preset the UI language, then open the menu |
-| `--icons on\|off` | Override the Nerd Font icon detection result |
+| `--icons symbols\|ascii` | Marker set: Unicode symbols (default), or ASCII when the terminal cannot render them (also `on`/`off`; borders still follow the skin) |
 | `--theme auto\|dark\|light` | Override the terminal background detection (default `auto`) |
+| `--skin jade\|aurora\|ember\|graphite` | Pick the interface skin, also `a`-`d` (default `jade`, env `EASYSB_SKIN`) |
 | `--apply-firewall` | Restore port-hopping rules only, used by the boot unit |
-| `--render --width N --height N` | Render the dashboard once and exit (debug) |
+| `--renew-certs` | Renew every certificate, reloading sing-box and the subscription service only when one was actually renewed (called by the renewal timer) |
+| `--install-renew-timer` | Install the renewal timer (systemd timer / OpenRC); the unit names this binary's own path |
+| `--remove-renew-timer` | Remove the renewal timer |
+| `--render --width N --height N` | Render the dashboard once and exit (debug; add `--screen system` to draw a subpage) |
+| `--serve` | Run the subscription service and the usage accounting loop (backs `easysb.service`) |
 | `--version` | Print the version and build hash |
 | `--help` | Print usage |
 
@@ -194,25 +205,29 @@ sing-box check -c templates/vless-vision-reality/config_server.json
 
 ## Subscription
 
-The subscription is rendered from `templates/config/tun-fakeip.json` (sing-box) and `templates/config/mihomo.yaml` (mihomo / Clash Meta), and delivered in three ways:
+Every account has one subscription URL, and the document behind it is rendered from `templates/config/tun-fakeip.json` (sing-box) or `templates/config/mihomo.yaml` (mihomo / Clash Meta) — or a Base64 share-link document for everything else. Delivery:
 
-1. Local files under `/etc/sing-box/subscribe/`.
-2. A terminal QR code, scannable once `qrencode` is installed.
-3. Five per-protocol share links covering mainstream clients.
+1. The built-in subscription service (`easysb --serve`, installed as `easysb.service` from the panel) answers `/sub/<token>` on `SUB_SERVE_PORT` (default `8443`).
+2. A terminal QR code per client format, scannable once `qrencode` is installed.
+3. Five per-protocol share links per account.
 
-It is also hosted by nginx as a lightweight static site on port `8443`. The legacy path `/subscribe` serves the sing-box JSON profile, and each client format has its own UUID-tokenised endpoint:
+The format is negotiated from the User-Agent, so one URL works everywhere:
 
-| Client | Endpoint | Content |
-| :--- | :--- | :--- |
-| sing-box (SFM / SFA / SFI) | `/singbox/<uuid>` | JSON profile |
-| mihomo / Clash Meta / luci-app-nikki | `/mihomo/<uuid>` | Complete YAML profile |
-| v2rayN / passwall / passwall2 / homeproxy | `/v2ray/<uuid>` | Base64 share-link document |
+| Client | Response |
+| :--- | :--- |
+| sing-box (SFM / SFA / SFI) | JSON profile |
+| mihomo / Clash Meta / luci-app-nikki | Complete YAML profile |
+| v2rayN / passwall / passwall2 / homeproxy | Base64 share-link document |
 
-The `/v2ray/<uuid>` document is the universal format. v2rayN imports it directly, and the OpenWrt proxy clients `passwall`, `passwall2` and `homeproxy` base64-decode the same document before parsing it, so a single endpoint covers all of them. `luci-app-nikki` uses the mihomo core, so it consumes the `/mihomo/<uuid>` YAML profile, which carries the top-level `proxies` key it validates for.
+The Base64 document is the universal format. v2rayN imports it directly, and the OpenWrt proxy clients `passwall`, `passwall2` and `homeproxy` base64-decode the same document before parsing it. `luci-app-nikki` uses the mihomo core and validates a top-level `proxies` key, which the mihomo profile carries. `?client=singbox|mihomo|v2ray` overrides the detection.
 
 Every share link keeps the canonical hyphenated UUID. `homeproxy` validates the node UUID with the LuCI `uuid` check and rejects the 32-character hyphen-less form, so the compact form must not be emitted.
 
-The UUID acts as the access token, so treat the URLs as secrets. The sing-box QR payload is wrapped as `sing-box://import-remote-profile?url=...` for one-scan import; mihomo and v2rayN QR payloads are the plain subscription URL, because Clash-family scanners fetch the scanned text directly as a profile URL (the `clash://install-config?url=...` deep link only works when clicked from a browser). sing-box listens for WebSocket directly; nginx only serves static files and never reverse-proxies.
+The account token in the URL is the access secret, and it is also the core user name the usage counters are keyed by. Revoke for one person by rotating that account's token or disabling it; nobody else is affected. Renaming an account leaves its token and client imports alone.
+
+Each response carries `Subscription-Userinfo: upload=<bytes>; download=<bytes>; total=<bytes>; expire=<unix seconds>`, which Clash Verge Rev, Clash Orbit and v2rayN display as remaining traffic and days. An account that is disabled, expired or over quota gets `403` with a plain-text reason instead of a profile with no nodes in it, and the core stops accepting its credentials on the next accounting cycle. Traffic is sampled every `SUB_SYNC_SECONDS` (default `300`).
+
+The service terminates TLS itself when a real certificate is installed for the domain; otherwise it serves plain HTTP and the panel warns, because a subscription carries credentials. The sing-box QR payload is wrapped as `sing-box://import-remote-profile?url=...` for one-scan import; mihomo and v2rayN QR payloads are the plain subscription URL, because Clash-family scanners fetch the scanned text directly as a profile URL (the `clash://install-config?url=...` deep link only works when clicked from a browser). sing-box listens for WebSocket directly; the subscription service never proxies traffic.
 
 The mihomo profile mirrors a full desktop setup: `external-controller` on `0.0.0.0:9090` with `secret`, the Zashboard web UI via `external-ui-url`, fake-ip DNS with `fake-ip-filter`, `load-balance` / `url-test` / `select` proxy groups, and `GEOSITE` / `GEOIP` rules. Import it only on machines you trust on your LAN.
 
@@ -251,7 +266,7 @@ The unit restores rules via `easysb --apply-firewall`. It is not created when Hy
 | Install | Downloads and verifies for the architecture, writes `/etc/sing-box/sing-box` |
 | Replace | Swaps the binary only, keeps `/etc/sing-box/config.json` |
 | Uninstall | Stops the service and removes the core |
-| Release | `.github/workflows/easysb-go-release.yml` cross-compiles every platform binary and publishes them under the `v<VERSION>` tag (currently `v3.0.0`) |
+| Release | `.github/workflows/easysb-go-release.yml` cross-compiles every platform binary and publishes them under the `v<VERSION>` tag (currently `v4.1.0`) |
 
 ---
 
@@ -269,8 +284,8 @@ go test ./...
 # Render the dashboard once without interaction (preview / screenshot / debug)
 ./easysb --render --width 100 --height 34
 
-# Switch language, icon mode and theme
-./easysb --language E --icons off --theme dark
+# Switch language, icon mode, theme and skin
+./easysb --language E --icons ascii --theme dark --skin graphite
 ```
 
 ---

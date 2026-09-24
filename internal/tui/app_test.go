@@ -4,21 +4,33 @@ import (
 	"context"
 	"errors"
 	"image/color"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/MinimaxFlora/EasySB/internal/bbr"
 	"github.com/MinimaxFlora/EasySB/internal/i18n"
+	"github.com/MinimaxFlora/EasySB/internal/prefs"
 	"github.com/MinimaxFlora/EasySB/internal/state"
 	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
 	"github.com/MinimaxFlora/EasySB/internal/theme"
+	"github.com/MinimaxFlora/EasySB/internal/user"
 )
 
 func press(code rune) tea.KeyPressMsg {
 	return tea.KeyPressMsg(tea.Key{Code: code})
 }
+
+// ansiSGR matches the colour sequences the panel wraps its text in, so a test can
+// look for the text itself.
+var ansiSGR = regexp.MustCompile("\x1b\\[[0-9;]*m")
+
+func stripANSI(s string) string { return ansiSGR.ReplaceAllString(s, "") }
 
 func typeRune(r rune) tea.KeyPressMsg {
 	return tea.KeyPressMsg(tea.Key{Code: r, Text: string(r)})
@@ -26,6 +38,9 @@ func typeRune(r rune) tea.KeyPressMsg {
 
 func newTestApp(t *testing.T) *App {
 	t.Helper()
+	// The interface choices are written to disk, so they go to a temporary file
+	// instead of the real panel directory.
+	t.Setenv(prefs.PathEnv, filepath.Join(t.TempDir(), "easysb-ui.conf"))
 	a := New("test", i18n.Chinese)
 	m, _ := a.Update(tea.WindowSizeMsg{Width: 100, Height: 34})
 	a = m.(*App)
@@ -113,7 +128,8 @@ func TestRecursiveNavigation(t *testing.T) {
 		t.Fatalf("expected params menu, got %s", a.current().id)
 	}
 
-	for i := 0; i < 3; i++ {
+	// ports is the second row of the params menu, right below the hop range.
+	for i := 0; i < 1; i++ {
 		m, _ = a.Update(press(tea.KeyDown))
 		a = m.(*App)
 	}
@@ -178,16 +194,49 @@ func TestRootMenuHasNoNav(t *testing.T) {
 	if a.hasNavRow() {
 		t.Fatalf("root menu should not show a navigation row")
 	}
-	if got := len(a.current().nodes); got != 7 {
-		t.Fatalf("root should have 7 entries, got %d", got)
-	}
-	var hasUninstall bool
+	// The root entries are the panel's map: every screen has to be reachable from
+	// here, and from the navigation grouping as well, or it is hidden behind a
+	// scroll nobody knows about.
+	want := []string{"kernel", "node", "domain", "subscribe", "users", "service", "system", "bbr", "script-update", "uninstall"}
+	got := map[string]bool{}
 	for _, n := range a.current().nodes {
-		if n.id == "uninstall" {
-			hasUninstall = true
+		got[n.id] = true
+	}
+	for _, id := range want {
+		if !got[id] {
+			t.Errorf("root menu is missing %q", id)
 		}
 	}
-	if !hasUninstall {
+	if len(a.current().nodes) != len(want) {
+		t.Errorf("root has %d entries, expected %d", len(a.current().nodes), len(want))
+	}
+	placed := map[string]bool{}
+	for _, g := range a.style().Met.Groups {
+		for _, id := range g.IDs {
+			placed[id] = true
+		}
+	}
+	for _, n := range a.current().nodes {
+		if !placed[n.id] {
+			t.Errorf("entry %q is in no navigation group of the default skin", n.id)
+		}
+	}
+	// Every skin carries its own grouping, and an entry missing from one of them
+	// disappears from that skin's navigation column without any other symptom.
+	for _, skin := range theme.Skins() {
+		grouped := map[string]bool{}
+		for _, g := range skin.Met.Groups {
+			for _, id := range g.IDs {
+				grouped[id] = true
+			}
+		}
+		for _, n := range a.current().nodes {
+			if !grouped[n.id] {
+				t.Errorf("skin %q does not group the root entry %q", skin.ID, n.id)
+			}
+		}
+	}
+	if !got["uninstall"] {
 		t.Fatalf("uninstall should be in the root menu")
 	}
 	view := a.View().Content
@@ -242,8 +291,13 @@ func TestNumberedMenuAndDigitSelection(t *testing.T) {
 	}
 	m, _ := a.Update(press('5'))
 	a = m.(*App)
+	if got := a.selected().id; got != "users" {
+		t.Fatalf("digit 5 should select accounts, got %s", got)
+	}
+	m, _ = a.Update(press('6'))
+	a = m.(*App)
 	if got := a.selected().id; got != "service" {
-		t.Fatalf("digit 5 should select service, got %s", got)
+		t.Fatalf("digit 6 should select service, got %s", got)
 	}
 	m, _ = a.Update(press(tea.KeyEnter))
 	a = m.(*App)
@@ -304,21 +358,30 @@ func TestFormValidationKeepsOpen(t *testing.T) {
 
 func TestDashboardPanelsAndIcons(t *testing.T) {
 	a := newTestApp(t)
-	// Uniform spacing plus the fuller device card needs a little more room, so
-	// use a terminal tall enough to show the device card and the hint box.
 	a.height = 52
 	view := a.View().Content
-	for _, want := range []string{
-		i18n.Chinese.T("panel_device"),
-		i18n.Chinese.T("panel_hints"),
-	} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("view missing panel %q:\n%s", want, view)
+	if !strings.Contains(view, i18n.Chinese.T("panel_hints")) {
+		t.Fatalf("view missing the hint box:\n%s", view)
+	}
+	if !strings.Contains(view, i18n.Chinese.T("menu_main")) {
+		t.Fatalf("view missing the main menu card:\n%s", view)
+	}
+	// The host card belongs to the system screen now: the main menu keeps its
+	// width for the entries and their two columns.
+	for _, gone := range []string{i18n.Chinese.T("panel_device"), i18n.Chinese.T("panel_accounts")} {
+		if strings.Contains(view, gone) {
+			t.Fatalf("main menu should not show %q:\n%s", gone, view)
 		}
 	}
 	if strings.Contains(view, "[1]") {
 		t.Fatalf("menu should use icons instead of bracketed numbers:\n%s", view)
 	}
+
+	a.openSystem()
+	if got := a.View().Content; !strings.Contains(got, i18n.Chinese.T("panel_device")) {
+		t.Fatalf("system screen should show the host card:\n%s", got)
+	}
+	a.closeSystem()
 
 	// The node card lives inside node management instead of the main menu.
 	a.push(buildNode())
@@ -333,20 +396,105 @@ func TestDashboardPanelsAndIcons(t *testing.T) {
 
 func TestDashboardShowsLogoAndMenuDescriptions(t *testing.T) {
 	a := New("test", i18n.Chinese)
-	a.width, a.height = 100, 46
+	a.width, a.height = 100, 48
 	a.sized = true
 	a.status = sysinfo.Collect("test")
 	a.ready = true
 
-	view := a.dashboard()
+	view := stripANSI(a.dashboard())
 	if !strings.Contains(view, "██████") {
 		t.Fatalf("tall dashboard should show the block-letter wordmark:\n%s", view)
 	}
-	if !strings.Contains(view, i18n.Chinese.T("menu_kernel")) {
-		t.Fatalf("root menu should describe each entry:\n%s", view)
+	// The wordmark and the vitals share one card, in that order, above the menu.
+	lines := strings.Split(view, "\n")
+	at := func(s string) int {
+		for i, line := range lines {
+			if strings.Contains(line, s) {
+				return i
+			}
+		}
+		return -1
 	}
-	if !strings.Contains(view, i18n.Chinese.T("panel_overview")) {
-		t.Fatalf("dashboard should show the overview section:\n%s", view)
+	mark, vitals, menu := at("██████"), at(i18n.Chinese.T("status_autostart")), at(i18n.Chinese.T("menu_main"))
+	if mark < 0 || vitals < 0 || menu < 0 {
+		t.Fatalf("wordmark %d, vitals %d, menu %d — one of them is missing:\n%s", mark, vitals, menu, view)
+	}
+	if !(mark < vitals && vitals < menu) {
+		t.Fatalf("expected wordmark(%d) then vitals(%d) then menu(%d):\n%s", mark, vitals, menu, view)
+	}
+	// The vitals are inside the wordmark's card: a rule is the only thing
+	// separating the two halves, and the card's own border is not one.
+	rule := -1
+	for i := mark; i < vitals; i++ {
+		inner := strings.Trim(strings.TrimSpace(strings.Trim(lines[i], "│")), "─═")
+		if inner == "" && strings.ContainsAny(lines[i], "─═") {
+			rule = i
+			break
+		}
+	}
+	if rule < 0 {
+		t.Fatalf("no rule between the wordmark and the vitals:\n%s", view)
+	}
+	// The entries live in their own box under the 看板: that is the frame every
+	// page of the panel shares — 看板 on top, entries below — and it is what the
+	// lines between the two halves have to prove.
+	split := -1
+	for i := vitals; i < menu; i++ {
+		if strings.ContainsAny(lines[i], "╭╰") {
+			split = i
+			break
+		}
+	}
+	if split < 0 {
+		t.Fatalf("the menu is not in a box of its own after the 看板:\n%s", view)
+	}
+	// The hints follow the menu instead of being pinned to the bottom, which is
+	// what leaves the gap the user asked to close: the menu card's bottom border
+	// and the explanation line are all that sit between them.
+	hint := at(i18n.Chinese.T("panel_hints"))
+	last := at("[ 10 ]")
+	if hint < 0 || last < 0 {
+		t.Fatalf("hints %d, last entry %d:\n%s", hint, last, view)
+	}
+	if hint-last > 4 {
+		t.Fatalf("hints at line %d, last entry at %d — they are not right under the menu:\n%s", hint, last, view)
+	}
+	if hint+3 >= len(lines)-1 {
+		t.Fatalf("hints at line %d of %d lines — they are pinned to the bottom:\n%s", hint, len(lines), view)
+	}
+}
+
+// TestEverySectionHasItsOwnPanel guards the frame the panel is built around: every
+// second-level page shows a 看板 of its own in the top box and its entries in the
+// bottom one, so moving between pages swaps those two contents and nothing else.
+func TestEverySectionHasItsOwnPanel(t *testing.T) {
+	ids := []string{"kernel", "node", "domain", "subscribe", "users", "service", "bbr", "script-update", "uninstall"}
+	seen := make(map[string]string, len(ids))
+	for _, id := range ids {
+		a := newTestApp(t)
+		a.width, a.height = 100, 40
+		a.section = id
+		title, rows := a.sectionPanel(a.width)
+		if strings.TrimSpace(title) == "" {
+			t.Errorf("section %q has no 看板 title", id)
+		}
+		if len(rows) == 0 {
+			t.Errorf("section %q has no 看板 rows", id)
+		}
+		if first, ok := seen[title]; ok {
+			t.Errorf("sections %q and %q share the 看板 title %q", first, id, title)
+		}
+		seen[title] = id
+
+		// The rendered page is two boxes: the 看板 and, under it, the entries.
+		view := stripANSI(a.dashboard())
+		boxes := strings.Count(view, "╭")
+		if boxes < 2 {
+			t.Errorf("section %q renders %d boxes, want the 看板 and the entries:\n%s", id, boxes, view)
+		}
+		if !strings.Contains(view, title) {
+			t.Errorf("section %q does not render its 看板 title %q:\n%s", id, title, view)
+		}
 	}
 }
 
@@ -369,14 +517,184 @@ func TestDashboardFitsNarrowWidths(t *testing.T) {
 	}
 }
 
+func TestFitsNarrowWidthsEveryScreen(t *testing.T) {
+	// The main menu gained a second column and a section of its own, so every
+	// screen is checked at the widths where columns start to collapse.
+	for _, lang := range []i18n.Lang{i18n.Chinese, i18n.English} {
+		for _, screen := range []string{"", "bbr", "bbr-qdisc", "system"} {
+			for _, w := range []int{40, 60, 76, 100} {
+				a := New("test", lang)
+				a.sized = true
+				a.status = sysinfo.Collect("test")
+				a.ready = true
+				for _, line := range strings.Split(a.SnapshotScreen(screen, w, 40), "\n") {
+					if got := lipgloss.Width(line); got > w {
+						t.Fatalf("lang %s screen %q width %d: line is %d cells: %q", lang, screen, w, got, line)
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestBBRMenuShape(t *testing.T) {
+	a := newTestApp(t)
+	if n := len(a.current().nodes); n != 10 {
+		t.Fatalf("the main menu has %d entries, want 10", n)
+	}
+	// The tenth entry opens a section of its own.
+	var bbrNode *node
+	for _, n := range a.current().nodes {
+		if n.id == "bbr" {
+			bbrNode = n
+		}
+	}
+	if bbrNode == nil || bbrNode.sub == nil {
+		t.Fatal("the main menu has no BBR section")
+	}
+	// Two columns of five fill the card: the second column starts at the entries
+	// after the fifth, and the last entry stays reachable on the same screen.
+	view := a.SnapshotScreen("", 100, 40)
+	for _, want := range []string{i18n.Chinese.T("kernel_title"), i18n.Chinese.T("svc_title"), i18n.Chinese.T("menu_uninstall")} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("main menu missing %q:\n%s", want, view)
+		}
+	}
+
+	qdisc := a.SnapshotScreen("bbr-qdisc", 100, 40)
+	for _, q := range []string{"fq", "fq_codel", "fq_pie", "cake"} {
+		if !strings.Contains(qdisc, q) {
+			t.Fatalf("queue discipline menu missing %q:\n%s", q, qdisc)
+		}
+	}
+}
+
+func TestMainMenuArrowKeysFollowTheColumns(t *testing.T) {
+	a := newTestApp(t)
+	if a.menuColumns() != 2 {
+		t.Fatalf("the main menu should be drawn in two columns at %d columns wide", a.width)
+	}
+	half := len(a.current().nodes) / 2
+
+	// Down walks the left column and stays in it: the entries below the fold are
+	// the ones in the other column, so a step across would look like a jump.
+	for i := 0; i < half-1; i++ {
+		m, _ := a.Update(press(tea.KeyDown))
+		a = m.(*App)
+	}
+	if a.index != half-1 {
+		t.Fatalf("down from the top of the left column landed on %d, want %d", a.index, half-1)
+	}
+	// One more down wraps inside the column instead of crossing to the other one.
+	m, _ := a.Update(press(tea.KeyDown))
+	a = m.(*App)
+	if a.index != 0 {
+		t.Fatalf("down at the bottom of the left column landed on %d, want 0", a.index)
+	}
+	m, _ = a.Update(press(tea.KeyUp))
+	a = m.(*App)
+	if a.index != half-1 {
+		t.Fatalf("up at the top of the left column landed on %d, want %d", a.index, half-1)
+	}
+
+	// Right moves to the same row of the right column, left comes back.
+	m, _ = a.Update(press(tea.KeyRight))
+	a = m.(*App)
+	if want := 2*half - 1; a.index != want {
+		t.Fatalf("right from the last row landed on %d, want %d", a.index, want)
+	}
+	m, _ = a.Update(press(tea.KeyLeft))
+	a = m.(*App)
+	if a.index != half-1 {
+		t.Fatalf("left landed on %d, want %d", a.index, half-1)
+	}
+
+	// Enter still opens the highlighted entry from either column.
+	m, _ = a.Update(press(tea.KeyEnter))
+	a = m.(*App)
+	if a.current().id == "root" {
+		t.Fatal("enter should have left the main menu")
+	}
+}
+
+func TestMainMenuNarrowFallsBackToSingleColumn(t *testing.T) {
+	a := newTestApp(t)
+	// Two columns need about 37 columns of card before each of them is too narrow
+	// to hold a label.
+	m, _ := a.Update(tea.WindowSizeMsg{Width: 36, Height: 34})
+	a = m.(*App)
+	if a.menuColumns() != 1 {
+		t.Fatal("a 36-column terminal cannot hold two columns")
+	}
+	m, _ = a.Update(press(tea.KeyDown))
+	a = m.(*App)
+	if a.index != 1 {
+		t.Fatalf("down moved to %d, want 1", a.index)
+	}
+	// With one column the arrows keep their old meaning: right opens the entry.
+	m, _ = a.Update(press(tea.KeyRight))
+	a = m.(*App)
+	if a.current().id == "root" {
+		t.Fatal("right should still enter a screen when there is only one column")
+	}
+}
+
+func TestBBRVersionListShowsPublishedKernels(t *testing.T) {
+	a := newTestApp(t)
+	a.push(buildBBR())
+	a.section = "bbr"
+	a.bbrVersionsLoading = true
+	a.push(a.bbrVersionsMenu())
+
+	// While the fetch is in flight the screen says so instead of looking empty.
+	loading := a.Snapshot(100, 34)
+	if !strings.Contains(loading, i18n.Chinese.T("bbr_versions_loading")) {
+		t.Fatalf("the loading row is missing:\n%s", loading)
+	}
+
+	// A finished fetch lists every published kernel and marks the one this machine
+	// already runs.
+	a.applyBBRVersions(bbrVersionsMsg{
+		list: []bbr.Release{
+			{Tag: "x86_64-9.9.9", Version: "9.9.9", Profile: bbr.Standard},
+			{Tag: "x86_64-9.9.9-max", Version: "9.9.9", Profile: bbr.Max},
+			{Tag: "x86_64-9.9.8", Version: "9.9.8", Profile: bbr.Standard},
+		},
+		status: bbr.Status{
+			Running: "9.9.8-minimaxflora-bbrv3",
+			Kernels: []string{"linux-image-9.9.8-minimaxflora-bbrv3"},
+		},
+	})
+	view := a.Snapshot(100, 34)
+	for _, want := range []string{"9.9.9", "9.9.8", i18n.Chinese.T("bbr_versions_running"), i18n.Chinese.T("bbr_versions_latest")} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("the version list is missing %q:\n%s", want, view)
+		}
+	}
+	nodes := a.current().nodes
+	if len(nodes) != 3 {
+		t.Fatalf("the list has %d rows, want one per published kernel", len(nodes))
+	}
+	if nodes[0].action == nil {
+		t.Fatal("a version row must install that version when entered")
+	}
+
+	// A failed fetch explains itself rather than rendering an empty list.
+	a.applyBBRVersions(bbrVersionsMsg{err: errors.New("network unreachable")})
+	view = a.Snapshot(100, 34)
+	if !strings.Contains(view, i18n.Chinese.T("bbr_versions_failed")) {
+		t.Fatalf("the failure row is missing:\n%s", view)
+	}
+}
+
 func TestNoScreenCapturesTheMouse(t *testing.T) {
 	a := newTestApp(t)
 	if got := a.View().MouseMode; got != tea.MouseModeNone {
 		t.Fatalf("dashboard should not capture the mouse, got %v", got)
 	}
-	p := newProgress("qr", func(context.Context, func(string)) error { return nil })
+	p := newProgress("qr", func(context.Context, *taskReporter) error { return nil })
 	p.resize(a.width, a.height)
-	a.task = &p
+	a.task = p
 	if got := a.View().MouseMode; got != tea.MouseModeNone {
 		t.Fatalf("task screen should not capture the mouse, got %v", got)
 	}
@@ -390,8 +708,8 @@ func TestUpperQQuitsFromSubscreens(t *testing.T) {
 	}
 
 	a.links = nil
-	p := newProgress("t", func(context.Context, func(string)) error { return nil })
-	a.task = &p
+	p := newProgress("t", func(context.Context, *taskReporter) error { return nil })
+	a.task = p
 	if _, cmd := a.Update(press('Q')); cmd == nil {
 		t.Fatal("upper-case Q should quit from the task panel")
 	}
@@ -408,8 +726,7 @@ func TestUpperQQuitsFromSubscreens(t *testing.T) {
 	}
 }
 
-func TestEveryScreenUsesOneFixedFrame(t *testing.T) {
-	// The whole point of the layout: the dashboard and every subpage render at
+func TestEveryScreenUsesOneFixedFrame(t *testing.T) { // The whole point of the layout: the dashboard and every subpage render at
 	// exactly the same size, so moving between them never resizes the panel and
 	// the hint box never moves.
 	lines := func(s string) int { return strings.Count(s, "\n") + 1 }
@@ -418,30 +735,86 @@ func TestEveryScreenUsesOneFixedFrame(t *testing.T) {
 		a.links = newLinksModel("t", sampleLinks())
 		out["links"] = a.View().Content
 		a.links = nil
-		p := newProgress("t", func(context.Context, func(string)) error { return nil })
-		a.task = &p
+		p := newProgress("t", func(context.Context, *taskReporter) error { return nil })
+		a.task = p
 		out["task"] = a.View().Content
+		// A download in flight shares the card with the log, so the bar has to fit
+		// every size the frame is promised at.
+		p.setDownload("linux-image-7.2.6-minimaxflora-bbrv3-max_7.2.6-1_amd64.deb", 118<<20, 240<<20)
+		out["task-downloading"] = a.View().Content
 		a.task = nil
 		a.openForm("t", "p", "", "", nil)
 		out["form"] = a.View().Content
+		a.form = nil
+		a.openSystem()
+		out["system"] = a.View().Content
+		a.system = nil
+
+		// Every page under the main menu, and the subpage each one hangs further
+		// down: the two boxes have to hold whatever a section puts in them.
+		for _, n := range buildRoot().nodes {
+			if n.sub == nil {
+				continue
+			}
+			a.stack = a.stack[:1]
+			a.section = n.id
+			a.push(n.sub)
+			out["page:"+n.id] = a.View().Content
+			for _, sub := range n.sub.nodes {
+				if sub.sub == nil {
+					continue
+				}
+				a.push(sub.sub)
+				out["page:"+n.id+"/"+sub.id] = a.View().Content
+				break
+			}
+		}
+		a.stack = a.stack[:1]
+		a.section = ""
+
+		// The account screens carry the longest values in the panel: names,
+		// quotas and subscription URLs.
+		account := user.New("a-very-long-account-name-for-layout", state.Keys, time.Unix(0, 0))
+		account.QuotaBytes = 1 << 40
+		account.UsedBytes = 1 << 30
+		account.ExpireAt = time.Unix(0, 0).Add(48 * time.Hour)
+		a.accounts = []user.User{account}
+		a.push(a.usersMenu())
+		out["accounts"] = a.View().Content
+		a.push(a.userListMenu())
+		out["account-list"] = a.View().Content
+		a.push(a.userMenu(account.Token))
+		out["account-detail"] = a.View().Content
+		a.push(a.userProtocolsMenu(account.Token))
+		out["account-protocols"] = a.View().Content
 		return out
 	}
-	for _, w := range []int{20, 32, 60, 100, 140} {
-		for _, h := range []int{6, 8, 10, 12, 14, 20, 34, 60} {
-			a := New("test", i18n.Chinese)
-			a.width, a.height = w, h
-			a.sized = true
-			a.status = sysinfo.Collect("test")
-			a.ready = true
+	// Every skin has to hold the same frame: a skin that pads, tints or frames
+	// differently must not change the size of a single screen.
+	skins := theme.Skins()
+	status := sysinfo.Collect("test")
 
-			limit := panelWidth(w)
-			for name, content := range screens(a) {
-				if got := lines(content); got != h {
-					t.Fatalf("%dx%d %s: drew %d lines", w, h, name, got)
-				}
-				for _, line := range strings.Split(content, "\n") {
-					if got := lipgloss.Width(line); got > limit {
-						t.Fatalf("%dx%d %s: line is %d cells (limit %d): %q", w, h, name, got, limit, line)
+	for _, skin := range skins {
+		for _, dark := range []bool{true, false} {
+			for _, w := range []int{20, 32, 60, 100, 140} {
+				for _, h := range []int{6, 8, 10, 12, 14, 20, 34, 60} {
+					a := New("test", i18n.Chinese)
+					a.setSkin(skin, dark)
+					a.width, a.height = w, h
+					a.sized = true
+					a.status = status
+					a.ready = true
+
+					limit := panelWidth(w)
+					for name, content := range screens(a) {
+						if got := lines(content); got != h {
+							t.Fatalf("%s dark=%v %dx%d %s: drew %d lines", skin.ID, dark, w, h, name, got)
+						}
+						for _, line := range strings.Split(content, "\n") {
+							if got := lipgloss.Width(line); got > limit {
+								t.Fatalf("%s dark=%v %dx%d %s: line is %d cells (limit %d): %q", skin.ID, dark, w, h, name, got, limit, line)
+							}
+						}
 					}
 				}
 			}
@@ -449,15 +822,113 @@ func TestEveryScreenUsesOneFixedFrame(t *testing.T) {
 	}
 }
 
-func TestPublishSubscriptionNeedsHost(t *testing.T) {
+func TestLogEndpointNeedsHost(t *testing.T) {
 	var logged []string
-	err := publishSubscription(context.Background(), state.Config{},
-		func(s string) { logged = append(logged, s) }, i18n.Chinese)
-	if err != nil {
-		t.Fatalf("publishSubscription returned %v", err)
-	}
+	logEndpoint(state.Config{}, func(s string) { logged = append(logged, s) }, i18n.Chinese)
 	if len(logged) == 0 || !strings.Contains(logged[0], i18n.Chinese.T("sub_need_domain")) {
 		t.Fatalf("expected a need-domain hint, got %v", logged)
+	}
+}
+
+// TestBBRPanelShowsPendingReboot keeps the one thing an operator has to do after
+// installing a kernel on the page: the new kernel only runs after a reboot, and a
+// panel that reports it installed without saying so invites a bug report.
+func TestBBRPanelShowsPendingReboot(t *testing.T) {
+	newApp := func() *App {
+		a := New("test", i18n.Chinese)
+		a.width, a.height = 100, 34
+		a.sized = true
+		a.status = sysinfo.Collect("test")
+		a.ready = true
+		a.section = "bbr"
+		a.push(buildBBR())
+		return a
+	}
+
+	pending := newApp()
+	pending.bbrStatus = bbr.Status{
+		Running:    "6.12.48+deb13-amd64",
+		Congestion: "cubic",
+		Kernels:    []string{"linux-image-7.2.7-minimaxflora-bbrv3"},
+	}
+	if view := pending.View().Content; !strings.Contains(view, i18n.Chinese.T("bbr_reboot_pending")) {
+		t.Fatalf("a kernel waiting for a reboot should say so:\n%s", view)
+	}
+
+	running := newApp()
+	running.bbrStatus = bbr.Status{
+		Running:    "7.2.7-minimaxflora-bbrv3",
+		Congestion: "bbr",
+		Kernels:    []string{"linux-image-7.2.7-minimaxflora-bbrv3"},
+	}
+	if view := running.View().Content; strings.Contains(view, i18n.Chinese.T("bbr_reboot_pending")) {
+		t.Fatalf("a kernel that is already running should not ask for a reboot:\n%s", view)
+	}
+}
+
+// TestSectionPanelRefreshesAfterTask keeps the 看板 of a section that reads the
+// machine in step with the task that just changed it.
+func TestSectionPanelRefreshesAfterTask(t *testing.T) {
+	a := New("test", i18n.Chinese)
+	a.section = "bbr"
+	if a.sectionRefresh() == nil {
+		t.Fatal("a task that finished in the BBR section should re-read its panel")
+	}
+	a.section = "domain"
+	if a.sectionRefresh() != nil {
+		t.Fatal("a section whose panel only reads the status strip needs no re-read")
+	}
+}
+
+func TestLogEndpointWarnsWithoutCertificate(t *testing.T) {
+	cfg := state.Default()
+	// A server IP is enough for a host, but it is not a domain with a
+	// certificate, so the endpoint will speak plain HTTP.
+	cfg.ServerIP = "203.0.113.10"
+	var logged []string
+	logEndpoint(cfg, func(s string) { logged = append(logged, s) }, i18n.Chinese)
+	joined := strings.Join(logged, "\n")
+	if !strings.Contains(joined, i18n.Chinese.T("sub_plaintext_warning")) {
+		t.Fatalf("expected a plaintext warning, got %v", logged)
+	}
+	if !strings.Contains(joined, "http://203.0.113.10:8443/sub/") {
+		t.Fatalf("endpoint URL should match the plain listener: %v", logged)
+	}
+}
+
+func TestAccountScreensRenderAccount(t *testing.T) {
+	a := New("test", i18n.Chinese)
+	a.width, a.height = 100, 40
+	a.sized = true
+	a.status = sysinfo.Collect("test")
+	a.ready = true
+
+	account := user.New("alice", state.Keys, time.Now())
+	account.QuotaBytes = 1 << 40
+	account.UsedBytes = 1 << 30
+	a.accounts = []user.User{account}
+
+	a.push(a.usersMenu())
+	a.push(a.userListMenu())
+	view := a.View().Content
+	if !strings.Contains(view, "alice") {
+		t.Fatalf("account list should show the account name:\n%s", view)
+	}
+	if !strings.Contains(view, i18n.Chinese.T("user_status_active")) {
+		t.Fatalf("account list should show the status:\n%s", view)
+	}
+
+	a.push(a.userMenu(account.Token))
+	view = a.View().Content
+	for _, want := range []string{
+		"alice",
+		i18n.Chinese.T("user_quota"),
+		i18n.Chinese.T("user_protocols"),
+		i18n.Chinese.T("user_sub"),
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("account detail missing %q:\n%s", want, view)
+		}
 	}
 }
 
@@ -494,7 +965,7 @@ func TestMenuCursorKeepsUniformWidth(t *testing.T) {
 		t.Fatalf("cursor width = %d, want inner %d", cursorWidth, inner)
 	}
 	for i, n := range a.current().nodes {
-		bar := a.menuRow(true, n, inner, descCol, cursorWidth)
+		bar := a.menuRow(true, i, n, inner, descCol, cursorWidth)
 		if got := lipgloss.Width(bar); got != cursorWidth {
 			t.Fatalf("row %d bar width = %d, want %d", i, got, cursorWidth)
 		}
@@ -510,7 +981,7 @@ func TestSubmenuShowsDescriptions(t *testing.T) {
 
 	a.push(buildSubscribe())
 	view := a.View().Content
-	for _, key := range []string{"desc_sub_regen", "desc_sub_url", "desc_sub_qr", "desc_sub_links"} {
+	for _, key := range []string{"desc_sub_url", "desc_sub_qr", "desc_sub_links", "desc_sub_svc_install"} {
 		if !strings.Contains(view, i18n.Chinese.T(key)) {
 			t.Fatalf("subscription submenu missing description %q:\n%s", key, view)
 		}
