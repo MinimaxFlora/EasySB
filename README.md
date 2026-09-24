@@ -58,7 +58,7 @@ EasySB is a 5-in-1 sing-box deployment script for Linux VPS. It brings protocol 
 ```text
 .
 ├── main.go                       # Go entrypoint (TUI)
-├── install.sh                    # One-click installer (deps / binary / Nerd Font)
+├── install.sh                    # One-click installer (deps / binary)
 ├── VERSION                       # Single source of truth for the release tag
 ├── AGENTS.md                     # Guide for AI agents and contributors
 ├── go.mod                        # Go module definition
@@ -97,7 +97,7 @@ Ports are prompted one by one: Enter takes the default, `r` picks a random port,
 
 ## Quick Start
 
-One-click install (detects the system and architecture, fills in runtime dependencies, prefers a prebuilt binary with a source-build fallback, and installs a Nerd Font in local graphical environments):
+One-click install (detects the system and architecture, fills in runtime dependencies, prefers a prebuilt binary with a source-build fallback):
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/MinimaxFlora/EasySB/master/install.sh)
@@ -132,11 +132,13 @@ Supports Debian / Ubuntu (systemd) and Alpine (OpenRC); run as root.
 | Core management | Install, replace or remove stable and alpha builds; replace keeps the existing config |
 | Version panel | Script version, local core, stable and alpha versions on top of the menu with update markers |
 | Device panel | Local IPv4/IPv6, swap, uptime, CPU cores and load, memory, disk, host, kernel, OS and timezone |
+| System info | The runtime the panel is running on, and the one place the look changes from inside the interface: `↑`/`↓` + `Enter` or `A`-`D` picks a skin, `T` flips dark/light, `I` swaps Unicode markers for ASCII. Every choice lands on the next frame, and the glyph preview row shows before a card anywhere else does whether the terminal font can draw the markers. The status strip and the hints stay put while the body swaps |
 | Copy links | Subscription and share-link results render as a card grid inside the same fixed panel as the main menu. Subscription cards show the subscription name (sing-box / mihomo / Base64) plus a format note, share-link cards show the protocol name, and neither draws the host or the full URL. Select with `↑`/`↓`/`←`/`→` (or a number key), `Enter` copies the card, `C` copies all, `Q` quits the program, `Esc` returns. A copied card turns green and copy-all reports in the header. Narrow or short windows reflow the grid and truncate content, never overflowing the panel. On log screens `C` copies the log (OSC52) |
-| Certificates | acme.sh `--standalone` issue and renew, list, switch active, remove; handles 80 / 443 occupancy |
+| Certificates | acme.sh `--standalone` issue, list, switch active and remove; the preflight check covers socat and DNS before an attempt is spent, the core is stopped to free port 80 during the challenge, and acme.sh is installed with `--nocron` because a minimal image has no cron: renewal is driven by the panel's own systemd timer (or OpenRC script), which also reloads sing-box and the subscription service |
 | Subscription | One URL per account (`/sub/<token>`) served by the built-in service, which picks the format from the client (`templates/config/tun-fakeip.json`, `templates/config/mihomo.yaml` or Base64 share links) and reports usage in `Subscription-Userinfo`; QR codes and per-protocol share links in the panel |
 | Port hopping | Hysteria2 defaults to `2080:3000`, auto-applies iptables / nftables DNAT and a boot restore unit |
 | Service control | Start, stop, restart, status and enable-on-boot |
+| BBR acceleration | Shows the running kernel, congestion control, queue discipline and installed kernels; enabling BBR loads `tcp_bbr`, writes `net.core.default_qdisc` and `net.ipv4.tcp_congestion_control` and persists them in `/etc/sysctl.d/99-easysb-bbr.conf` and `/etc/modules-load.d/easysb-bbr.conf` so the choice survives a reboot; installs a prebuilt BBRv3 kernel published by [Linux-BBR-v3](https://github.com/MinimaxFlora/Linux-BBR-v3) (standard or Max, x86_64 and arm64, downloaded straight from the release), or lists every published version to pick one from; the kernel and its settings can be removed from the panel again. Versions come from the kernel project itself — its version stamp and release list — so a kernel published there shows up here without a release of this panel |
 | Self-update | Pulls the latest script from this repository and replaces it after validation |
 | Bilingual | Language picked on first screen, consistent Chinese and English throughout |
 
@@ -145,13 +147,15 @@ Supports Debian / Ubuntu (systemd) and Alpine (OpenRC); run as root.
 ## Interactive Menu
 
 ```text
-Main menu
+Main menu (one card, two columns, ten entries)
 ├── Core management      Install stable / alpha, switch channel, update current channel
 ├── Node management      One-click deploy, enable protocols, parameters (UUID / password / hop / ports / SNI / Reality keys)
-├── Domain management    Issue / renew, list, switch active and remove certificates
+├── Domain management    Issue (with preflight checks), renew now, renewal timer, list, switch active and remove certificates
 ├── Subscription         One account's URL, QR code and share links (pick the account first, then the panel prints the endpoint prefix); install / restart / status of the subscription service
-├── Accounts and traffic List, create, rename, remark, quota, expiry, protocol selection, enable / disable, usage reset, token rotation, delete
+├── Accounts             List, create, rename, remark, quota, expiry, protocol selection, enable / disable, usage reset, token rotation, delete
 ├── Service management   Start, stop, restart, status, enable / disable and port-hopping rules
+├── System info          Runtime, and the one place the look changes from inside the interface: skin / palette / markers / language, terminal and host details
+├── BBR                  Status (kernel, congestion control, queue discipline, installed kernels), enable BBR with fq / fq_codel / fq_pie / cake, install the standard or Max BBRv3 kernel, pick any published version from a list, remove it, clear the settings
 ├── Update version       Pull the latest EasySB release
 └── Uninstall script     Remove EasySB completely
 ```
@@ -165,10 +169,14 @@ Files: server config `/etc/sing-box/config.json`, state `/etc/sing-box/easysb.co
 | Flag | Description |
 | :--- | :--- |
 | `--language C\|E` | Preset the UI language, then open the menu |
-| `--icons on\|off` | Override the Nerd Font icon detection result |
+| `--icons symbols\|ascii` | Marker set: Unicode symbols (default), or ASCII when the terminal cannot render them (also `on`/`off`; borders still follow the skin) |
 | `--theme auto\|dark\|light` | Override the terminal background detection (default `auto`) |
+| `--skin jade\|aurora\|ember\|graphite` | Pick the interface skin, also `a`-`d` (default `jade`, env `EASYSB_SKIN`) |
 | `--apply-firewall` | Restore port-hopping rules only, used by the boot unit |
-| `--render --width N --height N` | Render the dashboard once and exit (debug) |
+| `--renew-certs` | Renew every certificate, reloading sing-box and the subscription service only when one was actually renewed (called by the renewal timer) |
+| `--install-renew-timer` | Install the renewal timer (systemd timer / OpenRC); the unit names this binary's own path |
+| `--remove-renew-timer` | Remove the renewal timer |
+| `--render --width N --height N` | Render the dashboard once and exit (debug; add `--screen system` to draw a subpage) |
 | `--serve` | Run the subscription service and the usage accounting loop (backs `easysb.service`) |
 | `--version` | Print the version and build hash |
 | `--help` | Print usage |
@@ -258,7 +266,7 @@ The unit restores rules via `easysb --apply-firewall`. It is not created when Hy
 | Install | Downloads and verifies for the architecture, writes `/etc/sing-box/sing-box` |
 | Replace | Swaps the binary only, keeps `/etc/sing-box/config.json` |
 | Uninstall | Stops the service and removes the core |
-| Release | `.github/workflows/easysb-go-release.yml` cross-compiles every platform binary and publishes them under the `v<VERSION>` tag (currently `v4.0.0`) |
+| Release | `.github/workflows/easysb-go-release.yml` cross-compiles every platform binary and publishes them under the `v<VERSION>` tag (currently `v4.1.0`) |
 
 ---
 
@@ -276,8 +284,8 @@ go test ./...
 # Render the dashboard once without interaction (preview / screenshot / debug)
 ./easysb --render --width 100 --height 34
 
-# Switch language, icon mode and theme
-./easysb --language E --icons off --theme dark
+# Switch language, icon mode, theme and skin
+./easysb --language E --icons ascii --theme dark --skin graphite
 ```
 
 ---

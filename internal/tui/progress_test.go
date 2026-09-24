@@ -3,10 +3,12 @@ package tui
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/MinimaxFlora/EasySB/internal/i18n"
 	"github.com/MinimaxFlora/EasySB/internal/icons"
@@ -103,6 +105,32 @@ func TestProgressIgnoresMouseToggleKey(t *testing.T) {
 	}
 }
 
+func TestProgressFitsTerminal(t *testing.T) {
+	// The task screen is what every action lands on, so it has to fit the terminal
+	// at any height the same way the dashboard does: no frame taller than the
+	// window, and no line wider than it.
+	for _, size := range [][2]int{{40, 6}, {80, 9}, {80, 12}, {100, 16}, {100, 22}, {100, 24}, {120, 40}, {140, 60}} {
+		w, h := size[0], size[1]
+		p := newProgress("订阅服务", func(context.Context, func(string)) error { return nil })
+		for i := 0; i < 40; i++ {
+			p.appendLog("log line " + strconv.Itoa(i) + " with some length to it")
+		}
+		for _, done := range []bool{false, true} {
+			p.done = done
+			out := p.View(w, h, "host  service  node", theme.DefaultSkin().Style(true), i18n.Chinese, icons.Symbols())
+			lines := strings.Split(out, "\n")
+			if len(lines) != h {
+				t.Fatalf("%dx%d done=%v: drew %d lines, want %d", w, h, done, len(lines), h)
+			}
+			for i, line := range lines {
+				if got := lipgloss.Width(line); got > w {
+					t.Fatalf("%dx%d done=%v: line %d is %d wide", w, h, done, i, got)
+				}
+			}
+		}
+	}
+}
+
 func TestProgressNoCopyHidesAndIgnoresCopy(t *testing.T) {
 	p := newProgress("qr", func(context.Context, func(string)) error { return nil })
 	p.noCopy = true
@@ -113,7 +141,7 @@ func TestProgressNoCopyHidesAndIgnoresCopy(t *testing.T) {
 	if cmd, closed := p.handleKey(press('c'), i18n.Chinese); cmd != nil || closed {
 		t.Fatalf("a picture task must ignore copy, cmd=%v closed=%v", cmd != nil, closed)
 	}
-	view := p.View(80, 20, theme.Dark(), i18n.Chinese, icons.Plain())
+	view := p.View(80, 20, "", theme.DefaultSkin().Style(true), i18n.Chinese, icons.Symbols())
 	if strings.Contains(view, i18n.Chinese.T("task_copy")) {
 		t.Fatal("the hint must not offer copy on a picture task")
 	}

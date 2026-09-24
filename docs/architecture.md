@@ -45,7 +45,10 @@ editing.
 | `/etc/sing-box/easysb-users.json` | `internal/user` | accounts: credentials, quotas, expiry and counters (`0600`) |
 | `/etc/systemd/system/easysb.service` or `/etc/init.d/easysb` | `internal/service` | subscription service unit (`easysb --serve`) |
 | `/etc/systemd/system/sing-box.service` or `/etc/init.d/sing-box` | `internal/service` | core service unit |
-| `~/.acme.sh/` | `internal/cert` | acme.sh state |
+| `~/.acme.sh/` | `internal/cert` | acme.sh state; the directory is probed rather than assumed from `$HOME`, and every acme.sh call passes `--home` so writes and reads agree |
+| `/etc/sysctl.d/99-easysb-bbr.conf`, `/etc/modules-load.d/easysb-bbr.conf` | `internal/bbr` | BBR settings EasySB writes itself, so they never collide with the kernel project's own drop-in; the sysctl file carries a comment recording the values it replaced, which is what the clear action restores. The installed kernel packages (`minimaxflora-bbrv3`) belong to dpkg and are removed through apt |
+| `/etc/sing-box/easysb-ui.conf` | `internal/prefs` | interface choices (skin, palette, marker set, language), `0644`, overridable with `EASYSB_UI_CONF` |
+| `/etc/systemd/system/easysb-acme.timer` or `/etc/init.d/easysb-acme` | `internal/cert` | certificate renewal: acme.sh is installed with `--nocron`, so this unit is what renews, and `--renew-certs` reloads the services afterwards. The unit names the path of the binary that wrote it, so it is installed from inside the panel (or with `--install-renew-timer`) rather than copied between hosts |
 
 ## Packages
 
@@ -55,8 +58,10 @@ editing.
 | `internal/state` | read/write `easysb.conf`; protocol keys, default ports, default parameters |
 | `internal/config` | render the sing-box server configuration from state |
 | `internal/core` | sing-box release discovery, download (with proxy fallback), install, switch, update |
-| `internal/cert` | acme.sh discovery, issue/renew/activate certificates, self-signed fallback |
+| `internal/cert` | acme.sh discovery, download and install, issue/renew/remove certificates, renewal timer unit, self-signed fallback |
+| `internal/prefs` | remember and re-apply the interface choices: skin, palette, marker set, language |
 | `internal/firewall` | Hysteria2 port-hopping DNAT rules and the boot restore unit |
+| `internal/bbr` | BBR: read the running kernel's congestion control state, enable it through sysctl drop-ins (recording what they replaced so clearing can undo them), and install the prebuilt BBRv3 kernels published by Linux-BBR-v3 (release/tag discovery, mirror fallback, dpkg) |
 | `internal/user` | account model and store: per-protocol credentials, quota/expiry evaluation, subscription tokens |
 | `internal/subd` | subscription HTTP service: TLS, User-Agent negotiation, response headers, accounting loop |
 | `internal/stats` | gRPC client for the core's `StatsService`, usage accounting, quota enforcement |
@@ -68,7 +73,7 @@ editing.
 | `internal/uninstall` | remove the deployment while keeping acme certificates |
 | `internal/update` | self-update from the GitHub release tag `v<version>` |
 | `internal/i18n` | `C` / `E` bilingual string table |
-| `internal/icons` | Nerd Font icon sets, disabled with `EASYSB_ICONS=0` |
+| `internal/icons` | single-column Unicode symbol palette, `EASYSB_ICONS=ascii` falls back to ASCII |
 | `internal/theme` | dark / light color palettes and frame/column layout helpers |
 
 ## Program flow

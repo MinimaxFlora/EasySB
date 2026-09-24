@@ -30,3 +30,6 @@ desktop.ini
 *.log
 *.tmp
 *.bak
+
+# 构建产物：Go 版面板的 linux 二进制与冒烟测试二进制，由 build 脚本生成
+dist/

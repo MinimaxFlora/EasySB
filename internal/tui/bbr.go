@@ -1,0 +1,314 @@
+package tui
+
+import (
+	"context"
+	"slices"
+	"strings"
+	"time"
+
+	tea "charm.land/bubbletea/v2"
+
+	"github.com/MinimaxFlora/EasySB/internal/bbr"
+	"github.com/MinimaxFlora/EasySB/internal/i18n"
+	"github.com/MinimaxFlora/EasySB/internal/icons"
+)
+
+// buildBBR is the BBR section: switching the running kernel's congestion control
+// on, and installing the BBRv3 kernels the Linux-BBR-v3 project builds.
+func buildBBR() *menu {
+	return &menu{
+		id:    "bbr",
+		title: tk("bbr_title"),
+		nodes: []*node{
+			leaf("bbr-status", "bbr_status", "desc_bbr_status", bbrStatusAction()),
+			{id: "bbr-enable", label: tk("bbr_enable"), desc: tk("desc_bbr_enable"), sub: buildQdisc()},
+			leaf("bbr-install-standard", "bbr_install_standard", "desc_bbr_install_standard", bbrInstallAction(bbr.Standard, "")),
+			leaf("bbr-install-max", "bbr_install_max", "desc_bbr_install_max", bbrInstallAction(bbr.Max, "")),
+			leaf("bbr-versions", "bbr_versions", "desc_bbr_versions", bbrVersionsAction()),
+			leaf("bbr-remove-kernel", "bbr_remove_kernel", "desc_bbr_remove_kernel", bbrRemoveAction()),
+			leaf("bbr-clear", "bbr_clear", "desc_bbr_clear", bbrClearAction()),
+		},
+	}
+}
+
+// bbrVersionsMsg carries a freshly fetched kernel list back to the interface. The
+// list arrives asynchronously because it is a network call, and the menu that
+// opened has to show something while it is in flight.
+type bbrVersionsMsg struct {
+	list   []bbr.Release
+	status bbr.Status
+	err    error
+}
+
+// bbrVersionsAction opens the version list and starts the fetch behind it.
+func bbrVersionsAction() actionFunc {
+	return func(a *App) tea.Cmd {
+		a.bbrVersions = nil
+		a.bbrVersionsErr = nil
+		a.bbrVersionsLoading = true
+		a.push(a.bbrVersionsMenu())
+		return fetchBBRVersions()
+	}
+}
+
+// fetchBBRVersions reads the published kernels and the local state in one go, so
+// the list can mark what is already installed.
+func fetchBBRVersions() tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		msg := bbrVersionsMsg{status: bbr.LocalStatus(ctx)}
+		msg.list, msg.err = bbr.Releases(ctx)
+		return msg
+	}
+}
+
+// applyBBRVersions stores a fetch result and redraws the list when it is the screen
+// the operator is still looking at.
+func (a *App) applyBBRVersions(msg bbrVersionsMsg) {
+	a.bbrVersionsLoading = false
+	a.bbrVersions = msg.list
+	a.bbrVersionsErr = msg.err
+	a.bbrStatus = msg.status
+	if a.current().id == "bbr-versions" {
+		a.current().nodes = a.bbrVersionsNodes()
+		if a.index >= len(a.current().nodes) {
+			a.index = 0
+		}
+	}
+}
+
+// bbrVersionsMenu is the screen listing the installable kernels: the newest on top,
+// one row per published build, opens with a placeholder until the fetch lands.
+func (a *App) bbrVersionsMenu() *menu {
+	return &menu{id: "bbr-versions", title: tk("bbr_versions_title"), nodes: a.bbrVersionsNodes()}
+}
+
+func (a *App) bbrVersionsNodes() []*node {
+	switch {
+	case a.bbrVersionsLoading:
+		return []*node{{id: "bbr-versions-loading", label: tk("bbr_versions_loading"), desc: tk("bbr_versions_wait")}}
+	case a.bbrVersionsErr != nil:
+		err := a.bbrVersionsErr
+		return []*node{{
+			id:    "bbr-versions-failed",
+			label: tk("bbr_versions_failed"),
+			desc:  func(l i18n.Lang) string { return err.Error() },
+		}}
+	case len(a.bbrVersions) == 0:
+		return []*node{{id: "bbr-versions-empty", label: tk("bbr_versions_empty"), desc: tk("desc_bbr_versions_empty")}}
+	}
+	newest := map[bbr.Profile]string{}
+	for _, rel := range a.bbrVersions {
+		if newest[rel.Profile] == "" {
+			newest[rel.Profile] = rel.Version
+		}
+	}
+	nodes := make([]*node, 0, len(a.bbrVersions))
+	for _, rel := range a.bbrVersions {
+		rel := rel
+		nodes = append(nodes, &node{
+			id:    "bbr-version-" + rel.Tag,
+			label: func(l i18n.Lang) string { return rel.Version },
+			desc:  func(l i18n.Lang) string { return a.releaseDesc(l, rel, newest[rel.Profile]) },
+			icon:  releaseIcon(rel.Profile),
+			action: func(a *App) tea.Cmd {
+				return bbrInstallAction(rel.Profile, rel.Version)(a)
+			},
+		})
+	}
+	return nodes
+}
+
+// releaseDesc says what a row is: which profile it is, whether it is the newest of
+// that profile, and whether this machine already has it.
+func (a *App) releaseDesc(l i18n.Lang, rel bbr.Release, newest string) string {
+	kernel := rel.Profile.KernelRelease(rel.Version)
+	parts := []string{profileLabel(l, rel.Profile)}
+	switch {
+	case a.bbrStatus.Running == kernel:
+		parts = append(parts, l.T("bbr_versions_running"))
+	case slices.Contains(a.bbrStatus.Kernels, "linux-image-"+kernel):
+		parts = append(parts, l.T("bbr_versions_installed"))
+	}
+	if rel.Version == newest {
+		parts = append(parts, l.T("bbr_versions_latest"))
+	}
+	return strings.Join(parts, " · ")
+}
+
+// releaseIcon tells the profiles apart at a glance: the standard build is the
+// conservative one, the max build is the throughput one.
+func releaseIcon(profile bbr.Profile) func(icons.Set) string {
+	if profile == bbr.Max {
+		return func(s icons.Set) string { return s.Speed }
+	}
+	return func(s icons.Set) string { return s.System }
+}
+
+// previewReleases is a stand-in list for --render, which draws the screen without a
+// network. The running panel never uses it: its list comes from the kernel
+// project's releases every time the screen is opened.
+func previewReleases() []bbr.Release {
+	return []bbr.Release{
+		{Tag: "x86_64-9.9.9", Version: "9.9.9", Profile: bbr.Standard},
+		{Tag: "x86_64-9.9.9-max", Version: "9.9.9", Profile: bbr.Max},
+		{Tag: "x86_64-9.9.8", Version: "9.9.8", Profile: bbr.Standard},
+		{Tag: "x86_64-9.9.7-max", Version: "9.9.7", Profile: bbr.Max},
+	}
+}
+
+// buildQdisc is the queue discipline submenu. BBR needs a fair queueing
+// scheduler; which one is a trade-off between latency and fairness.
+func buildQdisc() *menu {
+	nodes := make([]*node, 0, len(bbr.Qdiscs))
+	for _, qdisc := range bbr.Qdiscs {
+		nodes = append(nodes, &node{
+			id:     "bbr-qdisc-" + qdisc,
+			label:  tk("bbr_qdisc_" + strings.ReplaceAll(qdisc, "-", "_")),
+			desc:   tk("desc_bbr_qdisc_" + strings.ReplaceAll(qdisc, "-", "_")),
+			icon:   func(s icons.Set) string { return s.Speed },
+			action: bbrEnableAction(qdisc),
+		})
+	}
+	return &menu{id: "bbr-qdisc", title: tk("bbr_qdisc_title"), nodes: nodes}
+}
+
+// bbrStatusAction prints one reading of the congestion control state, including
+// the newest kernel the kernel project has published.
+func bbrStatusAction() actionFunc {
+	return func(a *App) tea.Cmd {
+		lang := a.lang
+		return a.startTask(lang.T("bbr_status"), func(ctx context.Context, log func(string)) error {
+			st := bbr.Collect(ctx)
+			log(lang.T("bbr_st_running") + ": " + dash(st.Running))
+			log(lang.T("bbr_st_arch") + ": " + dash(st.Arch))
+			if !st.Supported() {
+				log(lang.T("bbr_st_arch_unsupported"))
+			}
+			if st.Enabled() {
+				log(lang.T("bbr_st_congestion") + ": bbr " + lang.T("bbr_st_on"))
+			} else {
+				log(lang.T("bbr_st_congestion") + ": " + dash(st.Congestion) + " " + lang.T("bbr_st_off"))
+			}
+			log(lang.T("bbr_st_qdisc") + ": " + dash(st.Qdisc))
+			log(lang.T("bbr_st_available") + ": " + dash(st.Available))
+			if kernel := st.CustomKernel(); kernel != "" {
+				log(lang.T("bbr_st_kernel") + ": " + kernel)
+				if st.NeedsReboot() {
+					log(lang.T("bbr_st_reboot"))
+				}
+			} else {
+				log(lang.T("bbr_st_kernel") + ": " + lang.T("bbr_st_none"))
+			}
+			if st.Latest != "" {
+				log(lang.T("bbr_st_latest") + ": " + st.Latest)
+				if newer, ok := st.Outdated(); ok {
+					log(lang.T("bbr_st_newer") + ": " + newer)
+					log(lang.T("bbr_st_newer_hint"))
+				}
+			} else if st.LatestErr != "" {
+				log(lang.T("ver_offline"))
+			}
+			if !st.AvailableBBR() {
+				log(lang.T("bbr_st_no_module"))
+			}
+			return nil
+		})
+	}
+}
+
+// bbrEnableAction turns BBR on with the chosen queue discipline.
+func bbrEnableAction(qdisc string) actionFunc {
+	return func(a *App) tea.Cmd {
+		lang := a.lang
+		title := lang.T("bbr_enable") + " · " + qdisc
+		return a.startTask(title, func(ctx context.Context, log func(string)) error {
+			if err := bbr.Enable(ctx, log, qdisc); err != nil {
+				return err
+			}
+			log(lang.T("ok"))
+			return nil
+		})
+	}
+}
+
+// bbrInstallAction downloads and installs one published kernel. An empty version
+// means the newest published one; a version pins that build instead.
+func bbrInstallAction(profile bbr.Profile, version string) actionFunc {
+	return func(a *App) tea.Cmd {
+		lang := a.lang
+		title := lang.T("bbr_install") + " · " + profileLabel(lang, profile)
+		if version != "" {
+			title += " · " + version
+		}
+		return a.startTask(title, func(ctx context.Context, log func(string)) error {
+			log(lang.T("bbr_installing"))
+			if err := bbr.Install(ctx, log, profile, version); err != nil {
+				return err
+			}
+			log(lang.T("bbr_installed"))
+			log(lang.T("bbr_reboot_hint"))
+			// The status strip shows the new kernel only after the reboot, so
+			// refresh what can be read now.
+			a.setToast(lang.T("bbr_installed"), false)
+			return nil
+		})
+	}
+}
+
+// bbrRemoveAction uninstalls the published kernel and falls back to the stock one.
+func bbrRemoveAction() actionFunc {
+	return func(a *App) tea.Cmd {
+		lang := a.lang
+		return a.startTask(lang.T("bbr_remove_kernel"), func(ctx context.Context, log func(string)) error {
+			removed, err := bbr.Remove(ctx, log)
+			if err != nil {
+				return err
+			}
+			if !removed {
+				log(lang.T("bbr_remove_none"))
+				return nil
+			}
+			log(lang.T("bbr_removed"))
+			log(lang.T("bbr_reboot_hint"))
+			return nil
+		})
+	}
+}
+
+// bbrClearAction removes the drop-ins EasySB wrote for BBR and restores the
+// settings they replaced.
+func bbrClearAction() actionFunc {
+	return func(a *App) tea.Cmd {
+		lang := a.lang
+		return a.startTask(lang.T("bbr_clear"), func(ctx context.Context, log func(string)) error {
+			cleared, err := bbr.Clear(ctx, log)
+			if err != nil {
+				return err
+			}
+			if !cleared {
+				log(lang.T("bbr_clear_none"))
+				return nil
+			}
+			log(lang.T("bbr_cleared"))
+			return nil
+		})
+	}
+}
+
+// profileLabel names a kernel profile the way the menu does.
+func profileLabel(lang i18n.Lang, profile bbr.Profile) string {
+	if profile == bbr.Max {
+		return lang.T("bbr_profile_max")
+	}
+	return lang.T("bbr_profile_standard")
+}
+
+// dash keeps a status line readable when a reading is empty.
+func dash(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "-"
+	}
+	return value
+}

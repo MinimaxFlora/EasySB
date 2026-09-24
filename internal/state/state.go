@@ -74,6 +74,7 @@ type Config struct {
 	RealitySID   string
 	Domain       string
 	CertDomain   string
+	ACMEEmail    string
 	CoreChannel  string
 	NodeDeployed bool
 	SubServePort int
@@ -164,6 +165,7 @@ func (c *Config) applyRaw() {
 	set(&c.RealitySID, "REALITY_SHORT_ID")
 	set(&c.Domain, "DOMAIN")
 	set(&c.CertDomain, "CERT_DOMAIN")
+	set(&c.ACMEEmail, "ACME_EMAIL")
 	set(&c.CoreChannel, "CORE_CHANNEL")
 	set(&c.ServerIP, "SERVER_IP")
 	if n, err := strconv.Atoi(c.raw["SUB_SERVE_PORT"]); err == nil && n > 0 && n < 65536 {
@@ -255,6 +257,7 @@ func (c Config) Save() error {
 		{"REALITY_SHORT_ID", c.RealitySID},
 		{"DOMAIN", c.Domain},
 		{"CERT_DOMAIN", c.CertDomain},
+		{"ACME_EMAIL", c.ACMEEmail},
 		{"CORE_CHANNEL", c.CoreChannel},
 		{"NODE_DEPLOYED", deployed},
 		{"SUB_SERVE_PORT", strconv.Itoa(c.SubServePort)},
@@ -285,7 +288,7 @@ func (c Config) extraKeys() []string {
 		"PORT_VLESS_REALITY": true, "PORT_VMESS_WS_TLS": true,
 		"HY2_HOP_RANGE": true, "REALITY_SNI": true, "REALITY_PRIVATE": true,
 		"REALITY_PUBLIC": true, "REALITY_SHORT_ID": true, "DOMAIN": true,
-		"CERT_DOMAIN": true, "CORE_CHANNEL": true, "NODE_DEPLOYED": true,
+		"CERT_DOMAIN": true, "ACME_EMAIL": true, "CORE_CHANNEL": true, "NODE_DEPLOYED": true,
 		"SUB_SERVE_PORT": true, "SUB_SYNC_SECONDS": true, "SERVER_IP": true,
 	}
 	var out []string

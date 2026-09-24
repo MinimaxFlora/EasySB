@@ -11,6 +11,7 @@ import (
 	"github.com/MinimaxFlora/EasySB/internal/i18n"
 	"github.com/MinimaxFlora/EasySB/internal/icons"
 	"github.com/MinimaxFlora/EasySB/internal/theme"
+	"github.com/MinimaxFlora/EasySB/internal/ui"
 )
 
 type taskFunc func(ctx context.Context, log func(string)) error
@@ -155,15 +156,27 @@ func (p *progressModel) resize(w, h int) {
 	if inner < 10 {
 		inner = 10
 	}
-	// The viewport fills the frame between the top/bottom borders, the header
-	// row and its trailing blank.
-	vh := panelBodyHeight(h) - 2
+	// The log sits in a card under the status strip, so the viewport is what is
+	// left after the strip, the card borders and the hint bar.
+	vh := h - 4 - taskHintRows(h)
 	if vh < 1 {
 		vh = 1
 	}
 	p.vp.SetWidth(inner)
 	p.vp.SetHeight(vh)
 	p.refresh()
+}
+
+// taskHintRows is how many rows the hint bar takes, matching the dashboard: a
+// boxed hint on a roomy terminal, one line when there is almost no room.
+func taskHintRows(h int) int {
+	switch {
+	case h >= 22:
+		return 3
+	case h >= 6:
+		return 1
+	}
+	return 0
 }
 
 func (p *progressModel) appendLog(line string) {
@@ -179,27 +192,33 @@ func (p *progressModel) refresh() {
 	}
 }
 
-func (p *progressModel) View(w, h int, pal theme.Palette, lang i18n.Lang, ic icons.Set) string {
+// View draws the task the way the dashboard draws everything else: the live
+// status strip on top, the log in a card titled with the task, and the keys on the
+// bottom bar. The task screen is where the subscription service, the kernel
+// install and the deployment all end up, so it is the one screen that has to look
+// like the rest of the panel rather than like a raw console.
+func (p *progressModel) View(w, h int, strip string, style theme.Style, lang i18n.Lang, ic icons.Set) string {
 	width := panelWidth(w)
 	if width != p.width || h != p.height {
 		p.resize(width, h)
 	}
+	pal := style.Palette
 
-	var status string
+	badge := pal.Colored(pal.Primary, p.spin.View()+" "+lang.T("task_running"))
 	if p.done {
 		if p.err != nil {
-			status = pal.State(ic.Err+" "+lang.T("task_failed"), false, false)
+			badge = pal.State(ic.Err+" "+lang.T("task_failed"), false, false)
 		} else {
-			status = pal.State(ic.OK+" "+lang.T("task_done"), true, false)
+			badge = pal.State(ic.OK+" "+lang.T("task_done"), true, false)
 		}
-	} else {
-		status = pal.Colored(pal.Primary, p.spin.View()+" "+lang.T("task_running"))
 	}
 
-	header := " " + status + "  " + pal.Dim(theme.Truncate(p.title, width-24))
-	body := make([]string, 0, p.vp.Height()+2)
-	body = append(body, header, "")
-	body = append(body, strings.Split(p.vp.View(), "\n")...)
+	card := ui.Card(style, p.title, badge, strings.Split(p.vp.View(), "\n"), width)
+	lines := make([]string, 0, h)
+	if strip != "" {
+		lines = append(lines, strip, "")
+	}
+	lines = append(lines, card...)
 
 	var hint string
 	if p.done {
@@ -212,5 +231,11 @@ func (p *progressModel) View(w, h int, pal theme.Palette, lang i18n.Lang, ic ico
 	} else {
 		hint = lang.T("hint_back") + "  " + lang.T("cancelled")
 	}
-	return framePanel(pal, lang, width, h, body, pal.Dim(hint))
+	switch taskHintRows(h) {
+	case 3:
+		lines = append(lines, hintBoxFor(pal, lang, hint, width)...)
+	case 1:
+		lines = append(lines, hintLineFor(pal, lang, hint, width))
+	}
+	return ui.Fit(lines, width, h)
 }

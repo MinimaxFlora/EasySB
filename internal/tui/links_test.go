@@ -22,7 +22,7 @@ func sampleLinks() []linkItem {
 
 func TestLinksViewHidesValues(t *testing.T) {
 	l := newLinksModel("订阅链接", sampleLinks())
-	view := l.View(100, 40, theme.Dark(), i18n.Chinese, icons.Plain())
+	view := l.View(100, 40, theme.Dark(), i18n.Chinese, icons.Symbols())
 	for _, item := range l.items {
 		if strings.Contains(view, item.value) {
 			t.Fatalf("view leaked value %q", item.value)
@@ -38,7 +38,7 @@ func TestLinksViewHidesValues(t *testing.T) {
 
 func TestLinksArrowsMoveCursor(t *testing.T) {
 	l := newLinksModel("t", sampleLinks())
-	l.View(100, 40, theme.Dark(), i18n.Chinese, icons.Plain())
+	l.View(100, 40, theme.Dark(), i18n.Chinese, icons.Symbols())
 
 	l.handleKey(press(tea.KeyDown), i18n.Chinese)
 	if l.cursor != 2 {
@@ -61,7 +61,7 @@ func TestLinksGridScrollsToCursor(t *testing.T) {
 	}
 	l := newLinksModel("t", items)
 	l.cursor = 8
-	l.View(60, 20, theme.Dark(), i18n.Chinese, icons.Plain())
+	l.View(60, 20, theme.Dark(), i18n.Chinese, icons.Symbols())
 	if l.topRow == 0 {
 		t.Fatalf("an off-screen cursor should scroll the grid, topRow=%d", l.topRow)
 	}
@@ -70,7 +70,7 @@ func TestLinksGridScrollsToCursor(t *testing.T) {
 func TestLinksViewFitsPanelHeight(t *testing.T) {
 	for _, h := range []int{20, 30, 40} {
 		l := newLinksModel("t", sampleLinks())
-		view := l.View(100, h, theme.Dark(), i18n.Chinese, icons.Plain())
+		view := l.View(100, h, theme.Dark(), i18n.Chinese, icons.Symbols())
 		if got := strings.Count(view, "\n") + 1; got != h {
 			t.Fatalf("height %d: panel drew %d lines", h, got)
 		}
@@ -79,7 +79,7 @@ func TestLinksViewFitsPanelHeight(t *testing.T) {
 
 func TestLinksNumberKeySelects(t *testing.T) {
 	l := newLinksModel("t", sampleLinks())
-	l.View(100, 40, theme.Dark(), i18n.Chinese, icons.Plain())
+	l.View(100, 40, theme.Dark(), i18n.Chinese, icons.Symbols())
 	cmd, done := l.handleKey(press('2'), i18n.Chinese)
 	if done {
 		t.Fatal("number key must not close the panel")
@@ -91,7 +91,7 @@ func TestLinksNumberKeySelects(t *testing.T) {
 
 func TestLinksEnterCopiesCursor(t *testing.T) {
 	l := newLinksModel("t", sampleLinks())
-	l.View(100, 40, theme.Dark(), i18n.Chinese, icons.Plain())
+	l.View(100, 40, theme.Dark(), i18n.Chinese, icons.Symbols())
 	l.move(2)
 	cmd, done := l.handleKey(press(tea.KeyEnter), i18n.Chinese)
 	if done || cmd == nil || l.copied != 2 {
@@ -101,7 +101,7 @@ func TestLinksEnterCopiesCursor(t *testing.T) {
 
 func TestLinksEscCloses(t *testing.T) {
 	l := newLinksModel("t", sampleLinks())
-	l.View(100, 40, theme.Dark(), i18n.Chinese, icons.Plain())
+	l.View(100, 40, theme.Dark(), i18n.Chinese, icons.Symbols())
 	if _, done := l.handleKey(press(tea.KeyEsc), i18n.Chinese); !done {
 		t.Fatal("esc should close the panel")
 	}
@@ -109,7 +109,7 @@ func TestLinksEscCloses(t *testing.T) {
 
 func TestLinksCopyAllShowsFeedback(t *testing.T) {
 	l := newLinksModel("t", sampleLinks())
-	l.View(100, 40, theme.Dark(), i18n.Chinese, icons.Plain())
+	l.View(100, 40, theme.Dark(), i18n.Chinese, icons.Symbols())
 	cmd, done := l.handleKey(press('c'), i18n.Chinese)
 	if done || cmd == nil {
 		t.Fatalf("c should copy every link, done=%v cmd=%v", done, cmd)
@@ -117,7 +117,7 @@ func TestLinksCopyAllShowsFeedback(t *testing.T) {
 	if l.status != i18n.Chinese.T("links_copied_all") {
 		t.Fatalf("copy-all should surface a visible status, got %q", l.status)
 	}
-	if !strings.Contains(l.View(100, 40, theme.Dark(), i18n.Chinese, icons.Plain()), l.status) {
+	if !strings.Contains(l.View(100, 40, theme.Dark(), i18n.Chinese, icons.Symbols()), l.status) {
 		t.Fatal("the copy-all status should be rendered in the header")
 	}
 	l.move(1)
@@ -130,7 +130,7 @@ func TestLinksCardSignalsCopyByColor(t *testing.T) {
 	lang := i18n.Chinese
 	pal := theme.Dark()
 	l := newLinksModel("t", sampleLinks())
-	l.View(100, 40, pal, lang, icons.Plain())
+	l.View(100, 40, pal, lang, icons.Symbols())
 
 	card := func() string { return l.card(l.items[1], 1, 30, pal) }
 	idle := card()
@@ -192,7 +192,7 @@ func TestGridDims(t *testing.T) {
 func TestLinksViewFitsWidth(t *testing.T) {
 	for _, width := range []int{44, 60, 80, 100, 140} {
 		l := newLinksModel("t", sampleLinks())
-		view := l.View(width, 40, theme.Dark(), i18n.Chinese, icons.Plain())
+		view := l.View(width, 40, theme.Dark(), i18n.Chinese, icons.Symbols())
 		if width == 100 {
 			t.Logf("width 100 layout:\n%s", view)
 		}

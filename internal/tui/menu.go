@@ -47,9 +47,14 @@ func buildRoot() *menu {
 			{id: "kernel", label: tk("kernel_title"), desc: tk("menu_kernel"), icon: func(s icons.Set) string { return s.Core }, sub: buildKernel()},
 			{id: "node", label: tk("node_title"), desc: tk("menu_node"), icon: func(s icons.Set) string { return s.Rocket }, sub: buildNode()},
 			{id: "domain", label: tk("domain_title"), desc: tk("menu_domain"), icon: func(s icons.Set) string { return s.Globe }, sub: buildDomain()},
-			{id: "subscribe", label: tk("sub_title"), desc: tk("menu_subscribe"), icon: func(s icons.Set) string { return s.Link }, sub: buildSubscribe()},
-			{id: "users", label: tk("users_title"), desc: tk("menu_users"), icon: func(s icons.Set) string { return s.Lock }, action: enterUsers()},
+			{id: "subscribe", label: tk("sub_title"), desc: tk("menu_subscribe"), icon: func(s icons.Set) string { return s.Subscribe }, sub: buildSubscribe()},
+			{id: "users", label: tk("users_title"), desc: tk("menu_users"), icon: func(s icons.Set) string { return s.Account }, action: enterUsers()},
 			{id: "service", label: tk("svc_title"), desc: tk("menu_service"), icon: func(s icons.Set) string { return s.Service }, sub: buildService()},
+			iconLeaf("system", "menu_system", "menu_system_desc", func(s icons.Set) string { return s.System }, func(a *App) tea.Cmd {
+				a.openSystem()
+				return nil
+			}),
+			{id: "bbr", label: tk("bbr_title"), desc: tk("menu_bbr"), icon: func(s icons.Set) string { return s.Speed }, sub: buildBBR()},
 			iconLeaf("script-update", "menu_script_update", "menu_script_update_desc", func(s icons.Set) string { return s.Refresh }, scriptUpdate()),
 			iconLeaf("uninstall", "menu_uninstall", "menu_uninstall_desc", func(s icons.Set) string { return s.Trash }, uninstallAction()),
 		},
@@ -161,6 +166,8 @@ func buildDomain() *menu {
 		title: tk("domain_title"),
 		nodes: []*node{
 			leaf("domain-issue", "domain_issue", "desc_domain_issue", issueCertAction()),
+			leaf("domain-renew", "domain_renew", "desc_domain_renew", renewCertAction()),
+			leaf("domain-timer", "domain_timer", "desc_domain_timer", renewTimerAction()),
 			leaf("domain-list", "domain_list", "desc_domain_list", listCerts()),
 			leaf("domain-switch", "domain_switch", "desc_domain_switch", switchCertAction()),
 			leaf("domain-remove", "domain_remove", "desc_domain_remove", removeCertAction()),

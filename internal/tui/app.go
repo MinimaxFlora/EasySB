@@ -9,11 +9,14 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/MinimaxFlora/EasySB/internal/bbr"
 	"github.com/MinimaxFlora/EasySB/internal/i18n"
 	"github.com/MinimaxFlora/EasySB/internal/icons"
+	"github.com/MinimaxFlora/EasySB/internal/prefs"
 	"github.com/MinimaxFlora/EasySB/internal/subscribe"
 	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
 	"github.com/MinimaxFlora/EasySB/internal/theme"
+	"github.com/MinimaxFlora/EasySB/internal/ui"
 	"github.com/MinimaxFlora/EasySB/internal/user"
 )
 
@@ -23,6 +26,8 @@ type App struct {
 	scriptVersion string
 	lang          i18n.Lang
 	iconSet       icons.Set
+	skin          theme.Skin
+	dark          bool
 	palette       theme.Palette
 	themeAuto     bool
 	stack         []*menu
@@ -35,38 +40,120 @@ type App struct {
 	quote         string
 	toast         string
 	toastErr      bool
-	task          *progressModel
-	form          *formModel
-	links         *linksModel
+	// section is the root entry the panel is standing in, empty on the main
+	// menu. It is set when a root entry is entered and cleared on the way back.
+	section string
+	task    *progressModel
+	form    *formModel
+	links   *linksModel
+	// system is the system information screen. It replaces the body of the frame
+	// while it is open, so the status strip and the key hints stay in place.
+	system *systemModel
 	// accounts is the snapshot the account menus render from; it is refreshed
 	// when the section is entered and after every task.
 	accounts []user.User
+	// bbrVersions is the published kernel list the BBR section renders from, with
+	// bbrStatus as the local half of the reading: fetched when the list is opened.
+	bbrVersions        []bbr.Release
+	bbrVersionsErr     error
+	bbrVersionsLoading bool
+	bbrStatus          bbr.Status
+	// prefsPath is where the interface choices are remembered. It is a field so
+	// the tests can point it at a temporary file instead of /etc/sing-box.
+	prefsPath string
 }
 
+// New builds the application. Interface choices the operator made earlier are
+// already in the environment by the time this runs: main applies the preferences
+// file only where no flag or exported variable spoke.
 func New(scriptVersion string, lang i18n.Lang) *App {
-	palette, auto := paletteFromEnv()
-	return &App{
+	skin, dark, auto := skinFromEnv()
+	a := &App{
 		scriptVersion: scriptVersion,
 		lang:          lang,
 		iconSet:       icons.Detect(),
-		palette:       palette,
 		themeAuto:     auto,
 		stack:         []*menu{buildRoot()},
 		quote:         lang.Hitokoto(),
+		prefsPath:     prefs.Path(),
 	}
+	a.setSkin(skin, dark)
+	return a
 }
 
-// paletteFromEnv picks the starting palette. EASYSB_THEME, set by --theme,
-// forces dark or light; otherwise the palette follows the terminal background
-// detected on startup.
-func paletteFromEnv() (theme.Palette, bool) {
+// remember stores the interface choices so the next run starts where this one
+// left off. It is called from the actions that represent a decision, never from
+// the automatic palette detection, which would look like a decision next time.
+func (a *App) remember() {
+	if a.prefsPath == "" {
+		return
+	}
+	theme := ""
+	if !a.themeAuto {
+		if a.dark {
+			theme = "dark"
+		} else {
+			theme = "light"
+		}
+	}
+	_ = prefs.Prefs{
+		Skin:  a.skin.ID,
+		Theme: theme,
+		Icons: a.iconSet.ID,
+		Lang:  string(a.lang),
+	}.Save(a.prefsPath)
+}
+
+// setSkin resolves the skin for a terminal background and keeps the flat palette
+// the older screens use in step with it.
+func (a *App) setSkin(skin theme.Skin, dark bool) {
+	a.skin = skin
+	a.dark = dark
+	a.palette = skin.Style(dark).Palette
+}
+
+// lockLook records a manual choice: the palette stops following the terminal
+// background once the operator has picked one.
+func (a *App) lockLook() { a.themeAuto = false }
+
+// setDark switches the palette to a dark or light background.
+func (a *App) setDark(dark bool) {
+	a.lockLook()
+	a.setSkin(a.skin, dark)
+}
+
+// setIcons swaps the marker palette.
+func (a *App) setIcons(set icons.Set) { a.iconSet = set }
+
+// openSystem and closeSystem enter and leave the system information screen.
+func (a *App) openSystem() {
+	a.system = newSystemModel(a)
+	a.section = "system"
+}
+
+func (a *App) closeSystem() {
+	a.system = nil
+	a.section = ""
+}
+
+// style is the current skin resolved for the current background.
+func (a *App) style() theme.Style { return a.skin.Style(a.dark) }
+
+// skinFromEnv picks the starting look. EASYSB_SKIN, set by --skin, chooses the
+// skin; EASYSB_THEME, set by --theme, forces dark or light. Without either the
+// palette follows the terminal background detected on startup.
+func skinFromEnv() (theme.Skin, bool, bool) {
+	skin, ok := theme.SkinByID(strings.TrimSpace(os.Getenv("EASYSB_SKIN")))
+	if !ok {
+		skin = theme.DefaultSkin()
+	}
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("EASYSB_THEME"))) {
 	case "light":
-		return theme.Light(), false
+		return skin, false, false
 	case "dark":
-		return theme.Dark(), false
+		return skin, true, false
 	default:
-		return theme.Dark(), true
+		return skin, true, true
 	}
 }
 
@@ -92,6 +179,38 @@ func (a *App) Snapshot(width, height int) string {
 	return a.dashboard()
 }
 
+// SnapshotScreen is Snapshot for one named screen, so a layout can be inspected
+// without walking the menus. Unknown names fall back to the dashboard.
+func (a *App) SnapshotScreen(screen string, width, height int) string {
+	switch screen {
+	case "system":
+		a.openSystem()
+	case "node":
+		a.push(buildNode())
+		a.section = "node"
+	case "bbr":
+		a.push(buildBBR())
+		a.section = "bbr"
+	case "bbr-qdisc":
+		a.push(buildBBR())
+		a.section = "bbr"
+		a.push(buildQdisc())
+	case "bbr-versions":
+		a.push(buildBBR())
+		a.section = "bbr"
+		// The list is fetched from the network when it is opened. A rendered
+		// screen shows the layout, so it takes a sample list instead of an empty
+		// one, which would only ever draw the loading placeholder.
+		a.bbrVersions = previewReleases()
+		a.bbrStatus = bbr.Status{
+			Running: "7.2.6-minimaxflora-bbrv3",
+			Kernels: []string{"linux-image-7.2.6-minimaxflora-bbrv3"},
+		}
+		a.push(a.bbrVersionsMenu())
+	}
+	return a.Snapshot(width, height)
+}
+
 func collectStatus(version string) tea.Cmd {
 	return func() tea.Msg {
 		return statusMsg(sysinfo.Collect(version))
@@ -104,17 +223,6 @@ func quit() tea.Cmd {
 
 func (a *App) current() *menu { return a.stack[len(a.stack)-1] }
 
-// inNodeManagement reports whether the current screen lives under the node
-// management menu, where the node parameter card replaces the device card.
-func (a *App) inNodeManagement() bool {
-	for i := 1; i < len(a.stack); i++ {
-		if a.stack[i].id == "node" {
-			return true
-		}
-	}
-	return false
-}
-
 func (a *App) push(m *menu) {
 	a.stack = append(a.stack, m)
 	a.index = 0
@@ -125,14 +233,70 @@ func (a *App) pop() {
 		a.stack = a.stack[:len(a.stack)-1]
 		a.index = 0
 	}
+	if len(a.stack) == 1 {
+		a.section = ""
+	}
 }
 
-func (a *App) move(d int) {
+// moveRows moves the cursor one row. On the main menu the entries are drawn in
+// two columns, so a row is one column slot: moving by entry there would walk the
+// cursor sideways into the other column halfway down the list.
+func (a *App) moveRows(d int) {
 	n := a.itemCount()
 	if n == 0 {
 		return
 	}
-	a.index = (a.index + d + n) % n
+	if a.menuColumns() < 2 {
+		a.index = (a.index + d + n) % n
+		return
+	}
+	start, height := a.columnSpan(a.index)
+	a.index = start + (a.index-start+d+height)%height
+}
+
+// moveColumn hops to the same row of the neighbouring column, staying in the last
+// row when the column it lands on is shorter.
+func (a *App) moveColumn(d int) {
+	half := a.colHalf()
+	if a.index < half {
+		if d < 0 {
+			return
+		}
+		height := a.itemCount() - half
+		a.index = half + min(a.index, height-1)
+		return
+	}
+	if d > 0 {
+		return
+	}
+	a.index = min(a.index-half, half-1)
+}
+
+// colHalf is the number of rows in the left column of the main menu; the left
+// column takes the extra row when the count is odd.
+func (a *App) colHalf() int {
+	return (a.itemCount() + 1) / 2
+}
+
+// columnSpan is the first index and the row count of the column holding i.
+func (a *App) columnSpan(i int) (start, height int) {
+	half := a.colHalf()
+	if i < half {
+		return 0, half
+	}
+	return half, a.itemCount() - half
+}
+
+// menuColumns reports how many columns the current menu is drawn in. Only the main
+// menu uses two, and only while its card is wide enough for them.
+func (a *App) menuColumns() int {
+	if a.sectionID() != "" || len(a.current().nodes) == 0 {
+		return 1
+	}
+	if (ui.InnerWidth(a.style(), a.frameWidth())-1)/2 < 16 {
+		return 1
+	}
+	return 2
 }
 
 // itemCount is the number of selectable rows: menu nodes plus the trailing
@@ -191,6 +355,11 @@ func (a *App) enter() tea.Cmd {
 	n := a.selected()
 	if n == nil {
 		return nil
+	}
+	// Entering a root entry is what decides the current section, which is what
+	// the navigation column marks and what gives a screen its context card.
+	if a.current().id == "root" {
+		a.section = n.id
 	}
 	if n.sub != nil {
 		a.push(n.sub)
@@ -274,11 +443,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.BackgroundColorMsg:
 		// Follow the terminal background unless --theme pinned a palette.
 		if a.themeAuto {
-			if msg.IsDark() {
-				a.palette = theme.Dark()
-			} else {
-				a.palette = theme.Light()
-			}
+			a.setSkin(a.skin, msg.IsDark())
 		}
 		return a, nil
 	case tea.WindowSizeMsg:
@@ -294,6 +459,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case statusMsg:
 		a.status = sysinfo.Status(msg)
 		a.ready = true
+		return a, nil
+	case bbrVersionsMsg:
+		a.applyBBRVersions(msg)
 		return a, nil
 	}
 
@@ -355,6 +523,14 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return a, cmd
 	}
 
+	// The system screen owns a few keys of its own and lets the rest fall through
+	// to the global shortcuts below.
+	if a.system != nil {
+		if cmd, handled := a.system.handleKey(msg, a); handled {
+			return a, cmd
+		}
+	}
+
 	if a.toast != "" {
 		a.toast = ""
 	}
@@ -371,9 +547,9 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return a, quit()
 		}
 	case "up", "k":
-		a.move(-1)
+		a.moveRows(-1)
 	case "down", "j":
-		a.move(1)
+		a.moveRows(1)
 	case "0", "1", "2", "3", "4", "5", "6", "7", "8", "9":
 		// Shell-style numeric selection: pick the row, Enter runs it. 0 targets
 		// the trailing navigation row, which only exists in submenus.
@@ -385,14 +561,25 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			a.index = n - 1
 		}
 	case "left":
-		if len(a.stack) > 1 {
+		// On the two-column main menu the arrows move between columns; below
+		// that width, and in every submenu, left is the way back.
+		if a.menuColumns() > 1 {
+			a.moveColumn(-1)
+		} else if len(a.stack) > 1 {
 			a.pop()
 		}
-	case "right", "enter":
+	case "right":
+		if a.menuColumns() > 1 {
+			a.moveColumn(1)
+		} else {
+			return a, a.enter()
+		}
+	case "enter":
 		return a, a.enter()
 	case "l":
 		a.lang = a.lang.Toggle()
 		a.quote = a.lang.Hitokoto()
+		a.remember()
 	case "r":
 		return a, collectStatus(a.scriptVersion)
 	}
@@ -409,7 +596,7 @@ func (a *App) View() tea.View {
 	case a.form != nil:
 		content = a.formScreen()
 	case a.task != nil:
-		content = a.task.View(a.width, a.height, a.palette, a.lang, a.iconSet)
+		content = a.task.View(a.width, a.height, a.statusStrip(a.frameWidth()), a.style(), a.lang, a.iconSet)
 	case a.links != nil:
 		content = a.links.View(a.width, a.height, a.palette, a.lang, a.iconSet)
 	default:
@@ -439,297 +626,17 @@ func (a *App) frameWidth() int {
 	return panelWidth(a.width)
 }
 
-// dashboard renders the dashboard inside a single framed panel with full-width
-// section dividers. Decorative blocks (logo, contact block, quote) and status
-// sections drop out as the terminal shrinks, and the menu scrolls, so the panel
-// never grows taller than the screen.
-func (a *App) dashboard() string {
-	w := a.frameWidth()
-	h := a.height
-	if h <= 0 {
-		h = 24
-	}
-	inner := w - 4
-	if inner < 16 {
-		inner = 16
-	}
-
-	// A hint box costs two extra rows of chrome. It is used only when it can
-	// still show at least as much content as the inline hints, so a short but
-	// not tiny terminal keeps its panels instead of sacrificing them to the box.
-	inNode := a.inNodeManagement()
-	nav := a.hasNavRow()
-	totalItems := len(a.current().nodes)
-	if totalItems < 1 {
-		totalItems = 1
-	}
-
-	logoLines := a.logoLines(inner)
-	overviewRows := a.overviewRows(inner)
-	deviceLines := a.deviceSection(inner)[1:]
-	nodeLines := a.nodeSection(inner)[1:]
-
-	// layout describes which optional blocks are on screen; its cost is the
-	// exact number of body rows it renders. Every block is separated by one
-	// blank line and every menu item trails one, while rows inside a panel stay
-	// tight, so the whole dashboard shares a single vertical rhythm.
-	type layout struct {
-		logo     bool
-		overview bool
-		device   bool
-		node     bool
-		items    int
-		quote    bool
-	}
-	cost := func(l layout) int {
-		n := 2 // tagline + hairline rule
-		if l.logo {
-			n += len(logoLines)
-		}
-		firstSection := true
-		section := func(rows int) {
-			n++ // blank above the divider
-			if !firstSection {
-				n++ // section divider
-			}
-			firstSection = false
-			n += 2 + rows // title + blank + rows
-		}
-		if l.node {
-			section(len(nodeLines))
-		} else {
-			if l.overview {
-				section(len(overviewRows))
-			}
-			if l.device {
-				section(len(deviceLines))
-			}
-		}
-		n++ // blank above the menu divider
-		n++ // menu divider
-		n++ // menu title
-		if l.items > 0 {
-			n++              // blank under the menu title
-			n += l.items     // entries
-			n += l.items - 1 // blanks between entries
-		}
-		if nav {
-			n += 2 // blank + navigation row
-		}
-		if l.quote {
-			n += 2 // blank + quote
-		}
-		return n
-	}
-	// solve drops the least critical blocks first until the layout fits, then
-	// trims menu entries as a last resort.
-	solve := func(budget int) layout {
-		l := layout{
-			logo:     len(logoLines) > 0,
-			overview: !inNode,
-			device:   !inNode,
-			node:     inNode,
-			items:    totalItems,
-			quote:    true,
-		}
-		// Drop the decorative blocks first, then the secondary device card, so
-		// the status overview and the full menu survive the longest.
-		drops := []func(*layout){
-			func(l *layout) { l.quote = false },
-			func(l *layout) { l.logo = false },
-			func(l *layout) { l.device = false },
-			func(l *layout) { l.overview = false },
-			func(l *layout) { l.node = false },
-		}
-		for i := 0; cost(l) > budget; {
-			if i < len(drops) {
-				drops[i](&l)
-				i++
-				continue
-			}
-			if l.items > 1 {
-				l.items--
-				continue
-			}
-			break
-		}
-		return l
-	}
-
-	// Every screen renders the same fixed frame: the body keeps a constant
-	// height and the hint box is pinned to the bottom, so moving between the
-	// menu and a subpage never resizes the panel. On terminals too short to
-	// spare the box, the hints fall back to a single bottom line.
-	useHintBox := hintRows(h) > 0
-	budget := h - 5
-	if !useHintBox {
-		budget = h - 3
-	}
-	if budget < 3 {
-		budget = 3
-	}
-	l := solve(budget)
-
-	type row struct {
-		text  string
-		sep   bool
-		rule  bool
-		blank bool
-	}
-	var rows []row
-	add := func(text string) { rows = append(rows, row{text: text}) }
-	blank := func() { rows = append(rows, row{blank: true}) }
-	divider := func() { rows = append(rows, row{sep: true}) }
-
-	if l.logo {
-		for _, line := range logoLines {
-			add(line)
-		}
-	}
-	add(a.taglineLine(inner))
-	rows = append(rows, row{rule: true})
-
-	// The tagline rule already closes the header, so the first section skips its
-	// divider; every section keeps one blank line under its title.
-	firstSection := true
-	section := func(titleKey string, lines []string) {
-		blank()
-		if !firstSection {
-			divider()
-		}
-		firstSection = false
-		add(a.sectionTitle(titleKey))
-		blank()
-		for _, line := range lines {
-			add(line)
-		}
-	}
-	if l.node {
-		section("panel_node", nodeLines)
-	} else {
-		if l.overview {
-			section("panel_overview", overviewRows)
-		}
-		if l.device {
-			section("panel_device", deviceLines)
-		}
-	}
-
-	blank()
-	divider()
-	menuTitle := "  " + a.palette.Bold(a.palette.Primary, a.current().title(a.lang))
-	descCol := a.menuDescColumn(inner, a.menuLabelColumn())
-	cursorWidth := a.menuCursorWidth(inner)
-	items, hidden := a.menuViewport(l.items, inner, descCol, cursorWidth)
-	if hidden > 0 {
-		menuTitle += a.palette.Dim(fmt.Sprintf("  (+%d)", hidden))
-	}
-	add(menuTitle)
-	if len(items) > 0 {
-		blank()
-	}
-	for i, item := range items {
-		if i > 0 {
-			blank()
-		}
-		add(item)
-	}
-	if nav {
-		blank()
-		add(a.rowLine(a.onNavRow(), a.iconSet.Arrow+" "+a.navLabel(), inner, cursorWidth))
-	}
-
-	if l.quote {
-		blank()
-		add(a.quoteLine(inner))
-	}
-
-	// Safety net for very short terminals: if even the tightest layout overflows,
-	// reclaim blank rows from the bottom until it fits. The frame stays intact.
-	for len(rows) > budget {
-		idx := -1
-		for i := len(rows) - 1; i >= 0; i-- {
-			if rows[i].blank {
-				idx = i
-				break
-			}
-		}
-		if idx < 0 {
-			break
-		}
-		rows = append(rows[:idx], rows[idx+1:]...)
-	}
-
-	// Spare rows are parked just above the quote, which keeps it pinned near the
-	// closing border; the remainder fills the bottom of the frame. The body is
-	// always padded to the exact height so no screen changes the panel size.
-	padBefore := -1
-	if l.quote && len(rows) > 0 {
-		padBefore = len(rows) - 1
-		if padBefore > 0 && rows[padBefore-1].blank {
-			padBefore--
-		}
-	}
-	spare := budget - len(rows)
-	if spare < 0 {
-		spare = 0
-	}
-
-	out := []string{theme.TopRule(w, a.palette.Border)}
-	pad := func() { out = append(out, theme.FrameLine("", w, a.palette.Border)) }
-	for i, r := range rows {
-		if i == padBefore {
-			for n := 0; n < spare; n++ {
-				pad()
-			}
-			spare = 0
-		}
-		switch {
-		case r.blank:
-			pad()
-		case r.sep:
-			out = append(out, theme.SectionRule(w, a.palette.Border))
-		case r.rule:
-			out = append(out, theme.FrameRule(w, a.palette.Border))
-		default:
-			out = append(out, theme.FrameLine(r.text, w, a.palette.Border))
-		}
-	}
-	for n := 0; n < spare; n++ {
-		pad()
-	}
-	// Keep the frame rectangular even when the tightest layout still overflows.
-	if len(out) > budget+1 {
-		out = out[:budget+1]
-	}
-	out = append(out, theme.BottomRule(w, a.palette.Border))
-
-	hint := a.palette.Dim(a.dashboardHint())
-	if a.toast != "" {
-		hint = a.renderToast(w - 4)
-	}
-	if useHintBox {
-		out = append(out, a.hintBox(hint, w)...)
-		return strings.Join(out, "\n")
-	}
-	// Fullscreen: pad so the hint sits on the last row, leaving the rest of the
-	// screen blank instead of letting old shell output show through.
-	if len(out) > h-1 {
-		out = out[:h-1]
-	}
-	for len(out) < h-1 {
-		out = append(out, "")
-	}
-	out = append(out, a.hintLine(hint, w))
-	return strings.Join(out, "\n")
-}
-
-// menuLabelColumn returns the column at which root menu descriptions start so
-// they all line up behind the widest label.
+// menuLabelColumn returns the column at which menu descriptions start so they all
+// line up behind the widest numbered label.
 func (a *App) menuLabelColumn() int {
 	width := 0
-	for _, n := range a.current().nodes {
-		if w := lipgloss.Width(a.nodeLabel(n)); w > width {
+	for i, n := range a.current().nodes {
+		if w := lipgloss.Width(a.numberedLabel(i, n)); w > width {
+			width = w
+		}
+	}
+	if a.hasNavRow() {
+		if w := lipgloss.Width(a.numberedLabel(len(a.current().nodes), nil)); w > width {
 			width = w
 		}
 	}
@@ -790,7 +697,7 @@ func (a *App) menuViewport(limit, inner, descCol, cursorWidth int) ([]string, in
 	}
 	rows := make([]string, 0, end-top)
 	for i := top; i < end; i++ {
-		rows = append(rows, a.menuRow(i == a.index, nodes[i], inner, descCol, cursorWidth))
+		rows = append(rows, a.menuRow(i == a.index, i, nodes[i], inner, descCol, cursorWidth))
 	}
 	return rows, n - len(rows)
 }
@@ -798,8 +705,8 @@ func (a *App) menuViewport(limit, inner, descCol, cursorWidth int) ([]string, in
 // menuRowParts lays out one entry's static text: the label padded out to the
 // description column (or truncated on compact submenu rows) and the description
 // itself. The selection marker is added by menuRow.
-func (a *App) menuRowParts(n *node, inner, descCol int) (string, string) {
-	label := a.nodeLabel(n)
+func (a *App) menuRowParts(i int, n *node, inner, descCol int) (string, string) {
+	label := a.numberedLabel(i, n)
 	desc := ""
 	if n.desc != nil {
 		desc = n.desc(a.lang)
@@ -825,12 +732,12 @@ func (a *App) menuCursorWidth(inner int) int {
 
 // menuRow renders one menu entry. The main menu pads its labels into a column
 // and follows them with a short one-line description; submenus stay compact.
-func (a *App) menuRow(selected bool, n *node, inner, descCol, cursorWidth int) string {
+func (a *App) menuRow(selected bool, i int, n *node, inner, descCol, cursorWidth int) string {
 	marker := "  "
 	if selected {
 		marker = "▌ "
 	}
-	head, desc := a.menuRowParts(n, inner, descCol)
+	head, desc := a.menuRowParts(i, n, inner, descCol)
 	line := " " + marker + head
 	if selected {
 		// The bar spans the whole row and is padded to the longest entry, so the
@@ -843,8 +750,26 @@ func (a *App) menuRow(selected bool, n *node, inner, descCol, cursorWidth int) s
 	return a.palette.Bold(a.palette.Text, line) + a.palette.Dim(desc)
 }
 
+// numberTag is the bracket in front of every menu entry: entries are picked by
+// number as well as by cursor, which is how the entries stay countable once the
+// list is longer than a screen.
+func (a *App) numberTag(i int) string {
+	return fmt.Sprintf("[ %d ] ", i+1)
+}
+
+// numberedLabel is one entry as it is drawn in a menu: its number, then its name.
+// A nil node is the trailing navigation row, which is numbered like the rest.
+func (a *App) numberedLabel(i int, n *node) string {
+	name := a.navLabel()
+	if n != nil {
+		name = n.label(a.lang)
+	}
+	return a.numberTag(i) + name
+}
+
 // nodeLabel prefixes a menu entry with its icon, falling back to a bullet for
-// entries that have no dedicated glyph.
+// entries that have no dedicated glyph. The navigation column uses it; the menus
+// themselves are numbered.
 func (a *App) nodeLabel(n *node) string {
 	if n.icon != nil {
 		return n.icon(a.iconSet) + " " + n.label(a.lang)
@@ -876,11 +801,22 @@ func (a *App) renderToast(w int) string {
 
 // dashboardHint is the key list shown in the pinned hint box on the main menu.
 func (a *App) dashboardHint() string {
-	return strings.Join([]string{
-		a.lang.T("hint_navigate"),
+	if a.system != nil {
+		return strings.Join([]string{
+			a.lang.T("hint_system"),
+			a.lang.T("hint_back"),
+			a.lang.T("hint_lang"),
+			a.lang.T("hint_quit"),
+		}, "  ")
+	}
+	hints := []string{a.lang.T("hint_navigate")}
+	if a.menuColumns() > 1 {
+		hints = append(hints, a.lang.T("hint_columns"))
+	}
+	return strings.Join(append(hints,
 		a.lang.T("hint_enter"),
 		a.lang.T("hint_back"),
 		a.lang.T("hint_lang"),
 		a.lang.T("hint_quit"),
-	}, "  ")
+	), "  ")
 }

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -242,7 +243,9 @@ func TestExtractBinary(t *testing.T) {
 		t.Fatalf("binary content = %q", data)
 	}
 	info, _ := os.Stat(dest)
-	if info.Mode().Perm()&0o111 == 0 {
+	// Windows reports no permission bits at all, so the execute bit only means
+	// something on the platforms the core actually runs on.
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0o111 == 0 {
 		t.Fatalf("binary is not executable: %v", info.Mode())
 	}
 }

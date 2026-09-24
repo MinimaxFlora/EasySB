@@ -5,11 +5,10 @@ package cert
 import (
 	"context"
 	"errors"
-	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -24,12 +23,40 @@ type Resolved struct {
 }
 
 // ACMEDir returns the acme.sh home directory.
+//
+// $HOME is not a reliable answer here: the panel runs as root from the install
+// script, from sudo and from systemd units, each of which can hand it a different
+// HOME, while acme.sh always installs into the invoking user's home. So the
+// candidates are probed for an actual acme.sh installation instead of trusted, and
+// the ones that exist win over the ones that merely should.
 func ACMEDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		home = "/root"
+	if dir := strings.TrimSpace(os.Getenv(ACMEHomeEnv)); dir != "" {
+		return dir
 	}
-	return filepath.Join(home, ".acme.sh")
+	primary := filepath.Join(homeDir(), ".acme.sh")
+	for _, dir := range []string{primary, "/root/.acme.sh"} {
+		if looksLikeACMEHome(dir) {
+			return dir
+		}
+	}
+	return primary
+}
+
+// homeDir is $HOME with a root fallback for the environments that do not set it.
+func homeDir() string {
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		return home
+	}
+	return "/root"
+}
+
+// looksLikeACMEHome reports whether a directory holds an acme.sh installation or
+// certificates issued by one.
+func looksLikeACMEHome(dir string) bool {
+	if exists(filepath.Join(dir, "acme.sh")) {
+		return true
+	}
+	return len(certDirs(dir)) > 0
 }
 
 // ACMESh returns the expected acme.sh script path.
@@ -69,9 +96,26 @@ func Usable(domain string) bool {
 	return ok
 }
 
-// Domains lists cert domains present in the acme.sh directory.
+// Domains lists cert domains present in the acme.sh directory. A domain that has
+// both an RSA and an EC certificate is listed once: the switch menu acts on the
+// domain, not on the flavour.
 func Domains() []string {
-	entries, err := os.ReadDir(ACMEDir())
+	seen := map[string]bool{}
+	var out []string
+	for _, name := range certDirs(ACMEDir()) {
+		domain := strings.TrimSuffix(name, "_ecc")
+		if domain == "" || seen[domain] {
+			continue
+		}
+		seen[domain] = true
+		out = append(out, domain)
+	}
+	return out
+}
+
+// certDirs lists the directories under an acme.sh home that hold a certificate.
+func certDirs(dir string) []string {
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil
 	}
@@ -80,11 +124,9 @@ func Domains() []string {
 		if !e.IsDir() {
 			continue
 		}
-		dir := filepath.Join(ACMEDir(), e.Name())
-		if !exists(filepath.Join(dir, "fullchain.cer")) {
-			continue
+		if exists(filepath.Join(dir, e.Name(), "fullchain.cer")) {
+			out = append(out, e.Name())
 		}
-		out = append(out, strings.TrimSuffix(e.Name(), "_ecc"))
 	}
 	return out
 }
@@ -149,98 +191,25 @@ func runOpenSSL(ctx context.Context, args ...string) error {
 // ACMEInstalled reports whether the acme.sh script is available.
 func ACMEInstalled() bool {
 	for _, p := range []string{ACMESh(), filepath.Join(ACMEDir(), "acme.sh")} {
-		if info, err := os.Stat(p); err == nil && info.Mode()&0o111 != 0 {
+		if info, err := os.Stat(p); err == nil && isExecutable(info) {
 			return true
 		}
 	}
 	return false
 }
 
-const acmeInstallerURL = "https://get.acme.sh"
-
-// EnsureACME installs acme.sh when it is missing, using the given account email.
-func EnsureACME(ctx context.Context, email string, log func(string)) error {
-	if ACMEInstalled() {
-		return nil
+// isExecutable checks the execute bit where the platform has one. Windows reports
+// no permission bits at all, so requiring 0o111 there would mean answer "not
+// installed" for a file that is right there, which is what the tests on a Windows
+// checkout would otherwise see.
+func isExecutable(info os.FileInfo) bool {
+	if info.IsDir() {
+		return false
 	}
-	if strings.TrimSpace(email) == "" {
-		return errors.New("acme email is required")
+	if runtime.GOOS == "windows" {
+		return true
 	}
-	installer := filepath.Join(os.TempDir(), "acme-install.sh")
-	log("GET " + acmeInstallerURL)
-	if err := downloadFile(ctx, acmeInstallerURL, installer); err != nil {
-		return err
-	}
-
-	cmd := exec.CommandContext(ctx, "sh", installer, "email="+email)
-	cmd.Env = append(os.Environ(), "LC_ALL=C")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return errors.New("install acme.sh: " + strings.TrimSpace(string(out)))
-	}
-	if !ACMEInstalled() {
-		return errors.New("acme.sh install did not produce a script")
-	}
-	return nil
-}
-
-// Issue requests a certificate with the acme.sh standalone method.
-func Issue(ctx context.Context, domain string, log func(string)) error {
-	if !ACMEInstalled() {
-		return errors.New("acme.sh is not installed")
-	}
-	log("$ acme.sh --issue --standalone -d " + domain)
-	cmd := exec.CommandContext(ctx, ACMESh(), "--issue", "--standalone", "-d", domain, "--keylength", "ec-256", "--force")
-	cmd.Env = append(os.Environ(), "LC_ALL=C")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return errors.New("issue: " + lastLine(string(out)))
-	}
-	return nil
-}
-
-// Remove deletes a certificate managed by acme.sh.
-func Remove(ctx context.Context, domain string) error {
-	if !ACMEInstalled() {
-		return nil
-	}
-	cmd := exec.CommandContext(ctx, ACMESh(), "--remove", "-d", domain, "--ecc")
-	cmd.Env = append(os.Environ(), "LC_ALL=C")
-	_, err := cmd.CombinedOutput()
-	return err
-}
-
-func downloadFile(ctx context.Context, url, dest string) error {
-	cctx, cancel := context.WithTimeout(ctx, 60*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(cctx, http.MethodGet, url, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("User-Agent", "EasySB")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return errors.New("download " + url + ": " + resp.Status)
-	}
-	f, err := os.Create(dest)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	_, err = io.Copy(f, resp.Body)
-	return err
-}
-
-func lastLine(s string) string {
-	lines := strings.Split(strings.TrimSpace(s), "\n")
-	if len(lines) == 0 {
-		return s
-	}
-	return lines[len(lines)-1]
+	return info.Mode()&0o111 != 0
 }
 
 func exists(path string) bool {

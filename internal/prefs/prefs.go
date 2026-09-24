@@ -1,0 +1,157 @@
+// Package prefs stores the interface choices the panel would otherwise forget
+// between runs: the skin, the palette, the marker set and the language. They live
+// next to the node state but in their own file, because they describe this
+// terminal, not the node.
+package prefs
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
+)
+
+const (
+	// PathEnv overrides the preferences file path. The tests and a second panel
+	// install use it.
+	PathEnv = "EASYSB_UI_CONF"
+
+	// The variables the panel reads on start-up, set by the command line first.
+	SkinEnv  = "EASYSB_SKIN"
+	ThemeEnv = "EASYSB_THEME"
+	IconsEnv = "EASYSB_ICONS"
+	LangEnv  = "EASYSB_LANG"
+)
+
+// Prefs is what the panel remembers. Empty values mean "no choice yet", which
+// leaves detection and defaults in charge.
+type Prefs struct {
+	Skin  string
+	Theme string
+	Icons string
+	Lang  string
+}
+
+// binding ties one choice together: its name in the file, the variable it reaches
+// the panel through, and how to read and write it. Reading, writing and applying
+// all walk this one table, so a key cannot drift apart from its field.
+type binding struct {
+	key string
+	env string
+	get func(Prefs) string
+	set func(*Prefs, string)
+}
+
+var bindings = []binding{
+	{"SKIN", SkinEnv, func(p Prefs) string { return p.Skin }, func(p *Prefs, v string) { p.Skin = v }},
+	{"THEME", ThemeEnv, func(p Prefs) string { return p.Theme }, func(p *Prefs, v string) { p.Theme = v }},
+	{"ICONS", IconsEnv, func(p Prefs) string { return p.Icons }, func(p *Prefs, v string) { p.Icons = v }},
+	{"LANG", LangEnv, func(p Prefs) string { return p.Lang }, func(p *Prefs, v string) { p.Lang = v }},
+}
+
+// Path returns the preferences file location.
+func Path() string {
+	if p := strings.TrimSpace(os.Getenv(PathEnv)); p != "" {
+		return p
+	}
+	return filepath.Join(sysinfo.WorkDir, "easysb-ui.conf")
+}
+
+// Load reads the preferences file. A missing or unreadable file is not an error:
+// it means the panel has never been asked to remember anything.
+func Load(path string) Prefs {
+	var p Prefs
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return p
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		key, value, ok := splitLine(line)
+		if !ok {
+			continue
+		}
+		for _, b := range bindings {
+			if b.key == key {
+				b.set(&p, value)
+			}
+		}
+	}
+	return p
+}
+
+// Save writes the preferences file atomically, so an interrupted write cannot
+// leave a half-written file that the next start would read as no preferences at
+// all. The directory is created when missing: the panel can be run before the
+// installer has made it.
+func (p Prefs) Save(path string) error {
+	if dir := filepath.Dir(path); dir != "" {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+	}
+	var b strings.Builder
+	b.WriteString("# EasySB interface preferences\n")
+	for _, binding := range bindings {
+		value := strings.TrimSpace(binding.get(p))
+		if value == "" {
+			continue
+		}
+		// The values come from a closed set in the interface, but the file is on
+		// disk and editable, so a stray quote or newline must not be able to turn
+		// one setting into two.
+		value = strings.NewReplacer("\n", " ", "\r", " ", "\"", "").Replace(value)
+		b.WriteString(binding.key + "=\"" + value + "\"\n")
+	}
+
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".easysb-ui-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.WriteString(b.String()); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
+}
+
+// Apply fills in the variables the caller has not set yet, so remembered choices
+// act as defaults rather than overrides. It is called once, from main, after the
+// flags have been parsed: a choice made on the command line or exported in the
+// shell has already answered those variables and is left alone.
+func (p Prefs) Apply(getenv func(string) string, setenv func(string, string) error) {
+	for _, binding := range bindings {
+		if strings.TrimSpace(getenv(binding.env)) != "" {
+			continue
+		}
+		if value := strings.TrimSpace(binding.get(p)); value != "" {
+			_ = setenv(binding.env, value)
+		}
+	}
+}
+
+// splitLine parses one KEY="value" line.
+func splitLine(line string) (string, string, bool) {
+	line = strings.TrimSpace(line)
+	if line == "" || strings.HasPrefix(line, "#") {
+		return "", "", false
+	}
+	key, value, ok := strings.Cut(line, "=")
+	if !ok {
+		return "", "", false
+	}
+	key = strings.TrimSpace(key)
+	value = strings.TrimSpace(value)
+	value = strings.Trim(value, "\"")
+	if key == "" || value == "" {
+		return "", "", false
+	}
+	return key, value, true
+}

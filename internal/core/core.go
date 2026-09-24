@@ -287,15 +287,21 @@ func get(ctx context.Context, url string) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 }
 
-// Download streams a URL to dest.
+// Download streams a URL to dest, with the budget a core tarball needs.
 func Download(ctx context.Context, url, dest string) error {
+	return DownloadWithin(ctx, url, dest, 5*time.Minute)
+}
+
+// DownloadWithin is Download with an explicit budget, for the callers that pull
+// something much larger than a core tarball.
+func DownloadWithin(ctx context.Context, url, dest string, timeout time.Duration) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("User-Agent", "EasySB")
 
-	client := &http.Client{Timeout: 5 * time.Minute}
+	client := &http.Client{Timeout: timeout}
 	resp, err := client.Do(req)
 	if err != nil {
 		return err
