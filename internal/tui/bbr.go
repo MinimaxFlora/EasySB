@@ -207,39 +207,39 @@ func buildQdisc() *menu {
 func bbrStatusAction() actionFunc {
 	return func(a *App) tea.Cmd {
 		lang := a.lang
-		return a.startTask(lang.T("bbr_status"), func(ctx context.Context, log func(string)) error {
+		return a.startTask(lang.T("bbr_status"), func(ctx context.Context, r *taskReporter) error {
 			st := bbr.Collect(ctx)
-			log(lang.T("bbr_st_running") + ": " + dash(st.Running))
-			log(lang.T("bbr_st_arch") + ": " + dash(st.Arch))
+			r.Log(lang.T("bbr_st_running") + ": " + dash(st.Running))
+			r.Log(lang.T("bbr_st_arch") + ": " + dash(st.Arch))
 			if !st.Supported() {
-				log(lang.T("bbr_st_arch_unsupported"))
+				r.Log(lang.T("bbr_st_arch_unsupported"))
 			}
 			if st.Enabled() {
-				log(lang.T("bbr_st_congestion") + ": bbr " + lang.T("bbr_st_on"))
+				r.Log(lang.T("bbr_st_congestion") + ": bbr " + lang.T("bbr_st_on"))
 			} else {
-				log(lang.T("bbr_st_congestion") + ": " + dash(st.Congestion) + " " + lang.T("bbr_st_off"))
+				r.Log(lang.T("bbr_st_congestion") + ": " + dash(st.Congestion) + " " + lang.T("bbr_st_off"))
 			}
-			log(lang.T("bbr_st_qdisc") + ": " + dash(st.Qdisc))
-			log(lang.T("bbr_st_available") + ": " + dash(st.Available))
+			r.Log(lang.T("bbr_st_qdisc") + ": " + dash(st.Qdisc))
+			r.Log(lang.T("bbr_st_available") + ": " + dash(st.Available))
 			if kernel := st.CustomKernel(); kernel != "" {
-				log(lang.T("bbr_st_kernel") + ": " + kernel)
+				r.Log(lang.T("bbr_st_kernel") + ": " + kernel)
 				if st.NeedsReboot() {
-					log(lang.T("bbr_st_reboot"))
+					r.Log(lang.T("bbr_st_reboot"))
 				}
 			} else {
-				log(lang.T("bbr_st_kernel") + ": " + lang.T("bbr_st_none"))
+				r.Log(lang.T("bbr_st_kernel") + ": " + lang.T("bbr_st_none"))
 			}
 			if st.Latest != "" {
-				log(lang.T("bbr_st_latest") + ": " + st.Latest)
+				r.Log(lang.T("bbr_st_latest") + ": " + st.Latest)
 				if newer, ok := st.Outdated(); ok {
-					log(lang.T("bbr_st_newer") + ": " + newer)
-					log(lang.T("bbr_st_newer_hint"))
+					r.Log(lang.T("bbr_st_newer") + ": " + newer)
+					r.Log(lang.T("bbr_st_newer_hint"))
 				}
 			} else if st.LatestErr != "" {
-				log(lang.T("ver_offline"))
+				r.Log(lang.T("ver_offline"))
 			}
 			if !st.AvailableBBR() {
-				log(lang.T("bbr_st_no_module"))
+				r.Log(lang.T("bbr_st_no_module"))
 			}
 			return nil
 		})
@@ -251,11 +251,11 @@ func bbrEnableAction(qdisc string) actionFunc {
 	return func(a *App) tea.Cmd {
 		lang := a.lang
 		title := lang.T("bbr_enable") + " · " + qdisc
-		return a.startTask(title, func(ctx context.Context, log func(string)) error {
-			if err := bbr.Enable(ctx, log, qdisc); err != nil {
+		return a.startTask(title, func(ctx context.Context, r *taskReporter) error {
+			if err := bbr.Enable(ctx, r.Log, qdisc); err != nil {
 				return err
 			}
-			log(lang.T("ok"))
+			r.Log(lang.T("ok"))
 			return nil
 		})
 	}
@@ -270,16 +270,19 @@ func bbrInstallAction(profile bbr.Profile, version string) actionFunc {
 		if version != "" {
 			title += " · " + version
 		}
-		return a.startTask(title, func(ctx context.Context, log func(string)) error {
-			log(lang.T("bbr_installing"))
-			if err := bbr.Install(ctx, log, profile, version); err != nil {
+		return a.startTask(title, func(ctx context.Context, r *taskReporter) error {
+			r.Log(lang.T("bbr_installing"))
+			if err := bbr.Install(ctx, r.Log, r.Progress, profile, version); err != nil {
 				return err
 			}
-			log(lang.T("bbr_installed"))
-			log(lang.T("bbr_reboot_hint"))
-			// The status strip shows the new kernel only after the reboot, so
-			// refresh what can be read now.
-			a.setToast(lang.T("bbr_installed"), false)
+			r.Log(lang.T("bbr_installed"))
+			// The running kernel does not change under a live proxy, so the install
+			// leaves the machine one reboot short of using what it just unpacked.
+			// Saying so twice is deliberate: once in the log that is being read
+			// now, and once on the menu this task hands back to.
+			r.Log(lang.T("bbr_reboot_needed"))
+			r.Log(lang.T("bbr_reboot_hint"))
+			a.setToast(lang.T("bbr_reboot_needed"), true)
 			return nil
 		})
 	}
@@ -289,17 +292,17 @@ func bbrInstallAction(profile bbr.Profile, version string) actionFunc {
 func bbrRemoveAction() actionFunc {
 	return func(a *App) tea.Cmd {
 		lang := a.lang
-		return a.startTask(lang.T("bbr_remove_kernel"), func(ctx context.Context, log func(string)) error {
-			removed, err := bbr.Remove(ctx, log)
+		return a.startTask(lang.T("bbr_remove_kernel"), func(ctx context.Context, r *taskReporter) error {
+			removed, err := bbr.Remove(ctx, r.Log)
 			if err != nil {
 				return err
 			}
 			if !removed {
-				log(lang.T("bbr_remove_none"))
+				r.Log(lang.T("bbr_remove_none"))
 				return nil
 			}
-			log(lang.T("bbr_removed"))
-			log(lang.T("bbr_reboot_hint"))
+			r.Log(lang.T("bbr_removed"))
+			r.Log(lang.T("bbr_reboot_hint"))
 			return nil
 		})
 	}
@@ -310,16 +313,16 @@ func bbrRemoveAction() actionFunc {
 func bbrClearAction() actionFunc {
 	return func(a *App) tea.Cmd {
 		lang := a.lang
-		return a.startTask(lang.T("bbr_clear"), func(ctx context.Context, log func(string)) error {
-			cleared, err := bbr.Clear(ctx, log)
+		return a.startTask(lang.T("bbr_clear"), func(ctx context.Context, r *taskReporter) error {
+			cleared, err := bbr.Clear(ctx, r.Log)
 			if err != nil {
 				return err
 			}
 			if !cleared {
-				log(lang.T("bbr_clear_none"))
+				r.Log(lang.T("bbr_clear_none"))
 				return nil
 			}
-			log(lang.T("bbr_cleared"))
+			r.Log(lang.T("bbr_cleared"))
 			return nil
 		})
 	}

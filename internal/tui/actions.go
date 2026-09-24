@@ -27,23 +27,23 @@ func serviceAction(verb string) actionFunc {
 	return func(a *App) tea.Cmd {
 		title := a.lang.T("svc_title") + " · " + verb
 		lang := a.lang
-		fn := func(ctx context.Context, log func(string)) error {
+		fn := func(ctx context.Context, r *taskReporter) error {
 			switch verb {
 			case "status":
-				log("$ systemctl status " + sysinfo.ServiceName + " --no-pager")
+				r.Log("$ systemctl status " + sysinfo.ServiceName + " --no-pager")
 				out, _ := runCmd(ctx, "systemctl", "status", sysinfo.ServiceName, "--no-pager")
-				emit(log, out)
+				emit(r.Log, out)
 				out2, _ := runCmd(ctx, "systemctl", "is-enabled", sysinfo.ServiceName)
-				emit(log, out2)
+				emit(r.Log, out2)
 				return nil
 			default:
-				log("$ systemctl " + verb + " " + sysinfo.ServiceName)
+				r.Log("$ systemctl " + verb + " " + sysinfo.ServiceName)
 				out, err := runCmd(ctx, "systemctl", verb, sysinfo.ServiceName)
-				emit(log, out)
+				emit(r.Log, out)
 				if err != nil {
 					return err
 				}
-				log(lang.T("ok"))
+				r.Log(lang.T("ok"))
 				return nil
 			}
 		}
@@ -59,7 +59,7 @@ func serviceAction(verb string) actionFunc {
 func kernelAction(mode string) actionFunc {
 	return func(a *App) tea.Cmd {
 		lang := a.lang
-		return a.startTask(lang.T("kernel_installing"), func(ctx context.Context, log func(string)) error {
+		return a.startTask(lang.T("kernel_installing"), func(ctx context.Context, r *taskReporter) error {
 			cfg := state.Load()
 			installed := core.Installed()
 			current := core.InstalledChannel(cfg.CoreChannel)
@@ -79,7 +79,7 @@ func kernelAction(mode string) actionFunc {
 				} else {
 					target = "alpha"
 				}
-				log(lang.T("kernel_switching") + ": " + lang.T(channelKey(current)) + " → " + lang.T(channelKey(target)))
+				r.Log(lang.T("kernel_switching") + ": " + lang.T(channelKey(current)) + " → " + lang.T(channelKey(target)))
 			case "update":
 				if !installed {
 					return errors.New(lang.T("kernel_need_install"))
@@ -90,13 +90,13 @@ func kernelAction(mode string) actionFunc {
 			}
 
 			if mode != "update" && installed && current == target {
-				log(lang.T("kernel_already") + ": " + lang.T(channelKey(target)))
+				r.Log(lang.T("kernel_already") + ": " + lang.T(channelKey(target)))
 				return nil
 			}
 
 			rels, err := core.FetchReleases(ctx)
 			if err != nil {
-				log(lang.T("ver_offline"))
+				r.Log(lang.T("ver_offline"))
 			}
 			rel := rels.Stable
 			if target == "alpha" {
@@ -107,12 +107,12 @@ func kernelAction(mode string) actionFunc {
 			}
 
 			if installed {
-				log("$ systemctl stop " + sysinfo.ServiceName)
+				r.Log("$ systemctl stop " + sysinfo.ServiceName)
 				runCmd(ctx, "systemctl", "stop", sysinfo.ServiceName)
 			}
 
-			log(lang.T("kernel_downloading") + ": " + target + " " + rel.Version)
-			version, err := core.Install(ctx, rel, log)
+			r.Log(lang.T("kernel_downloading") + ": " + target + " " + rel.Version)
+			version, err := core.Install(ctx, rel, r.Log, r.Progress)
 			if err != nil {
 				return err
 			}
@@ -123,13 +123,13 @@ func kernelAction(mode string) actionFunc {
 			}
 
 			if hasServerConfig() {
-				log("$ systemctl start " + sysinfo.ServiceName)
+				r.Log("$ systemctl start " + sysinfo.ServiceName)
 				runCmd(ctx, "systemctl", "start", sysinfo.ServiceName)
 			}
 			if mode == "update" {
-				log(lang.T("kernel_updated") + ": " + version)
+				r.Log(lang.T("kernel_updated") + ": " + version)
 			} else {
-				log(lang.T("kernel_installed") + ": " + lang.T(channelKey(target)) + " " + version)
+				r.Log(lang.T("kernel_installed") + ": " + lang.T(channelKey(target)) + " " + version)
 			}
 			return nil
 		})
@@ -146,7 +146,7 @@ func hasServerConfig() bool {
 func deployNode() actionFunc {
 	return func(a *App) tea.Cmd {
 		lang := a.lang
-		return a.startTask(lang.T("node_deploying"), func(ctx context.Context, log func(string)) error {
+		return a.startTask(lang.T("node_deploying"), func(ctx context.Context, r *taskReporter) error {
 			if !core.Installed() {
 				return errors.New(lang.T("node_need_core"))
 			}
@@ -162,7 +162,7 @@ func deployNode() actionFunc {
 			if store.Len() == 0 {
 				// A node without accounts is legal and starts, but nobody can
 				// connect, so the operator is told rather than blocked.
-				log(lang.T("node_no_users"))
+				r.Log(lang.T("node_no_users"))
 			}
 
 			// The node keeps only the material no account owns: the Reality
@@ -175,7 +175,7 @@ func deployNode() actionFunc {
 						return err
 					}
 					cfg.RealityPriv, cfg.RealityPub = priv, pub
-					log(lang.T("param_key_gen"))
+					r.Log(lang.T("param_key_gen"))
 				}
 				if cfg.RealitySID == "" {
 					cfg.RealitySID = secret.ShortID()
@@ -186,14 +186,14 @@ func deployNode() actionFunc {
 				cfg.Domain = cfg.CertDomain
 			}
 			if cfg.Domain == "" && config.ParamsFromState(cfg).NeedsCert() {
-				log(lang.T("node_need_domain"))
-				log("→ self-signed placeholder certificate")
+				r.Log(lang.T("node_need_domain"))
+				r.Log("→ self-signed placeholder certificate")
 			}
 
 			if cfg.ServerIP == "" && cfg.Domain == "" {
 				if ip, err := netutil.PublicIP(ctx); err == nil {
 					cfg.ServerIP = ip
-					log("server ip: " + ip)
+					r.Log("server ip: " + ip)
 				}
 			}
 
@@ -203,12 +203,12 @@ func deployNode() actionFunc {
 			if _, err := deploy.WriteServerConfig(cfg, store.Routable(now)); err != nil {
 				return err
 			}
-			log("write " + sysinfo.ConfigJSON)
+			r.Log("write " + sysinfo.ConfigJSON)
 
 			if !core.ConfigCheck(ctx, sysinfo.ConfigJSON) {
 				return errors.New(lang.T("node_config_fail"))
 			}
-			log(lang.T("node_config_ok"))
+			r.Log(lang.T("node_config_ok"))
 
 			cfg.NodeDeployed = true
 			if err := cfg.Save(); err != nil {
@@ -217,9 +217,9 @@ func deployNode() actionFunc {
 			if err := service.WriteUnit(); err != nil {
 				return err
 			}
-			log("write " + service.UnitPath())
+			r.Log("write " + service.UnitPath())
 			if err := service.Do(ctx, "enable"); err != nil {
-				log("enable: " + err.Error())
+				r.Log("enable: " + err.Error())
 			}
 			if err := service.Do(ctx, "restart"); err != nil {
 				return err
@@ -231,17 +231,17 @@ func deployNode() actionFunc {
 				return err
 			}
 
-			if err := firewall.Apply(ctx, cfg, log); err != nil {
-				log("firewall: " + err.Error())
+			if err := firewall.Apply(ctx, cfg, r.Log); err != nil {
+				r.Log("firewall: " + err.Error())
 			} else if err := firewall.WriteUnit(cfg); err == nil {
 				_ = firewall.UnitAction(ctx, "enable")
 			}
 
-			log(lang.T("node_deploy_done"))
+			r.Log(lang.T("node_deploy_done"))
 			// Every account's subscription URL points at this service, so it is
 			// installed together with the node.
-			if err := installEndpoint(ctx, cfg, log, lang); err != nil {
-				log(lang.T("sub_svc_failed") + ": " + err.Error())
+			if err := installEndpoint(ctx, cfg, r.Log, lang); err != nil {
+				r.Log(lang.T("sub_svc_failed") + ": " + err.Error())
 			}
 			return nil
 		})

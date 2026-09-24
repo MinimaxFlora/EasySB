@@ -16,7 +16,7 @@ import (
 )
 
 func TestProgressDoneScrolls(t *testing.T) {
-	p := newProgress("qr", func(context.Context, func(string)) error { return nil })
+	p := newProgress("qr", func(context.Context, *taskReporter) error { return nil })
 	p.resize(80, 30)
 	for i := 0; i < 200; i++ {
 		p.logs = append(p.logs, "line")
@@ -40,7 +40,7 @@ func TestProgressDoneScrolls(t *testing.T) {
 }
 
 func TestProgressFollowsTailWhileRunning(t *testing.T) {
-	p := newProgress("t", func(context.Context, func(string)) error { return nil })
+	p := newProgress("t", func(context.Context, *taskReporter) error { return nil })
 	p.resize(80, 20)
 	for i := 0; i < 100; i++ {
 		p.appendLog("x")
@@ -51,7 +51,7 @@ func TestProgressFollowsTailWhileRunning(t *testing.T) {
 }
 
 func TestProgressArrowsScrollFinishedLog(t *testing.T) {
-	p := newProgress("qr", func(context.Context, func(string)) error { return nil })
+	p := newProgress("qr", func(context.Context, *taskReporter) error { return nil })
 	p.resize(80, 20)
 	for i := 0; i < 100; i++ {
 		p.appendLog("line")
@@ -76,7 +76,7 @@ func TestProgressArrowsScrollFinishedLog(t *testing.T) {
 }
 
 func TestProgressCopiesLogToClipboard(t *testing.T) {
-	p := newProgress("url", func(context.Context, func(string)) error { return nil })
+	p := newProgress("url", func(context.Context, *taskReporter) error { return nil })
 	p.resize(80, 20)
 	p.appendLog("sing-box: https://example.com/a")
 	p.appendLog("v2rayN: https://example.com/c")
@@ -98,7 +98,7 @@ func TestProgressCopiesLogToClipboard(t *testing.T) {
 }
 
 func TestProgressIgnoresMouseToggleKey(t *testing.T) {
-	p := newProgress("t", func(context.Context, func(string)) error { return nil })
+	p := newProgress("t", func(context.Context, *taskReporter) error { return nil })
 	p.resize(80, 20)
 	if _, closed := p.handleKey(press('m'), i18n.Chinese); closed {
 		t.Fatal("a stray key must not close the task")
@@ -111,7 +111,7 @@ func TestProgressFitsTerminal(t *testing.T) {
 	// window, and no line wider than it.
 	for _, size := range [][2]int{{40, 6}, {80, 9}, {80, 12}, {100, 16}, {100, 22}, {100, 24}, {120, 40}, {140, 60}} {
 		w, h := size[0], size[1]
-		p := newProgress("订阅服务", func(context.Context, func(string)) error { return nil })
+		p := newProgress("订阅服务", func(context.Context, *taskReporter) error { return nil })
 		for i := 0; i < 40; i++ {
 			p.appendLog("log line " + strconv.Itoa(i) + " with some length to it")
 		}
@@ -132,7 +132,7 @@ func TestProgressFitsTerminal(t *testing.T) {
 }
 
 func TestProgressNoCopyHidesAndIgnoresCopy(t *testing.T) {
-	p := newProgress("qr", func(context.Context, func(string)) error { return nil })
+	p := newProgress("qr", func(context.Context, *taskReporter) error { return nil })
 	p.noCopy = true
 	p.resize(80, 20)
 	p.appendLog("QR")
@@ -147,5 +147,64 @@ func TestProgressNoCopyHidesAndIgnoresCopy(t *testing.T) {
 	}
 	if !strings.Contains(view, i18n.Chinese.T("hint_quit")) {
 		t.Fatal("the hint should offer Q to quit")
+	}
+}
+
+// TestProgressDrawsDownloadBar keeps the live download reading inside the frame. The
+// bar shares its row with the file name and the byte counts, so a long package name, a
+// short terminal and a server that announces no length all have to stay inside the
+// card: the screen must not grow a line wider or taller than the window.
+func TestProgressDrawsDownloadBar(t *testing.T) {
+	cases := []downloadReading{
+		{label: "sing-box-1.14.1-linux-amd64.tar.gz", done: 3 << 20, total: 9 << 20, live: true},
+		{label: "linux-image-7.2.6-minimaxflora-bbrv3-max_7.2.6-1_amd64.deb", done: 118 << 20, total: 240 << 20, live: true},
+		{label: "easysb-linux-amd64", done: 1 << 20, live: true},
+	}
+	for _, size := range [][2]int{{40, 6}, {80, 12}, {100, 24}, {160, 40}} {
+		w, h := size[0], size[1]
+		p := newProgress("安装 sing-box", func(context.Context, *taskReporter) error { return nil })
+		p.resize(w, h)
+		p.appendLog("GET https://github.com/SagerNet/sing-box/releases/download/v1.14.1/sing-box-1.14.1-linux-amd64.tar.gz")
+		for _, dl := range cases {
+			p.dl = dl
+			out := p.View(w, h, "host  service  node", theme.DefaultSkin().Style(true), i18n.Chinese, icons.Symbols())
+			lines := strings.Split(out, "\n")
+			if len(lines) != h {
+				t.Fatalf("%dx%d: drew %d lines, want %d", w, h, len(lines), h)
+			}
+			for i, line := range lines {
+				if got := lipgloss.Width(line); got > w {
+					t.Fatalf("%dx%d: line %d is %d wide", w, h, i, got)
+				}
+			}
+			if !strings.Contains(out, humanBytes(uint64(dl.done))) {
+				t.Fatalf("%dx%d: the bar should show the bytes that arrived (%s)", w, h, dl.label)
+			}
+			want := "░"
+			if dl.total > 0 {
+				want = "█"
+				if !strings.Contains(out, "100%") && !strings.Contains(out, "%") {
+					t.Fatalf("%dx%d: the bar should show a percentage", w, h)
+				}
+			}
+			if !strings.Contains(out, want) {
+				t.Fatalf("%dx%d: the bar should be drawn for %s", w, h, dl.label)
+			}
+		}
+	}
+}
+
+// TestProgressBarClearsWhenTaskEnds keeps a finished task from leaving a reading that is
+// no longer moving on screen: the bar belongs to the moment, not to the result.
+func TestProgressBarClearsWhenTaskEnds(t *testing.T) {
+	p := newProgress("t", func(context.Context, *taskReporter) error { return nil })
+	p.resize(100, 24)
+	p.setDownload("sing-box-1.14.1-linux-amd64.tar.gz", 1, 2)
+	if got := p.reading(); !got.live {
+		t.Fatal("a reading should be live when it arrives")
+	}
+	p.handle(taskDoneMsg{})
+	if got := p.reading(); got.live {
+		t.Fatalf("the bar should be dropped when the task ends, got %+v", got)
 	}
 }

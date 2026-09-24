@@ -419,7 +419,7 @@ func versionFromStamp(ctx context.Context) (string, error) {
 	tmp.Close()
 	defer os.Remove(path)
 
-	if err := download(ctx, versionINIURL, path); err != nil {
+	if err := download(ctx, versionINIURL, path, nil); err != nil {
 		return "", err
 	}
 	body, err := os.ReadFile(path)
@@ -557,7 +557,8 @@ func httpGet(ctx context.Context, url string) ([]byte, error) {
 
 // download fetches one package straight from GitHub. The kernels are installed
 // from the release the kernel project published, so the bytes never pass through a
-// third party: what dpkg unpacks is what its build produced.
-func download(ctx context.Context, url, dest string) error {
-	return core.DownloadWithin(ctx, url, dest, downloadTimeout)
+// third party: what dpkg unpacks is what its build produced. progress, when it is
+// set, is how the panel draws a bar for a package that takes minutes.
+func download(ctx context.Context, url, dest string, progress core.Progress) error {
+	return core.DownloadWithProgress(ctx, url, dest, downloadTimeout, progress)
 }

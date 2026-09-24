@@ -122,6 +122,8 @@ var table = []entry{
 	{"bbr_st_no_module", "当前内核不带 bbr 模块，安装 BBRv3 内核后可用", "this kernel has no bbr module: install the BBRv3 kernel to use it"},
 	{"bbr_installing", "解析发布版本并下载内核包…", "Resolving the release and downloading the packages…"},
 	{"bbr_installed", "内核安装完成", "kernel installed"},
+	{"bbr_reboot_needed", "新内核需重启服务器后生效：执行 reboot 后回来再看一次状态", "The new kernel takes effect after a reboot: run reboot, then check the status again"},
+	{"bbr_reboot_pending", "新内核待重启生效", "new kernel waits for a reboot"},
 	{"bbr_reboot_hint", "重启后生效：请重启服务器再确认状态", "Takes effect after a reboot: restart the server, then check the status again"},
 	{"bbr_removed", "内核已卸载", "kernel removed"},
 	{"bbr_remove_none", "没有已安装的 BBRv3 内核", "no BBRv3 kernel is installed"},

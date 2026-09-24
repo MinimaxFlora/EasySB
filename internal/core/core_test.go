@@ -5,11 +5,15 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,6 +21,57 @@ import (
 	"github.com/MinimaxFlora/EasySB/internal/config"
 	"github.com/MinimaxFlora/EasySB/internal/state"
 )
+
+// TestDownloadReportsProgress covers the readings the panel draws its download bar
+// from: a local server so the test stays offline, and the readings have to end on the
+// whole file rather than a tick short of it.
+func TestDownloadReportsProgress(t *testing.T) {
+	body := bytes.Repeat([]byte("x"), 1<<20)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+		if _, err := w.Write(body); err != nil {
+			t.Errorf("write: %v", err)
+		}
+	}))
+	defer srv.Close()
+
+	dest := filepath.Join(t.TempDir(), "sing-box.tar.gz")
+	var mu sync.Mutex
+	var readings []int64
+	var label string
+	var total int64
+	err := DownloadWithProgress(context.Background(), srv.URL+"/sing-box-1.14.1-linux-amd64.tar.gz", dest, time.Minute,
+		func(l string, done, size int64) {
+			mu.Lock()
+			defer mu.Unlock()
+			readings = append(readings, done)
+			label, total = l, size
+		})
+	if err != nil {
+		t.Fatalf("DownloadWithProgress: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(readings) == 0 {
+		t.Fatal("no progress readings")
+	}
+	if last := readings[len(readings)-1]; last != int64(len(body)) {
+		t.Fatalf("last reading is %d bytes, want %d", last, len(body))
+	}
+	if total != int64(len(body)) {
+		t.Fatalf("announced total is %d, want %d", total, len(body))
+	}
+	if label != "sing-box-1.14.1-linux-amd64.tar.gz" {
+		t.Fatalf("label is %q, want the file name", label)
+	}
+	got, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if !bytes.Equal(got, body) {
+		t.Fatalf("downloaded %d bytes, want %d", len(got), len(body))
+	}
+}
 
 // TestFetchReleasesLive hits the real GitHub API. It is opt-in so the default
 // test run stays offline: set EASYSB_LIVE=1 to enable it.

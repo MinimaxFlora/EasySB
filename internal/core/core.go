@@ -287,14 +287,62 @@ func get(ctx context.Context, url string) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 }
 
+// Progress reports a download in flight: the file being fetched, how many bytes have
+// arrived and the size the server announced (0 when it sends no length). It is called
+// from the goroutine doing the download, at most every downloadTick.
+type Progress func(label string, done, total int64)
+
+// downloadTick is how often a download reports itself. Ten readings a second is smooth
+// on a terminal and costs nothing next to a 100 MB kernel package.
+const downloadTick = 100 * time.Millisecond
+
+// countingBody wraps a response body and reports how much of it has been read.
+type countingBody struct {
+	body   io.Reader
+	report Progress
+	label  string
+	total  int64
+	done   int64
+	last   time.Time
+}
+
+func (c *countingBody) Read(b []byte) (int, error) {
+	n, err := c.body.Read(b)
+	if n > 0 {
+		c.done += int64(n)
+		now := time.Now()
+		if c.last.IsZero() || now.Sub(c.last) >= downloadTick {
+			c.last = now
+			c.emit()
+		}
+	}
+	return n, err
+}
+
+// emit sends one reading, if there is a listener. The reader runs on the download
+// goroutine, so the callback has to be cheap and has to tolerate being called from
+// there.
+func (c *countingBody) emit() {
+	if c.report != nil {
+		c.report(c.label, c.done, c.total)
+	}
+}
+
 // Download streams a URL to dest, with the budget a core tarball needs.
 func Download(ctx context.Context, url, dest string) error {
-	return DownloadWithin(ctx, url, dest, 5*time.Minute)
+	return DownloadWithProgress(ctx, url, dest, 5*time.Minute, nil)
 }
 
 // DownloadWithin is Download with an explicit budget, for the callers that pull
 // something much larger than a core tarball.
 func DownloadWithin(ctx context.Context, url, dest string, timeout time.Duration) error {
+	return DownloadWithProgress(ctx, url, dest, timeout, nil)
+}
+
+// DownloadWithProgress is the whole download path: it streams url to dest and reports
+// the bytes as they arrive to progress. A nil progress means the caller only wants the
+// file, which is what the non-interactive entry points do.
+func DownloadWithProgress(ctx context.Context, url, dest string, timeout time.Duration, progress Progress) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
@@ -316,9 +364,13 @@ func DownloadWithin(ctx context.Context, url, dest string, timeout time.Duration
 		return err
 	}
 	defer f.Close()
-	if _, err := io.Copy(f, resp.Body); err != nil {
+	body := &countingBody{body: resp.Body, report: progress, label: path.Base(url), total: resp.ContentLength}
+	if _, err := io.Copy(f, body); err != nil {
 		return err
 	}
+	// The last tick may have been up to downloadTick before the end, so the finished
+	// download reports its final size rather than a percentage short of 100.
+	body.emit()
 	return f.Sync()
 }
 
@@ -366,8 +418,10 @@ func ExtractBinary(archivePath, dest string) error {
 	return errors.New("sing-box binary not found in archive")
 }
 
-// Install downloads and installs the given release, returning its version.
-func Install(ctx context.Context, rel Release, log func(string)) (string, error) {
+// Install downloads and installs the given release, returning its version. The
+// download reports itself to progress so the panel can show a bar while a core
+// tarball is on its way.
+func Install(ctx context.Context, rel Release, log func(string), progress Progress) (string, error) {
 	if rel.Version == "" || rel.URL == "" {
 		return "", errors.New("no available version on this channel")
 	}
@@ -376,7 +430,7 @@ func Install(ctx context.Context, rel Release, log func(string)) (string, error)
 	}
 	log("GET " + rel.URL)
 	tmp := fmt.Sprintf("%s/sing-box-%s.tar.gz", os.TempDir(), rel.Version)
-	if err := Download(ctx, rel.URL, tmp); err != nil {
+	if err := DownloadWithProgress(ctx, rel.URL, tmp, 5*time.Minute, progress); err != nil {
 		return "", err
 	}
 	defer os.Remove(tmp)

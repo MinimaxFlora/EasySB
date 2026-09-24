@@ -692,9 +692,9 @@ func TestNoScreenCapturesTheMouse(t *testing.T) {
 	if got := a.View().MouseMode; got != tea.MouseModeNone {
 		t.Fatalf("dashboard should not capture the mouse, got %v", got)
 	}
-	p := newProgress("qr", func(context.Context, func(string)) error { return nil })
+	p := newProgress("qr", func(context.Context, *taskReporter) error { return nil })
 	p.resize(a.width, a.height)
-	a.task = &p
+	a.task = p
 	if got := a.View().MouseMode; got != tea.MouseModeNone {
 		t.Fatalf("task screen should not capture the mouse, got %v", got)
 	}
@@ -708,8 +708,8 @@ func TestUpperQQuitsFromSubscreens(t *testing.T) {
 	}
 
 	a.links = nil
-	p := newProgress("t", func(context.Context, func(string)) error { return nil })
-	a.task = &p
+	p := newProgress("t", func(context.Context, *taskReporter) error { return nil })
+	a.task = p
 	if _, cmd := a.Update(press('Q')); cmd == nil {
 		t.Fatal("upper-case Q should quit from the task panel")
 	}
@@ -735,9 +735,13 @@ func TestEveryScreenUsesOneFixedFrame(t *testing.T) { // The whole point of the 
 		a.links = newLinksModel("t", sampleLinks())
 		out["links"] = a.View().Content
 		a.links = nil
-		p := newProgress("t", func(context.Context, func(string)) error { return nil })
-		a.task = &p
+		p := newProgress("t", func(context.Context, *taskReporter) error { return nil })
+		a.task = p
 		out["task"] = a.View().Content
+		// A download in flight shares the card with the log, so the bar has to fit
+		// every size the frame is promised at.
+		p.setDownload("linux-image-7.2.6-minimaxflora-bbrv3-max_7.2.6-1_amd64.deb", 118<<20, 240<<20)
+		out["task-downloading"] = a.View().Content
 		a.task = nil
 		a.openForm("t", "p", "", "", nil)
 		out["form"] = a.View().Content
@@ -745,6 +749,28 @@ func TestEveryScreenUsesOneFixedFrame(t *testing.T) { // The whole point of the 
 		a.openSystem()
 		out["system"] = a.View().Content
 		a.system = nil
+
+		// Every page under the main menu, and the subpage each one hangs further
+		// down: the two boxes have to hold whatever a section puts in them.
+		for _, n := range buildRoot().nodes {
+			if n.sub == nil {
+				continue
+			}
+			a.stack = a.stack[:1]
+			a.section = n.id
+			a.push(n.sub)
+			out["page:"+n.id] = a.View().Content
+			for _, sub := range n.sub.nodes {
+				if sub.sub == nil {
+					continue
+				}
+				a.push(sub.sub)
+				out["page:"+n.id+"/"+sub.id] = a.View().Content
+				break
+			}
+		}
+		a.stack = a.stack[:1]
+		a.section = ""
 
 		// The account screens carry the longest values in the panel: names,
 		// quotas and subscription URLs.

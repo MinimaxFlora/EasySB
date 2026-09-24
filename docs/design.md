@@ -59,6 +59,24 @@ palette never lands on white; `--theme` (or `EASYSB_THEME`) forces `dark` or
 explicit: dividers and menu items each get exactly one blank line, and the
 dashboard drops low-priority panels before it overflows a short terminal.
 
+## One frame, two boxes
+
+Every page is the same shape: a status strip on the first line, then the page's own
+看板 in the top box and its entries in the bottom one. The main menu and a section
+differ only in what those two boxes hold — the wordmark and the 看板 of the panel
+versus the 看板 of one section — so moving between pages never resizes the frame and
+the key hints never move. A section is left with `Esc`, the way a submenu is, and
+`--render --screen <id>` draws any of them for a layout check.
+
+## Long operations report where they are
+
+A task that downloads something streams its readings to the screen instead of
+printing a line per megabyte: `internal/core` reports byte counts through a
+`Progress` callback, `internal/tui` collects them in the task reporter and draws a
+bar above the log. Anything that can take minutes — a core tarball, the panel's own
+binary, a kernel package — goes through that path, and a step that only changes
+local state stays silent rather than showing a bar that never moves.
+
 ## Direct downloads, tolerant parsing
 
 Deployment targets are overseas hosts with direct GitHub access, so core and

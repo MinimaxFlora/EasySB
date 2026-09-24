@@ -6,10 +6,12 @@ import (
 	"github.com/MinimaxFlora/EasySB/internal/theme"
 )
 
-// The left navigation is the panel's map: it lists every root entry, grouped the
-// way the current skin groups them, and marks the section the panel is standing
-// in. It is a view over the root menu, never a separate state, so the cursor and
-// the stack stay the only things that decide what is on screen.
+// The grouped navigation lives here. It is no longer drawn as a left column: every
+// page of the panel uses the same two-box frame (the page's 看板 over its entries), and
+// a section is left with Esc the way a submenu is. sectionID and padLines are still on
+// the hot path; navRows, navColumn and renderNav are kept for reference and can be
+// dropped with the skin grouping they read (theme.Metrics.Groups) once the removal is
+// confirmed.
 
 // sectionID is the root entry the panel is currently inside, or "" on the main
 // menu. The section is recorded when a root entry is entered; a stack that was

@@ -55,7 +55,7 @@ func accountByToken(token string) (user.User, bool) {
 // accountsChange builds the body of an account task: load the file, apply the
 // change, save it and then push the result to the core.
 func accountsChange(lang i18n.Lang, change func(*user.Store, time.Time) error) taskFunc {
-	return func(ctx context.Context, log func(string)) error {
+	return func(ctx context.Context, r *taskReporter) error {
 		now := time.Now()
 		store, err := loadUsers()
 		if err != nil {
@@ -67,7 +67,7 @@ func accountsChange(lang i18n.Lang, change func(*user.Store, time.Time) error) t
 		if err := store.Save(); err != nil {
 			return err
 		}
-		return applyAccounts(ctx, lang, store, log)
+		return applyAccounts(ctx, lang, store, r.Log)
 	}
 }
 
@@ -524,10 +524,10 @@ func showUserSubscription(token string) actionFunc {
 func showUserQR(token string) actionFunc {
 	return func(a *App) tea.Cmd {
 		lang := a.lang
-		return a.startTaskQR(lang.T("user_qr"), func(_ context.Context, log func(string)) error {
+		return a.startTaskQR(lang.T("user_qr"), func(_ context.Context, r *taskReporter) error {
 			cfg := state.Load()
 			if cfg.Host() == "" {
-				log(lang.T("sub_need_domain"))
+				r.Log(lang.T("sub_need_domain"))
 				return nil
 			}
 			account, ok := accountByToken(token)
@@ -536,19 +536,19 @@ func showUserQR(token string) actionFunc {
 			}
 			for _, client := range subscribe.Clients {
 				payload := subscribe.ClientLink(cfg, account.Token, client)
-				log(clientLabel(lang, client) + " · " + lang.T("sub_import_link") + ":")
-				log(payload)
-				log("")
+				r.Log(clientLabel(lang, client) + " · " + lang.T("sub_import_link") + ":")
+				r.Log(payload)
+				r.Log("")
 				qr, err := subscribe.QRCode(payload)
 				if err != nil {
-					log(lang.T("sub_no_qrencode"))
-					log("")
+					r.Log(lang.T("sub_no_qrencode"))
+					r.Log("")
 					continue
 				}
 				for _, line := range strings.Split(qr, "\n") {
-					log(line)
+					r.Log(line)
 				}
-				log("")
+				r.Log("")
 			}
 			return nil
 		})

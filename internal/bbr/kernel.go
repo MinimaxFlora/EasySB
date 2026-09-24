@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/MinimaxFlora/EasySB/internal/core"
 )
 
 // Release is one published kernel this machine can install.
@@ -60,8 +62,9 @@ func releasesFromTags(tags []string, arch string) []Release {
 
 // Install downloads one published kernel and installs it, then leaves the reboot
 // to the operator: switching the running kernel under a live proxy would drop
-// every connection on the box.
-func Install(ctx context.Context, log func(string), profile Profile, version string) error {
+// every connection on the box. progress carries the download of each package to
+// the panel, which is where the bar for a few hundred megabytes belongs.
+func Install(ctx context.Context, log func(string), progress core.Progress, profile Profile, version string) error {
 	machine := unameMachine(ctx)
 	arch, ok := ArchName(machine)
 	if !ok {
@@ -98,7 +101,7 @@ func Install(ctx context.Context, log func(string), profile Profile, version str
 	for _, name := range names {
 		dest := filepath.Join(dir, filepath.Base(name))
 		log("GET " + name)
-		if err := download(ctx, AssetURL(tag, name), dest); err != nil {
+		if err := download(ctx, AssetURL(tag, name), dest, progress); err != nil {
 			return fmt.Errorf("%s: %w", name, err)
 		}
 		// dpkg-deb also reads the package name, and refuses a file that is not

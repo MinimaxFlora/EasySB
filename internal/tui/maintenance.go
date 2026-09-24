@@ -50,7 +50,7 @@ func clientDescription(lang i18n.Lang, client subscribe.Client) string {
 func installSubscriptionService() actionFunc {
 	return func(a *App) tea.Cmd {
 		lang := a.lang
-		return a.startTask(lang.T("sub_svc_install"), func(ctx context.Context, log func(string)) error {
+		return a.startTask(lang.T("sub_svc_install"), func(ctx context.Context, r *taskReporter) error {
 			cfg := state.Load()
 			if !cfg.NodeDeployed {
 				return errors.New(lang.T("sub_need_deploy"))
@@ -58,15 +58,15 @@ func installSubscriptionService() actionFunc {
 			if err := subd.WriteUnit(); err != nil {
 				return err
 			}
-			log("write " + subd.UnitPath())
+			r.Log("write " + subd.UnitPath())
 			if err := subd.Do(ctx, "enable"); err != nil {
-				log("enable: " + err.Error())
+				r.Log("enable: " + err.Error())
 			}
 			if err := subd.Do(ctx, "restart"); err != nil {
 				return err
 			}
-			log(lang.T("sub_svc_started"))
-			logEndpoint(cfg, log, lang)
+			r.Log(lang.T("sub_svc_started"))
+			logEndpoint(cfg, r.Log, lang)
 			return nil
 		})
 	}
@@ -77,12 +77,12 @@ func installSubscriptionService() actionFunc {
 func restartSubscriptionService() actionFunc {
 	return func(a *App) tea.Cmd {
 		lang := a.lang
-		return a.startTask(lang.T("sub_svc_restart"), func(ctx context.Context, log func(string)) error {
+		return a.startTask(lang.T("sub_svc_restart"), func(ctx context.Context, r *taskReporter) error {
 			if err := subd.Do(ctx, "restart"); err != nil {
 				return err
 			}
-			log(lang.T("sub_svc_restarted"))
-			logEndpoint(state.Load(), log, lang)
+			r.Log(lang.T("sub_svc_restarted"))
+			logEndpoint(state.Load(), r.Log, lang)
 			return nil
 		})
 	}
@@ -93,13 +93,13 @@ func restartSubscriptionService() actionFunc {
 func subscriptionServiceStatus() actionFunc {
 	return func(a *App) tea.Cmd {
 		lang := a.lang
-		return a.startTask(lang.T("sub_svc_status"), func(ctx context.Context, log func(string)) error {
+		return a.startTask(lang.T("sub_svc_status"), func(ctx context.Context, r *taskReporter) error {
 			if subd.Active(ctx) {
-				log(lang.T("sub_svc_running"))
+				r.Log(lang.T("sub_svc_running"))
 			} else {
-				log(lang.T("sub_svc_stopped"))
+				r.Log(lang.T("sub_svc_stopped"))
 			}
-			logEndpoint(state.Load(), log, lang)
+			logEndpoint(state.Load(), r.Log, lang)
 			return nil
 		})
 	}
@@ -127,21 +127,21 @@ func logEndpoint(cfg state.Config, log func(string), lang i18n.Lang) {
 func firewallApply() actionFunc {
 	return func(a *App) tea.Cmd {
 		lang := a.lang
-		return a.startTask(lang.T("fw_configuring"), func(ctx context.Context, log func(string)) error {
+		return a.startTask(lang.T("fw_configuring"), func(ctx context.Context, r *taskReporter) error {
 			cfg := state.Load()
 			if !cfg.AnyEnabled() {
 				return errors.New(lang.T("node_all_disabled"))
 			}
-			if err := firewall.Apply(ctx, cfg, log); err != nil {
+			if err := firewall.Apply(ctx, cfg, r.Log); err != nil {
 				return err
 			}
 			if err := firewall.WriteUnit(cfg); err != nil {
 				return err
 			}
 			if err := firewall.UnitAction(ctx, "enable"); err != nil {
-				log("enable unit: " + err.Error())
+				r.Log("enable unit: " + err.Error())
 			}
-			log(lang.T("fw_added"))
+			r.Log(lang.T("fw_added"))
 			return nil
 		})
 	}
@@ -151,18 +151,18 @@ func firewallApply() actionFunc {
 func firewallRemove() actionFunc {
 	return func(a *App) tea.Cmd {
 		lang := a.lang
-		return a.startTask(lang.T("fw_remove"), func(ctx context.Context, log func(string)) error {
+		return a.startTask(lang.T("fw_remove"), func(ctx context.Context, r *taskReporter) error {
 			cfg := state.Load()
 			if err := firewall.Remove(ctx, cfg); err != nil {
 				return err
 			}
 			if err := firewall.UnitAction(ctx, "disable"); err != nil {
-				log("disable unit: " + err.Error())
+				r.Log("disable unit: " + err.Error())
 			}
 			if err := firewall.RemoveUnit(); err != nil {
 				return err
 			}
-			log(lang.T("fw_removed"))
+			r.Log(lang.T("fw_removed"))
 			return nil
 		})
 	}
@@ -173,8 +173,8 @@ func scriptUpdate() actionFunc {
 	return func(a *App) tea.Cmd {
 		lang := a.lang
 		current := a.scriptVersion
-		return a.startTask(lang.T("script_updating"), func(ctx context.Context, log func(string)) error {
-			updated, remote, err := update.Apply(ctx, current, log)
+		return a.startTask(lang.T("script_updating"), func(ctx context.Context, r *taskReporter) error {
+			updated, remote, err := update.Apply(ctx, current, r.Log, r.Progress)
 			if err != nil {
 				return err
 			}
@@ -183,11 +183,11 @@ func scriptUpdate() actionFunc {
 				if version == "" {
 					version = current
 				}
-				log(lang.T("script_uptodate") + ": " + version)
+				r.Log(lang.T("script_uptodate") + ": " + version)
 				return nil
 			}
-			log(lang.T("script_updated") + ": " + remote)
-			log(lang.T("script_restart_hint"))
+			r.Log(lang.T("script_updated") + ": " + remote)
+			r.Log(lang.T("script_restart_hint"))
 			return nil
 		})
 	}
@@ -200,12 +200,12 @@ func uninstallAction() actionFunc {
 		a.openForm(lang.T("uninstall_title"), lang.T("uninstall_confirm")+" (y/N)", "", "", func(a *App, value string) (tea.Cmd, error) {
 			switch strings.ToLower(strings.TrimSpace(value)) {
 			case "y", "yes":
-				return a.startTask(lang.T("uninstall_title"), func(ctx context.Context, log func(string)) error {
-					if err := uninstall.Run(ctx, log); err != nil {
+				return a.startTask(lang.T("uninstall_title"), func(ctx context.Context, r *taskReporter) error {
+					if err := uninstall.Run(ctx, r.Log); err != nil {
 						return err
 					}
-					log(lang.T("uninstall_done"))
-					log(lang.T("uninstall_keep_certs"))
+					r.Log(lang.T("uninstall_done"))
+					r.Log(lang.T("uninstall_keep_certs"))
 					return nil
 				}), nil
 			default:

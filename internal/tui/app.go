@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -171,11 +172,16 @@ func requestBackground() tea.Cmd {
 	return func() tea.Msg { return tea.RequestBackgroundColor() }
 }
 
+// Snapshot renders the current screen headlessly, which is what --render prints.
 func (a *App) Snapshot(width, height int) string {
 	a.width, a.height = width, height
 	a.sized = true
 	a.status = sysinfo.Collect(a.scriptVersion)
 	a.ready = true
+	if a.task != nil {
+		// A task owns the screen while it runs, so a rendered frame is the task's.
+		return a.task.View(a.width, a.height, a.statusStrip(a.frameWidth()), a.style(), a.lang, a.iconSet)
+	}
 	return a.dashboard()
 }
 
@@ -208,8 +214,34 @@ func (a *App) SnapshotScreen(screen string, width, height int) string {
 		// one, which would only ever draw the loading placeholder.
 		a.bbrVersions = previewReleases()
 		a.push(a.bbrVersionsMenu())
+	case "task":
+		// The task screen is where every action lands, and its download bar only
+		// exists while a download is in flight, so a rendered frame takes a sample
+		// reading rather than an idle one.
+		p := newProgress(a.lang.T("kernel_installing"), func(context.Context, *taskReporter) error { return nil })
+		for _, line := range previewTaskLog() {
+			p.appendLog(line)
+		}
+		p.setDownload(previewDownload())
+		p.resize(a.width, a.height)
+		a.task = p
 	}
 	return a.Snapshot(width, height)
+}
+
+// previewTaskLog is the sample output of a rendered task screen.
+func previewTaskLog() []string {
+	return []string{
+		"$ systemctl stop " + sysinfo.ServiceName,
+		"GET https://github.com/SagerNet/sing-box/releases/download/v1.14.1/sing-box-1.14.1-linux-amd64.tar.gz",
+		"extract -> " + sysinfo.CoreBin,
+		"内核已切换：稳定版 1.14.1",
+	}
+}
+
+// previewDownload is the sample download reading of a rendered task screen.
+func previewDownload() (string, int64, int64) {
+	return "sing-box-1.14.1-linux-amd64.tar.gz", 12 << 20, 29 << 20
 }
 
 // enterSection pushes the submenu of a root entry by id, so a page can be rendered by
@@ -389,7 +421,7 @@ func (a *App) enter() tea.Cmd {
 func (a *App) startTask(title string, fn taskFunc) tea.Cmd {
 	p := newProgress(title, fn)
 	p.resize(a.width, a.height)
-	a.task = &p
+	a.task = p
 	return p.Init()
 }
 
@@ -399,7 +431,7 @@ func (a *App) startTaskQR(title string, fn taskFunc) tea.Cmd {
 	p := newProgress(title, fn)
 	p.noCopy = true
 	p.resize(a.width, a.height)
-	a.task = &p
+	a.task = p
 	return p.Init()
 }
 

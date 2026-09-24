@@ -11,16 +11,14 @@ import (
 )
 
 // The dashboard is one frame of fixed size: a status strip on the first line, then
-// the content of the current screen — the wordmark, the panel's vitals and the menu
-// on the main menu; the navigation column beside the section's own panel inside a
-// section. The highlighted entry's explanation and the key hints follow the content
-// instead of being pinned to the bottom, so a tall terminal shows one block at the
-// top rather than two blocks with a gap between them.
-
-// navMinWidth is where the two-column layout starts. Below it the navigation is
-// dropped and the content column takes the whole width, because a 14-column
-// navigation shows nothing useful.
-const navMinWidth = 76
+// the content of the current screen. Every screen is the same two boxes: the 看板 of
+// the page the operator stands in on top, its entries below. On the main menu the
+// 看板 is the wordmark and the panel's vitals and the entries are the main menu; inside
+// a section the 看板 is that section's own reading and the entries are that page's
+// menu. Only those two contents change as the operator moves, never the frame. The
+// highlighted entry's explanation and the key hints follow the content instead of
+// being pinned to the bottom, so a tall terminal shows one block at the top rather
+// than two blocks with a gap between them.
 
 // dashboard renders the current screen.
 func (a *App) dashboard() string {
@@ -90,10 +88,10 @@ func (a *App) itemDescription(w int) string {
 	return a.style().Faint("· " + theme.Truncate(desc, maxInt(0, w-2)))
 }
 
-// dashboardBody hands the main menu the whole width: its entries are a two-column
-// card of their own, so the page needs no navigation column. Inside a section the
-// column comes back, because that is where cross-section movement happens. The
-// system screen also takes the whole width: it is a destination, not a menu.
+// dashboardBody fills the body of the frame below the status strip. Both kinds of
+// page take the whole width: the main menu draws its own 看板 and its two-column
+// entry list, a section draws that section's 看板 and its page's entries. The
+// system screen is a destination rather than a menu, so it takes the body too.
 func (a *App) dashboardBody(w, h int) []string {
 	if h <= 0 {
 		return nil
@@ -106,67 +104,14 @@ func (a *App) dashboardBody(w, h int) []string {
 		tail := a.tailLines(w, h)
 		return padLines(append(a.rootCards(w, h-len(tail)), tail...), w, h)
 	}
-	s := a.style()
-	navW := 0
-	if w >= navMinWidth {
-		navW = s.Met.NavWidth
-		if navW <= 0 {
-			navW = 24
-		}
-		if max := w / 3; navW > max {
-			navW = max
-		}
-		if navW < 16 {
-			navW = 16
-		}
-	}
-	gutter := 0
-	if navW > 0 {
-		gutter = s.Met.Gutter
-		if gutter < 1 {
-			gutter = 1
-		}
-	}
-	contentW := w - navW - gutter
-	if contentW < 20 {
-		navW, gutter, contentW = 0, 0, w
-	}
-
-	var left []string
-	if navW > 0 {
-		left = a.navColumn(navW, h)
-	}
-	// The hints belong to the content column: the navigation keeps its full
-	// height beside them.
-	right := a.sectionContent(contentW, h, navW > 0)
-
-	out := make([]string, 0, h)
-	for i := 0; i < h; i++ {
-		row := ""
-		if i < len(left) {
-			row = theme.Pad(left[i], navW)
-		} else if navW > 0 {
-			row = strings.Repeat(" ", navW)
-		}
-		if gutter > 0 {
-			row += strings.Repeat(" ", gutter)
-		}
-		if i < len(right) {
-			row += theme.Pad(right[i], contentW)
-		} else {
-			row += strings.Repeat(" ", contentW)
-		}
-		out = append(out, row)
-	}
-	return out
+	return padLines(a.sectionContent(w, h), w, h)
 }
 
 // sectionContent renders one section in the frame every page of the panel shares: the
-// section's own 看板 in the top box and its entries in the bottom one. Only their
-// contents change as the operator moves between pages, the frame itself does not. The
-// entries box takes the section's name only where the navigation column is hidden,
-// because that column already says which section this is.
-func (a *App) sectionContent(w, h int, withNav bool) []string {
+// section's own 看板 in the top box and the entries of the page the operator stands in
+// in the bottom one, titled with that page's name. Only their contents change as the
+// operator moves between pages, the frame itself does not.
+func (a *App) sectionContent(w, h int) []string {
 	s := a.style()
 	tail := a.tailLines(w, h)
 	space := h - len(tail)
@@ -181,7 +126,7 @@ func (a *App) sectionContent(w, h int, withNav bool) []string {
 			}
 		}
 	}
-	out = append(out, a.sectionMenu(w, space-len(out), withNav)...)
+	out = append(out, a.sectionMenu(w, space-len(out))...)
 	return append(out, tail...)
 }
 
@@ -190,14 +135,12 @@ func (a *App) sectionContent(w, h int, withNav bool) []string {
 const sectionMenuRows = 5
 
 // sectionMenu is the bottom box of a section: its numbered entries and the row that
-// returns to the parent menu.
-func (a *App) sectionMenu(w, h int, withNav bool) []string {
+// returns to the parent menu. It carries the name of the page it lists, the way the
+// main menu's box carries "主菜单".
+func (a *App) sectionMenu(w, h int) []string {
 	s := a.style()
 	inner := ui.InnerWidth(s, w)
-	title := ""
-	if !withNav {
-		title = a.current().title(a.lang)
-	}
+	title := a.current().title(a.lang)
 	limit := h - 2
 	if a.hasNavRow() {
 		limit--
@@ -353,7 +296,13 @@ func (a *App) bbrBody(w int) []string {
 		a.kv("bbr_running_kernel", a.panelValue(st.Running), ui.KindPlain),
 		a.kv("bbr_row_installed", fmt.Sprintf("%d", len(st.Kernels)), ui.KindPlain),
 	}
-	return ui.TwoCol(s, left, right, inner)
+	rows := ui.TwoCol(s, left, right, inner)
+	if st.NeedsReboot() {
+		// The installed kernel only becomes the running one after a reboot, which is
+		// the one thing the operator has to act on after an install.
+		rows = append(rows, "", s.Faint("  ")+s.Colored(s.Warn, a.iconSet.Warn+" "+a.lang.T("bbr_reboot_pending")))
+	}
+	return rows
 }
 
 // updateBody is the version section's 看板: what the panel and the core are on.

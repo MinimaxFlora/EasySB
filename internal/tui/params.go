@@ -182,7 +182,7 @@ func editSNI() actionFunc {
 func regenRealityKeys() actionFunc {
 	return func(a *App) tea.Cmd {
 		lang := a.lang
-		return a.startTask(lang.T("param_privkey"), func(ctx context.Context, log func(string)) error {
+		return a.startTask(lang.T("param_privkey"), func(ctx context.Context, r *taskReporter) error {
 			if !core.Installed() {
 				return errors.New(lang.T("param_install_core_first"))
 			}
@@ -196,7 +196,7 @@ func regenRealityKeys() actionFunc {
 			if err := cfg.Save(); err != nil {
 				return err
 			}
-			log(lang.T("param_regen_privkey"))
+			r.Log(lang.T("param_regen_privkey"))
 			return nil
 		})
 	}
