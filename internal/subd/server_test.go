@@ -144,14 +144,11 @@ func TestEndpointServesBase64ForUnknownClients(t *testing.T) {
 // TestEndpointNamesDownloads covers the file name a client saves: it is the product,
 // not the account. The token used to be the name, which is a credential sitting in
 // somebody's download folder, and it differs per account in a folder that usually
-// holds one profile.
+// holds one profile. The name carries no extension either: the client reads the
+// format from the Content-Type, and "EasySB.yaml" is not the name anybody asked for.
 func TestEndpointNamesDownloads(t *testing.T) {
-	cases := map[string]string{
-		"sing-box 1.10.0":       `attachment; filename="EasySB.json"`,
-		"clash-verge/v2 mihomo": `attachment; filename="EasySB.yaml"`,
-		"v2rayN/6.0":            `attachment; filename="EasySB.txt"`,
-	}
-	for ua, want := range cases {
+	const want = `attachment; filename="EasySB"`
+	for _, ua := range []string{"sing-box 1.10.0", "clash-verge/v2 mihomo", "v2rayN/6.0"} {
 		e := newEndpoint(t, account("alice", nil))
 		rec := e.get("token-alice", ua)
 		if rec.Code != http.StatusOK {

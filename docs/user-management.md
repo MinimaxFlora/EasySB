@@ -173,7 +173,7 @@ Response headers on every `/sub/<token>` response:
 
 ```
 Subscription-Userinfo: upload=<bytes>; download=<bytes>; total=<bytes>; expire=<unix seconds>
-Content-Disposition: attachment; filename="EasySB.<json|yaml|txt>"
+Content-Disposition: attachment; filename="EasySB"
 Cache-Control: no-store
 ```
 
