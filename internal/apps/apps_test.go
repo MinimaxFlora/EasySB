@@ -142,6 +142,20 @@ func TestWantedEntry(t *testing.T) {
 	}
 }
 
+// An application that cannot be pinned to loopback has to say so: the panel's promise
+// is that only the front is reachable, and Nezha's upstream offers no bind option.
+func TestBindsAllInterfacesIsRecorded(t *testing.T) {
+	nezha, _ := Lookup("nezha")
+	if !nezha.BindsAllInterfaces {
+		t.Error("nezha should be marked as binding every interface")
+	}
+	for _, app := range Catalog() {
+		if app.ID != "nezha" && app.BindsAllInterfaces {
+			t.Errorf("%s: only nezha is known to lack a bind option", app.ID)
+		}
+	}
+}
+
 // The public URL is what an application is told about itself, and it is always the
 // https address of the domain: the panel does not serve a plaintext site.
 func TestPublicURL(t *testing.T) {

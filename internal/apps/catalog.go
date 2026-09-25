@@ -86,6 +86,12 @@ type App struct {
 	MemoryMB int
 	// Note is the one-line caveat shown next to the application in the panel.
 	Note string
+	// BindsAllInterfaces marks an application whose upstream offers no way to
+	// choose the bind address: it listens on every interface, and the operator has
+	// to keep the port closed with a firewall if they do not want it reachable.
+	// The panel says this in the install log rather than implying a loopback
+	// guarantee it cannot keep.
+	BindsAllInterfaces bool
 	// Name and NameZH are the display names.
 	Name   string
 	NameZH string
@@ -128,19 +134,20 @@ var catalog = []App{
 		Note:     "备忘/微博客站：最轻，适合小机器",
 	},
 	{
-		ID:       "nezha",
-		Name:     "Nezha dashboard",
-		NameZH:   "哪吒监控面板",
-		Repo:     "nezhahq/nezha",
-		Asset:    "dashboard-linux-{arch}.zip",
-		Pack:     PackZip,
-		File:     "",
-		Binary:   Root + "/nezha/dashboard",
-		Args:     []string{"-c", "{data}/config.yaml", "-db", "{data}/sqlite.db"},
-		Port:     8008,
-		Path:     "/",
-		MemoryMB: 100,
-		Note:     "监控站：上游没有发布校验文件，只按 HTTPS 与解包结果校验",
+		ID:                 "nezha",
+		Name:               "Nezha dashboard",
+		NameZH:             "哪吒监控面板",
+		Repo:               "nezhahq/nezha",
+		Asset:              "dashboard-linux-{arch}.zip",
+		Pack:               PackZip,
+		File:               "",
+		Binary:             Root + "/nezha/dashboard",
+		Args:               []string{"-c", "{data}/config.yaml", "-db", "{data}/sqlite.db"},
+		Port:               8008,
+		Path:               "/",
+		MemoryMB:           100,
+		BindsAllInterfaces: true,
+		Note:               "监控站：上游没有绑定地址的开关，会监听所有网卡（另：上游未发布校验文件）",
 	},
 	{
 		ID:       "komari",

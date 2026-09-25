@@ -242,6 +242,10 @@ func Install(ctx context.Context, req Request) (string, error) {
 	}
 
 	tune(ctx, a, req.Port, log)
+	if a.BindsAllInterfaces {
+		// Better a plain warning than a loopback promise the upstream cannot keep.
+		log(fmt.Sprintf("%s: upstream has no bind-address option, so it listens on every interface — keep port %d closed in the firewall if you do not want it reachable", a.Name, req.Port))
+	}
 	log(a.Name + ": " + "installed " + version)
 	return version, nil
 }
