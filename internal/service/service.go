@@ -48,45 +48,68 @@ func UnitPath() string {
 	return sysinfo.SystemdUnit
 }
 
-// WriteUnit writes the service definition for the current manager.
+// WriteUnit writes the service definition for the current manager. The node runs inside
+// the panel binary now (`easysb core run -c …`), so the unit names the panel rather than
+// a separate sing-box executable: there is no core binary to keep in sync with it.
 func WriteUnit() error {
-	path := UnitPath()
+	exe, err := nodeExecutable()
+	if err != nil {
+		return err
+	}
+	unit, mode := unitContent(Detect(), exe)
+	if err := os.WriteFile(UnitPath(), []byte(unit), mode); err != nil {
+		return err
+	}
 	if Detect() == OpenRC {
-		unit := fmt.Sprintf(`#!/sbin/openrc-run
+		return nil
+	}
+	return DaemonReload()
+}
+
+// unitContent renders the unit the given manager gets, so the text (and what it points at)
+// is testable without touching /etc.
+func unitContent(m Manager, exe string) (string, os.FileMode) {
+	if m == OpenRC {
+		return fmt.Sprintf(`#!/sbin/openrc-run
 name="sing-box"
 description="sing-box service (EasySB)"
 command="%s"
-command_args="run -c %s"
+command_args="core run -c %s"
 command_background=true
 pidfile="/run/${RC_SVCNAME}.pid"
 output_log="%s"
 error_log="%s"
-`, sysinfo.CoreBin, sysinfo.ConfigJSON, sysinfo.LogFile, sysinfo.LogFile)
-		if err := os.WriteFile(path, []byte(unit), 0o755); err != nil {
-			return err
-		}
-		return nil
+`, exe, sysinfo.ConfigJSON, sysinfo.LogFile, sysinfo.LogFile), 0o755
 	}
-
-	unit := fmt.Sprintf(`[Unit]
+	return fmt.Sprintf(`[Unit]
 Description=sing-box service (EasySB)
 Documentation=%s
 After=network.target nss-lookup.target
 
 [Service]
 Type=simple
-ExecStart=%s run -c %s
+ExecStart=%s core run -c %s
 Restart=on-failure
 RestartSec=3
 LimitNOFILE=infinity
 
 [Install]
 WantedBy=multi-user.target
-`, ProjectHome, sysinfo.CoreBin, sysinfo.ConfigJSON)
-	if err := os.WriteFile(path, []byte(unit), 0o644); err != nil {
-		return err
+`, ProjectHome, exe, sysinfo.ConfigJSON), 0o644
+}
+
+// nodeExecutable is the panel binary the node unit should run: the installed one when
+// there is one, otherwise this process.
+func nodeExecutable() (string, error) {
+	self, err := os.Executable()
+	if err != nil {
+		self = ""
 	}
-	return DaemonReload()
+	picked := sysinfo.PreferredExecutable(self, sysinfo.PanelPaths)
+	if picked == "" {
+		return "", errors.New("cannot determine the panel executable")
+	}
+	return picked, nil
 }
 
 // RemoveUnit deletes the service definition for the current manager.
@@ -116,22 +139,32 @@ func DaemonReload() error {
 	return nil
 }
 
-// Do performs a lifecycle action: start, stop, restart, enable or disable.
-func Do(ctx context.Context, action string) error {
-	var name string
-	var args []string
+// Command is the command line Do runs for an action, so a log line naming the
+// command cannot disagree with what was run — on OpenRC the command is
+// rc-service, not systemctl.
+func Command(action string) string {
+	name, args := command(action)
+	return name + " " + strings.Join(args, " ")
+}
+
+// command maps an action onto the tool of the init system in use.
+func command(action string) (string, []string) {
 	if Detect() == OpenRC {
-		name = "rc-service"
-		args = []string{sysinfo.ServiceName, action}
+		name := "rc-service"
+		args := []string{sysinfo.ServiceName, action}
 		if action == "enable" {
 			name, args = "rc-update", []string{"add", sysinfo.ServiceName, "default"}
 		} else if action == "disable" {
 			name, args = "rc-update", []string{"del", sysinfo.ServiceName, "default"}
 		}
-	} else {
-		name = "systemctl"
-		args = []string{action, sysinfo.ServiceName}
+		return name, args
 	}
+	return "systemctl", []string{action, sysinfo.ServiceName}
+}
+
+// Do performs a lifecycle action: start, stop, restart, enable or disable.
+func Do(ctx context.Context, action string) error {
+	name, args := command(action)
 
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Env = append(os.Environ(), "LC_ALL=C")

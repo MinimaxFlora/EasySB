@@ -316,7 +316,7 @@ main() {
 
   printf '\n'
   ok "$(say '安装完成，运行 sb 启动' 'Installation complete, run sb to start')"
-  dim "$(say '首次运行会检测内核与节点状态' 'The dashboard shows core and node state on first launch')"
+  dim "$(say '内核已内置在面板中，进入即可部署节点' 'The core is built into the panel: deploy the node right away')"
 }
 
 main "$@"

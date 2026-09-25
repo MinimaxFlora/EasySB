@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MinimaxFlora/EasySB/internal/sbcore"
 	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
 )
 
@@ -112,28 +113,15 @@ type Releases struct {
 	Alpha  Release
 }
 
-// Installed reports whether a core binary is present and executable.
-func Installed() bool {
-	info, err := os.Stat(sysinfo.CoreBin)
-	return err == nil && !info.IsDir() && info.Mode()&0o111 != 0
-}
+// Installed reports whether this host can run a node. The core is this binary — the panel
+// is compiled with the sing-box library — so the answer is always yes, and the guard
+// stays because the deploy path asks it before writing a config.
+func Installed() bool { return true }
 
-var versionRe = regexp.MustCompile(`(?m)version\s+([^\s]+)`)
-
-// LocalVersion returns the installed core version, or an empty string.
-func LocalVersion(ctx context.Context) string {
-	if !Installed() {
-		return ""
-	}
-	out, err := run(ctx, sysinfo.CoreBin, "version")
-	if err != nil {
-		return ""
-	}
-	if m := versionRe.FindStringSubmatch(out); len(m) == 2 {
-		return m[1]
-	}
-	return ""
-}
+// LocalVersion returns the sing-box version this binary carries. ctx is unused now that
+// the version is a value in the binary instead of a `sing-box version` subprocess; the
+// signature stays so callers did not have to change.
+func LocalVersion(ctx context.Context) string { return sbcore.Version() }
 
 // InstalledChannel returns the channel recorded in state, falling back to an
 // inference from the version string (alpha/beta/rc implies the alpha channel).
@@ -494,8 +482,13 @@ func ExtractBinary(archivePath, dest string) error {
 		return err
 	}
 	defer f.Close()
+	return extractTarGz(f, dest)
+}
 
-	gz, err := gzip.NewReader(f)
+// extractTarGz installs the sing-box binary out of an open archive stream, which is
+// what both a downloaded tarball and the archive a build carries go through.
+func extractTarGz(r io.Reader, dest string) error {
+	gz, err := gzip.NewReader(r)
 	if err != nil {
 		return err
 	}
@@ -554,58 +547,19 @@ func Install(ctx context.Context, rel Release, log func(string), progress Progre
 	return rel.Version, nil
 }
 
-// SupportsV2RayStats reports whether the installed core was built with the V2Ray
-// API, which is where the per-account traffic counters are read from. The
-// official release builds are not built with it (the tag is opt-in upstream), so
-// a deployment on one carries no experimental.v2ray_api block: sing-box rejects
-// the whole config for an API it was not built with.
-func SupportsV2RayStats(ctx context.Context) bool {
-	if !Installed() {
-		return false
-	}
-	out, err := run(ctx, sysinfo.CoreBin, "version")
-	if err != nil {
-		return false
-	}
-	return strings.Contains(out, "with_v2ray_api")
-}
+// SupportsV2RayStats reports whether this build can count per-account traffic, which the
+// counters read from the core's V2Ray API (experimental.v2ray_api) over gRPC. The panel
+// ships its own build now, so this is a property of the build tags rather than something
+// probed off a downloaded binary: with_v2ray_api is on in every release.
+func SupportsV2RayStats(ctx context.Context) bool { return sbcore.StatsAvailable() }
 
-// RealityKeypair returns a fresh Reality private/public key pair.
-func RealityKeypair(ctx context.Context) (string, string, error) {
-	out, err := run(ctx, sysinfo.CoreBin, "generate", "reality-keypair")
-	if err != nil {
-		return "", "", err
-	}
-	var priv, pub string
-	for _, line := range strings.Split(out, "\n") {
-		key, val, ok := strings.Cut(line, ":")
-		if !ok {
-			continue
-		}
-		switch strings.TrimSpace(key) {
-		case "PrivateKey":
-			priv = strings.TrimSpace(val)
-		case "PublicKey":
-			pub = strings.TrimSpace(val)
-		}
-	}
-	if priv == "" || pub == "" {
-		return "", "", errors.New("reality keypair parse failed")
-	}
-	return priv, pub, nil
-}
+// RealityKeypair returns a fresh Reality private/public key pair, generated in-process and
+// encoded exactly the way sing-box clients expect.
+func RealityKeypair(ctx context.Context) (string, string, error) { return sbcore.RealityKeypair() }
 
-// GenerateUUID asks the core for a UUID, falling back to a local v4 UUID.
-func GenerateUUID(ctx context.Context) string {
-	if Installed() {
-		if out, err := run(ctx, sysinfo.CoreBin, "generate", "uuid"); err == nil {
-			if v := strings.TrimSpace(out); v != "" {
-				return v
-			}
-		}
-	}
-	return randomUUID()
-}
+// GenerateUUID returns a v4 UUID for a new inbound or account credential. The core is in
+// this process now, so there is no subprocess to ask.
+func GenerateUUID(ctx context.Context) string { return randomUUID() }
 
 func randomUUID() string {
 	var b [16]byte
@@ -617,16 +571,14 @@ func randomUUID() string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
-// ConfigCheck validates a sing-box config file with the installed core.
+// ConfigCheck validates a sing-box config with the core this binary carries: the file is
+// decoded and an instance is built and closed again, so a config naming an API or a
+// protocol this build does not carry fails here rather than at service start.
 func ConfigCheck(ctx context.Context, configPath string) bool {
-	if !Installed() {
-		return false
-	}
 	if _, err := os.Stat(configPath); err != nil {
 		return false
 	}
-	_, err := run(ctx, sysinfo.CoreBin, "check", "-c", configPath)
-	return err == nil
+	return sbcore.Check(configPath) == nil
 }
 
 func run(ctx context.Context, name string, args ...string) (string, error) {

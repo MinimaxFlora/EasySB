@@ -29,6 +29,11 @@ concurrency:
 
 env:
   TZ: Asia/Shanghai
+  # The sing-box features this panel is built with. with_v2ray_api is what the
+  # per-account counters read; without it sing-box rejects a config naming
+  # experimental.v2ray_api whole. with_naive_outbound is deliberately absent: it needs
+  # the Chromium/cronet toolchain, and a server panel does not use that outbound.
+  TAGS: with_quic,with_grpc,with_utls,with_v2ray_api
 
 jobs:
   build:
@@ -66,8 +71,17 @@ jobs:
         id: ver
         run: echo "version=$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_OUTPUT"
 
+      - name: 读取内置内核版本 / read the bundled core version
+        id: core
+        run: |
+          set -euo pipefail
+          echo "version=$(go list -m -f '{{.Version}}' github.com/sagernet/sing-box | sed 's/^v//')" >> "$GITHUB_OUTPUT"
+
       - name: 单元测试
-        run: go test ./...
+        run: |
+          set -euo pipefail
+          go test ./...
+          go test -tags "$TAGS" ./...
 
       - name: 交叉编译 linux/${{ matrix.asset }}
         env:
@@ -77,8 +91,13 @@ jobs:
           CGO_ENABLED: '0'
         run: |
           set -euo pipefail
-          go build -trimpath \
-            -ldflags "-s -w -X main.version=${{ steps.ver.outputs.version }} -X main.commit=${GITHUB_SHA}" \
+          # 内核编进面板：sing-box 的库随本模块编译，版本由 go.mod 钉住并注入 constant.Version，
+          # 因此发布出来的二进制自带内核，装完不需要另外下载。
+          # The core is compiled into the panel: sing-box's library comes from this
+          # module's go.mod, and its version is injected the way upstream does it, so a
+          # released binary carries a node and installs nothing else.
+          go build -trimpath -tags "$TAGS" \
+            -ldflags "-s -w -X main.version=${{ steps.ver.outputs.version }} -X main.commit=${GITHUB_SHA} -X github.com/sagernet/sing-box/constant.Version=${{ steps.core.outputs.version }}" \
             -o "dist/easysb-linux-${{ matrix.asset }}" .
           ls -lh "dist/easysb-linux-${{ matrix.asset }}"
 

@@ -14,6 +14,7 @@ import (
 	"github.com/MinimaxFlora/EasySB/internal/i18n"
 	"github.com/MinimaxFlora/EasySB/internal/icons"
 	"github.com/MinimaxFlora/EasySB/internal/prefs"
+	"github.com/MinimaxFlora/EasySB/internal/service"
 	"github.com/MinimaxFlora/EasySB/internal/subscribe"
 	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
 	"github.com/MinimaxFlora/EasySB/internal/theme"
@@ -201,9 +202,6 @@ func (a *App) SnapshotScreen(screen string, width, height int) string {
 	switch screen {
 	case "system":
 		a.openSystem()
-	case "kernel-switch":
-		a.enterSection("kernel")
-		a.push(buildKernelSwitch())
 	case "bbr-qdisc":
 		a.push(buildBBR())
 		a.section = "bbr"
@@ -235,16 +233,16 @@ func (a *App) SnapshotScreen(screen string, width, height int) string {
 // previewTaskLog is the sample output of a rendered task screen.
 func previewTaskLog() []string {
 	return []string{
-		"$ systemctl stop " + sysinfo.ServiceName,
-		"GET https://github.com/SagerNet/sing-box/releases/download/v1.14.1/sing-box-1.14.1-linux-amd64.tar.gz",
-		"extract -> " + sysinfo.CoreBin,
-		"内核已切换：稳定版 1.14.1",
+		"$ " + service.Command("restart"),
+		"write " + sysinfo.ConfigJSON,
+		"配置校验通过",
+		"部署完成，服务已启动",
 	}
 }
 
 // previewDownload is the sample download reading of a rendered task screen.
 func previewDownload() (string, int64, int64) {
-	return "sing-box-1.14.1-linux-amd64.tar.gz", 12 << 20, 29 << 20
+	return "easysb-linux-amd64", 12 << 20, 29 << 20
 }
 
 // enterSection pushes the submenu of a root entry by id, so a page can be rendered by

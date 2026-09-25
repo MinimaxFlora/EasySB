@@ -1,8 +1,9 @@
 # Architecture
 
 EasySB is one Go module rooted at the repository root. Everything the running
-program needs is compiled into a single static binary; nothing is fetched at
-runtime except the sing-box core and acme.sh.
+program needs is compiled into a single static binary, **including the sing-box core**:
+the module requires `github.com/sagernet/sing-box` and `internal/sbcore` is the host that
+runs the node in-process. Nothing is fetched at runtime except acme.sh.
 
 ## Repository layout
 
@@ -22,6 +23,7 @@ runtime except the sing-box core and acme.sh.
 │       ├── tun-fakeip.json          # TUN + FakeIP sing-box subscription template
 │       └── mihomo.yaml              # mihomo / Clash Meta subscription template
 ├── internal/                       # all implementation packages
+├── scripts/                        # helper scripts (release asset pruning, core fetch, VPS checks)
 ├── assets/                         # README banners
 ├── docs/                           # these engineering docs
 ├── AGENTS.md                       # agent entry point
@@ -39,7 +41,7 @@ editing.
 | Path | Owner | Purpose |
 | :--- | :--- | :--- |
 | `/etc/sing-box/easysb.conf` | `internal/state` | persisted node state, legacy-compatible KV |
-| `/etc/sing-box/sing-box` | `internal/core` | installed core binary |
+| `/etc/sing-box/sing-box` | — | no core binary: the node is the panel, started as `easysb core run -c …`. A file left over from an older install is unused |
 | `/etc/sing-box/config.json` | `internal/config` | rendered server config |
 | `/etc/sing-box/cert/` | `internal/cert` | certificate and key |
 | `/etc/sing-box/easysb-users.json` | `internal/user` | accounts: credentials, quotas, expiry and counters (`0600`) |
@@ -57,7 +59,8 @@ editing.
 | `internal/tui` | bubbletea model, full-screen dashboard, menu tree, forms, panels, progress |
 | `internal/state` | read/write `easysb.conf`; protocol keys, default ports, default parameters |
 | `internal/config` | render the sing-box server configuration from state |
-| `internal/core` | sing-box release discovery, download (with proxy fallback), install, switch, update |
+| `internal/sbcore` | the sing-box library host: `Version` (module version, injected at build time), `Check` (build an instance and close it = config validation), `Run` (start the node and block), `RealityKeypair`, `StatsAvailable` (build-tag gated). Imports nothing from `internal/`, so `sysinfo` can name the core without a cycle |
+| `internal/core` | the core-facing helpers the panel calls: config check, Reality keypair, UUID, `Installed`/`LocalVersion`, `SupportsV2RayStats` — thin wrappers over `internal/sbcore` |
 | `internal/cert` | acme.sh discovery, download and install, issue/renew/remove certificates, renewal timer unit, self-signed fallback |
 | `internal/prefs` | remember and re-apply the interface choices: skin, palette, marker set, language |
 | `internal/firewall` | Hysteria2 port-hopping DNAT rules and the boot restore unit |
@@ -84,6 +87,7 @@ graph TD
     B --> C["tui.New(version, lang)"]
     C --> D["tea.NewProgram alt-screen"]
     A --> E["--apply-firewall: firewall.Apply + WriteUnit"]
+    A --> I["core run|check|version: the sbcore host (the unit runs core run)"]
     A --> F["--render: print Snapshot then exit"]
     A --> G["--version: print version line"]
     A --> H["--serve: subd.Options.Run (HTTP + accounting)"]
@@ -100,7 +104,8 @@ packages and report back through the app's log/progress channel.
 2. `internal/cert` resolves or issues a certificate.
 3. `internal/config` renders `/etc/sing-box/config.json` from the node state, the
    accounts that may be live and the templates.
-4. `internal/core` installs the core if missing.
+4. `internal/sbcore` validates the rendered config by building a box from it (no
+   subprocess), which is what `easysb core check` does from a shell too.
 5. `internal/service` installs and starts the `sing-box.service` unit.
 6. The operator installs `easysb.service` from `订阅管理`; `easysb --serve`
    answers subscriptions and accounts traffic.

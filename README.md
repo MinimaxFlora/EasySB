@@ -97,11 +97,13 @@ Ports are prompted one by one: Enter takes the default, `r` picks a random port,
 
 ## Quick Start
 
-One-click install (detects the system and architecture, fills in runtime dependencies, prefers a prebuilt binary with a source-build fallback):
+One-click install (detects the system and architecture, fills in runtime dependencies, prefers a prebuilt binary with a source-build fallback, and brings the singleton core along):
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/MinimaxFlora/EasySB/master/install.sh)
 ```
+
+**The core is compiled into the panel**: `go.mod` requires `github.com/sagernet/sing-box` (currently `v1.14.2`), and the node *is* the panel (`sb core run -c /etc/sing-box/config.json`). Installation is therefore one binary and **downloads no core**, `sb` can deploy a node on its first launch, and per-account traffic counting is always available — this repository builds its own core, so `with_v2ray_api` is always on. The trade-offs are size (about 60 MB for linux/amd64) and coupling: **the sing-box version follows the panel version**, so moving to a newer core is a `go.mod` bump plus a panel release.
 
 After installation, the shortcut opens the dark dashboard:
 
@@ -129,7 +131,7 @@ Supports Debian / Ubuntu (systemd) and Alpine (OpenRC); run as root.
 | :--- | :--- |
 | 5-in-1 deployment | Ports allocated one by one; the node keeps only what no account owns (the Reality keypair), because credentials belong to accounts |
 | Accounts and traffic | Per-account credentials for every protocol, traffic quota, expiry date, protocol selection, enable switch, usage reset and token rotation; disabled, expired and over-quota accounts drop out of the core automatically |
-| Core management | Install, replace or remove stable and alpha builds; replace keeps the existing config |
+| Core | The panel is released with its sing-box core compiled in: it shows the built-in version and whether it can count traffic, and there is no core binary to download, install or switch |
 | Version panel | Script version, local core, stable and alpha versions on top of the menu with update markers |
 | Device panel | Local IPv4/IPv6, swap, uptime, CPU cores and load, memory, disk, host, kernel, OS and timezone |
 | System info | The runtime the panel is running on, and the one place the look changes from inside the interface: `↑`/`↓` + `Enter` or `A`-`D` picks a skin, `T` flips dark/light, `I` swaps Unicode markers for ASCII. Every choice lands on the next frame, and the glyph preview row shows before a card anywhere else does whether the terminal font can draw the markers. The status strip and the hints stay put while the body swaps |
@@ -148,7 +150,7 @@ Supports Debian / Ubuntu (systemd) and Alpine (OpenRC); run as root.
 
 ```text
 Main menu (one card, two columns, ten entries)
-├── Core management      Install stable / alpha, switch channel, update current channel
+├── Core                 The sing-box built into the panel, its counters, the service and the node
 ├── Node management      One-click deploy, enable protocols, parameters (UUID / password / hop / ports / SNI / Reality keys)
 ├── Domain management    Issue (with preflight checks), renew now, renewal timer, list, switch active and remove certificates
 ├── Subscription         One account's URL, QR code and share links (pick the account first, then the panel prints the endpoint prefix); install / restart / status of the subscription service
@@ -176,6 +178,7 @@ Files: server config `/etc/sing-box/config.json`, state `/etc/sing-box/easysb.co
 | `--renew-certs` | Renew every certificate, reloading sing-box and the subscription service only when one was actually renewed (called by the renewal timer) |
 | `--install-renew-timer` | Install the renewal timer (systemd timer / OpenRC); the unit names this binary's own path |
 | `--remove-renew-timer` | Remove the renewal timer |
+| `core run\|check\|version` | The core roles, as subcommands rather than flags: `run -c <config>` runs the node (what the sing-box unit executes), `check -c <config>` validates a config, `version` prints the core version and build tags |
 | `--render --width N --height N` | Render the dashboard once and exit (debug; add `--screen system` to draw a subpage) |
 | `--serve` | Run the subscription service and the usage accounting loop (backs `easysb.service`) |
 | `--version` | Print the version and build hash |
@@ -277,6 +280,10 @@ Go implementation (primary, requires Go 1.27.1; `go.mod` declares `go 1.27.1`, a
 ```bash
 # Build the binary
 go build -o easysb .
+
+# Build with the core included (what a release uses): sing-box comes from this
+# module's go.mod
+go build -tags "with_quic,with_grpc,with_utls,with_v2ray_api" -o easysb .
 
 # Run tests
 go test ./...

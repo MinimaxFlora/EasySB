@@ -26,6 +26,17 @@ go test ./...
 gofmt -l .
 ```
 
+The core is compiled into the panel from this module's `go.mod`. Build with the
+release's tag set, otherwise the binary has no QUIC inbounds and cannot serve the
+counters:
+
+```bash
+go build -tags "with_quic,with_grpc,with_utls,with_v2ray_api" -o easysb .
+```
+
+`easysb core run -c <config>` is the node (the service unit runs it), `core check`
+validates a config, `core version` prints what the binary carries.
+
 Render one TUI frame without a TTY (good for layout checks):
 
 ```bash
@@ -36,6 +47,13 @@ Render one TUI frame without a TTY (good for layout checks):
 
 - The release tag is always `v<VERSION>`. Derive it; never hardcode it in a
   second place. `install.sh`, the workflow, and `internal/update` share it.
+- The core is not a file. `internal/sbcore` drives the sing-box library in-process,
+  and the node unit runs the panel (`easysb core run -c /etc/sing-box/config.json`).
+  Do not reintroduce a downloaded or switched core binary: the sing-box version is a
+  `go.mod` requirement, and it moves only with a panel release.
+- Build tags are part of the product: `with_v2ray_api` is what makes per-account
+  counters possible at all, so the deploy path may only write the `experimental.v2ray_api`
+  block when `core.SupportsV2RayStats` says the build carries it.
 - Keep `/etc/sing-box/easysb.conf` compatible with the legacy shell tool. Add
   keys, do not rename or repurpose them. The one exception is a key that
   described a component which no longer exists (v4 dropped `SUB_PORT` and

@@ -7,11 +7,13 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"regexp"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/MinimaxFlora/EasySB/internal/sbcore"
 )
 
 const (
@@ -369,28 +371,52 @@ func timezone() string {
 	return "UTC"
 }
 
-// coreVersion reads the installed core's version, the channel it belongs to, and whether
-// it can count traffic. All three come from the one `sing-box version` call: the tags it
-// prints are the ones the binary was built with.
+// coreVersion reads the core's version and channel. The core is this binary — the node
+// runs in-process — so the version is the sing-box module it was built with, and the
+// traffic counters are there whenever the build carried the V2Ray API.
 func coreVersion() (string, string, bool) {
-	if _, err := os.Stat(CoreBin); err != nil {
+	v := sbcore.Version()
+	if v == "" {
 		return "", "", false
 	}
-	out, err := run(3*time.Second, CoreBin, "version")
-	if err != nil {
-		return "", "", false
-	}
-	re := regexp.MustCompile(`(?m)version\s+([^\s]+)`)
-	m := re.FindStringSubmatch(out)
-	if len(m) < 2 {
-		return "", "", false
-	}
-	v := m[1]
 	channel := "stable"
-	if strings.Contains(strings.ToLower(v), "alpha") || strings.Contains(strings.ToLower(v), "beta") || strings.Contains(strings.ToLower(v), "rc") {
+	lower := strings.ToLower(v)
+	if strings.Contains(lower, "alpha") || strings.Contains(lower, "beta") || strings.Contains(lower, "rc") {
 		channel = "alpha"
 	}
-	return v, channel, strings.Contains(out, "with_v2ray_api")
+	return v, channel, sbcore.StatsAvailable()
+}
+
+// PreferredExecutable returns the first candidate that exists and is executable,
+// preferring the one this process is running from; self is the fallback when none is
+// installed. Units name the panel binary (the node runs inside it), and a panel run from
+// a scratch copy must not redirect the installed service to that copy.
+func PreferredExecutable(self string, candidates []string) string {
+	installed := ""
+	selfResolved := ""
+	if self != "" {
+		if resolved, err := filepath.EvalSymlinks(self); err == nil {
+			selfResolved = resolved
+		}
+	}
+	for _, candidate := range candidates {
+		info, err := os.Stat(candidate)
+		if err != nil || info.Mode()&0o111 == 0 || info.IsDir() {
+			continue
+		}
+		if installed == "" {
+			installed = candidate
+		}
+		if selfResolved != "" {
+			if resolved, err := filepath.EvalSymlinks(candidate); err == nil && resolved == selfResolved {
+				return candidate
+			}
+		}
+	}
+	if installed != "" {
+		return installed
+	}
+	return self
 }
 
 func serviceState(verb string) string {

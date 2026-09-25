@@ -14,7 +14,6 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/MinimaxFlora/EasySB/internal/bbr"
-	"github.com/MinimaxFlora/EasySB/internal/core"
 	"github.com/MinimaxFlora/EasySB/internal/i18n"
 	"github.com/MinimaxFlora/EasySB/internal/prefs"
 	"github.com/MinimaxFlora/EasySB/internal/state"
@@ -254,20 +253,16 @@ func TestRootMenuHasNoNav(t *testing.T) {
 func TestKernelMenuEntries(t *testing.T) {
 	a := newTestApp(t)
 	a.push(buildKernel())
-	want := []string{"kernel-switch", "kernel-update"}
-	if got := len(a.current().nodes); got != len(want) {
-		t.Fatalf("kernel menu has %d entries, want %d", got, len(want))
-	}
-	for i, id := range want {
-		if got := a.current().nodes[i].id; got != id {
-			t.Fatalf("kernel entry %d = %s, want %s", i, got, id)
-		}
+	// The core is part of the panel, so the page carries no actions: it is the reading
+	// plus the navigation row.
+	if got := len(a.current().nodes); got != 0 {
+		t.Fatalf("kernel menu has %d entries, want none", got)
 	}
 	if !a.hasNavRow() {
 		t.Fatalf("kernel menu should show a navigation row")
 	}
 	view := a.View().Content
-	for _, label := range []string{"切换内核", "更新内核", i18n.Chinese.T("nav_back")} {
+	for _, label := range []string{i18n.Chinese.T("kernel_title"), i18n.Chinese.T("nav_back")} {
 		if !strings.Contains(view, label) {
 			t.Fatalf("kernel menu view missing %q: %s", label, view)
 		}
@@ -282,59 +277,8 @@ func TestKernelMenuEntries(t *testing.T) {
 	}
 }
 
-// Switching the core is one list of the four channel/source combinations, so taking the
-// official core and going back to the author's build are the same kind of move.
-func TestKernelSwitchEntries(t *testing.T) {
-	a := newTestApp(t)
-	a.push(buildKernelSwitch())
-	want := []struct{ id, label string }{
-		{"kernel-apply-stable-author", "正式版 · 作者源"},
-		{"kernel-apply-alpha-author", "测试版 · 作者源"},
-		{"kernel-apply-stable-official", "正式版 · 官方源"},
-		{"kernel-apply-alpha-official", "测试版 · 官方源"},
-	}
-	if got := len(a.current().nodes); got != len(want) {
-		t.Fatalf("switch menu has %d entries, want %d", got, len(want))
-	}
-	view := a.View().Content
-	for i, entry := range want {
-		if got := a.current().nodes[i].id; got != entry.id {
-			t.Fatalf("switch entry %d = %s, want %s", i, got, entry.id)
-		}
-		if got := a.current().nodes[i].label(i18n.Chinese); got != entry.label {
-			t.Fatalf("switch entry %d label = %q, want %q", i, got, entry.label)
-		}
-		if !strings.Contains(view, entry.label) {
-			t.Fatalf("switch menu view missing %q: %s", entry.label, view)
-		}
-	}
-	if !a.hasNavRow() {
-		t.Fatalf("switch menu should show a navigation row")
-	}
-}
-
 // The combination that is installed is marked, and the mark comes from the recorded state:
 // without a record nothing is marked, because the core page's 看板 answers from the binary.
-func TestKernelCurrentKey(t *testing.T) {
-	cases := []struct {
-		name string
-		cfg  state.Config
-		want string
-	}{
-		{"author stable", state.Config{CoreChannel: "stable", CoreSource: core.SourceBuild}, "stable:build"},
-		{"official alpha", state.Config{CoreChannel: "alpha", CoreSource: core.SourceUpstream}, "alpha:upstream"},
-		{"channel missing", state.Config{CoreSource: core.SourceBuild}, "stable:build"},
-		{"no record", state.Config{CoreChannel: "stable"}, ""},
-		{"nothing at all", state.Config{}, ""},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := kernelCurrentKey(tc.cfg); got != tc.want {
-				t.Fatalf("kernelCurrentKey(%+v) = %q, want %q", tc.cfg, got, tc.want)
-			}
-		})
-	}
-}
 
 func TestNumberedMenuAndDigitSelection(t *testing.T) {
 	a := newTestApp(t)
@@ -1162,87 +1106,33 @@ func TestThemeEnvOverrideWins(t *testing.T) {
 	}
 }
 
-// The core page has to say whether the installed core came from this repository's builds
-// or from the official releases, and whether it can count traffic: the source decides
-// whether per-account accounting works at all.
+// The core page says where the core comes from, and there is one answer now: it is
+// compiled into this binary. Whether it can count traffic is still measured, because the
+// deploy path writes the stats block from it.
 func TestCoreSourceLabel(t *testing.T) {
 	cases := []struct {
 		name    string
-		source  string
 		stats   bool
-		want    string
 		wantRow string
 	}{
-		{"recorded author source", core.SourceBuild, true, "作者源", "作者源 · 带流量统计"},
-		{"recorded author source, binary without counters", core.SourceBuild, false, "作者源", "作者源 · 无流量统计"},
-		{"recorded official source", core.SourceUpstream, false, "官方源", "官方源 · 无流量统计"},
-		{"no record, counters present", "", true, "作者源", "作者源 · 带流量统计"},
-		{"no record, no counters", "", false, "官方源", "官方源 · 无流量统计"},
+		{"counters present", true, "面板内置 · 带流量统计"},
+		{"binary without counters", false, "面板内置 · 无流量统计"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			a := newTestApp(t)
-			a.status.CoreSource = tc.source
 			a.status.StatsCapable = tc.stats
-			if got := a.coreSourceLabel(); got != tc.want {
-				t.Fatalf("coreSourceLabel = %q, want %q", got, tc.want)
+			if got := a.coreSourceLabel(); got != "面板内置" {
+				t.Fatalf("coreSourceLabel = %q, want 面板内置", got)
 			}
 			if got := a.coreSourceText(); got != tc.wantRow {
 				t.Fatalf("coreSourceText = %q, want %q", got, tc.wantRow)
 			}
 			// The version line names the source too, so the answer is on every page.
 			summary, _ := a.coreSummary()
-			if !strings.Contains(summary, tc.want) {
-				t.Fatalf("coreSummary = %q, want it to name %q", summary, tc.want)
+			if !strings.Contains(summary, "面板内置") {
+				t.Fatalf("coreSummary = %q, want it to name the built-in core", summary)
 			}
 		})
-	}
-}
-
-// An install request has nothing to do only when the channel *and* the source are the ones
-// already installed: comparing channels alone made the way back from the official source a
-// no-op.
-func TestSameInstall(t *testing.T) {
-	cases := []struct {
-		name       string
-		installed  bool
-		haveCh     string
-		haveSource string
-		wantCh     string
-		wantSource string
-		want       bool
-	}{
-		{"author stable already there", true, "stable", core.SourceBuild, "stable", core.SourceBuild, true},
-		{"official installed, author wanted", true, "stable", core.SourceUpstream, "stable", core.SourceBuild, false},
-		{"author installed, official wanted", true, "stable", core.SourceBuild, "stable", core.SourceUpstream, false},
-		{"other channel", true, "stable", core.SourceBuild, "alpha", core.SourceBuild, false},
-		{"nothing installed", false, "", core.SourceUpstream, "stable", core.SourceBuild, false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := sameInstall(tc.installed, tc.haveCh, tc.haveSource, tc.wantCh, tc.wantSource)
-			if got != tc.want {
-				t.Fatalf("sameInstall(%v, %q, %q, %q, %q) = %v, want %v",
-					tc.installed, tc.haveCh, tc.haveSource, tc.wantCh, tc.wantSource, got, tc.want)
-			}
-		})
-	}
-}
-
-func TestCoreSourceFrom(t *testing.T) {
-	cases := []struct {
-		recorded string
-		stats    bool
-		want     string
-	}{
-		{"build", false, core.SourceBuild},
-		{core.SourceUpstream, true, core.SourceUpstream},
-		{"", true, core.SourceBuild},
-		{"", false, core.SourceUpstream},
-	}
-	for _, tc := range cases {
-		if got := coreSourceFrom(tc.recorded, tc.stats); got != tc.want {
-			t.Errorf("coreSourceFrom(%q, %v) = %q, want %q", tc.recorded, tc.stats, got, tc.want)
-		}
 	}
 }

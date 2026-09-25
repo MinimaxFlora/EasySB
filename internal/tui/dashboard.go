@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MinimaxFlora/EasySB/internal/core"
 	"github.com/MinimaxFlora/EasySB/internal/state"
 	"github.com/MinimaxFlora/EasySB/internal/theme"
 	"github.com/MinimaxFlora/EasySB/internal/ui"
@@ -510,12 +509,12 @@ func (a *App) statusStrip(w int) string {
 	return ui.Strip(s, items, w)
 }
 
-// coreSummary words the installed core as "version [channel]", with a marker when the
-// binary can count traffic, or says it is not installed. The wordmark card, the core
-// section's 看板 and the version section's all show it, so it is worded once here.
+// coreSummary words the core this panel carries as "version [channel] · built in", or
+// says the version is unreadable. The wordmark card, the core section's 看板 and the
+// version section's all show it, so it is worded once here.
 func (a *App) coreSummary() (string, ui.Kind) {
 	if a.status.CoreVersion == "" {
-		return a.lang.T("ver_not_installed"), ui.KindPlain
+		return a.lang.T("state_unknown"), ui.KindPlain
 	}
 	kind := ui.KindOK
 	if a.status.CoreChannel == "alpha" {
@@ -526,15 +525,10 @@ func (a *App) coreSummary() (string, ui.Kind) {
 	return text, kind
 }
 
-// coreSourceLabel names where the installed core came from: this repository's builds (the
-// default, and the only ones that can count traffic) or the official SagerNet releases.
-// The source recorded at install time is used when there is one; otherwise it is read off
-// the binary's build tags, which also covers a core installed before the record existed.
+// coreSourceLabel names where the core comes from. There is one answer now — it is
+// compiled into this binary — which is also why no page offers to switch it.
 func (a *App) coreSourceLabel() string {
-	if coreSourceFrom(a.status.CoreSource, a.status.StatsCapable) == core.SourceBuild {
-		return a.lang.T("kernel_source_author")
-	}
-	return a.lang.T("kernel_source_official")
+	return a.lang.T("kernel_source_builtin")
 }
 
 // coreSourceText words the installed core's source together with whether it can count

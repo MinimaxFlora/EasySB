@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
@@ -19,6 +21,7 @@ import (
 	"github.com/MinimaxFlora/EasySB/internal/firewall"
 	"github.com/MinimaxFlora/EasySB/internal/i18n"
 	"github.com/MinimaxFlora/EasySB/internal/prefs"
+	"github.com/MinimaxFlora/EasySB/internal/sbcore"
 	"github.com/MinimaxFlora/EasySB/internal/service"
 	"github.com/MinimaxFlora/EasySB/internal/state"
 	"github.com/MinimaxFlora/EasySB/internal/stats"
@@ -44,6 +47,13 @@ func versionLine() string {
 }
 
 func main() {
+	// The core roles come first: the sing-box service unit runs this same binary as
+	// `easysb core run -c …`, so the node is the panel rather than a downloaded program.
+	if len(os.Args) > 1 && os.Args[1] == "core" {
+		runCoreCommand(os.Args[2:])
+		return
+	}
+
 	langFlag := flag.String("language", "", "界面语言 / UI language: C (中文) or E (English)")
 	iconsFlag := flag.String("icons", "", "图标方案 / icon set: symbols, ascii (or on, off)")
 	themeFlag := flag.String("theme", "", "配色方案 / color theme: auto, dark, light")
@@ -132,6 +142,65 @@ func runSubscribeService() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+// runCoreCommand is the node side of this binary: `core run` is what the sing-box service
+// unit executes, `core check` validates a config the same way the panel's deploy path
+// does, and `core version` prints what this build carries. They are subcommands rather
+// than flags because argv[1] is how the unit and a shell tell the two roles apart.
+func runCoreCommand(args []string) {
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "usage: easysb core run|check|version [-c "+sysinfo.ConfigJSON+"]")
+		os.Exit(2)
+	}
+	configFlag := func(name string) (*flag.FlagSet, *string) {
+		fs := flag.NewFlagSet(name, flag.ExitOnError)
+		return fs, fs.String("c", sysinfo.ConfigJSON, "配置文件路径 / config path")
+	}
+	switch args[0] {
+	case "run":
+		fs, config := configFlag("core run")
+		_ = fs.Parse(args[1:])
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		if err := sbcore.Run(ctx, *config); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	case "check":
+		fs, config := configFlag("core check")
+		_ = fs.Parse(args[1:])
+		if err := sbcore.Check(*config); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Println("check ok: " + *config)
+	case "version":
+		fmt.Printf("sing-box version %s\n\n", sbcore.Version())
+		fmt.Printf("Environment: %s %s/%s\n", runtime.Version(), runtime.GOOS, runtime.GOARCH)
+		if tags := buildTags(); tags != "" {
+			fmt.Println("Tags: " + tags)
+		}
+		fmt.Printf("Core: built into EasySB %s\n", versionLine())
+	default:
+		fmt.Fprintln(os.Stderr, "unknown core command: "+args[0])
+		os.Exit(2)
+	}
+}
+
+// buildTags reads the -tags a release build passed, so `core version` reports the feature
+// set the same way `sing-box version` does.
+func buildTags() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return ""
+	}
+	for _, setting := range info.Settings {
+		if setting.Key == "-tags" {
+			return setting.Value
+		}
+	}
+	return ""
 }
 
 // runApplyFirewall applies the port-hopping rules and exits. It backs the
