@@ -116,22 +116,32 @@ func DaemonReload() error {
 	return nil
 }
 
-// Do performs a lifecycle action: start, stop, restart, enable or disable.
-func Do(ctx context.Context, action string) error {
-	var name string
-	var args []string
+// Command is the command line Do runs for an action, so a log line naming the
+// command cannot disagree with what was run — on OpenRC the command is
+// rc-service, not systemctl.
+func Command(action string) string {
+	name, args := command(action)
+	return name + " " + strings.Join(args, " ")
+}
+
+// command maps an action onto the tool of the init system in use.
+func command(action string) (string, []string) {
 	if Detect() == OpenRC {
-		name = "rc-service"
-		args = []string{sysinfo.ServiceName, action}
+		name := "rc-service"
+		args := []string{sysinfo.ServiceName, action}
 		if action == "enable" {
 			name, args = "rc-update", []string{"add", sysinfo.ServiceName, "default"}
 		} else if action == "disable" {
 			name, args = "rc-update", []string{"del", sysinfo.ServiceName, "default"}
 		}
-	} else {
-		name = "systemctl"
-		args = []string{action, sysinfo.ServiceName}
+		return name, args
 	}
+	return "systemctl", []string{action, sysinfo.ServiceName}
+}
+
+// Do performs a lifecycle action: start, stop, restart, enable or disable.
+func Do(ctx context.Context, action string) error {
+	name, args := command(action)
 
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Env = append(os.Environ(), "LC_ALL=C")

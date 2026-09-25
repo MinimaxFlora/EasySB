@@ -97,11 +97,13 @@ Ports are prompted one by one: Enter takes the default, `r` picks a random port,
 
 ## Quick Start
 
-One-click install (detects the system and architecture, fills in runtime dependencies, prefers a prebuilt binary with a source-build fallback):
+One-click install (detects the system and architecture, fills in runtime dependencies, prefers a prebuilt binary with a source-build fallback, and brings the singleton core along):
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/MinimaxFlora/EasySB/master/install.sh)
 ```
+
+The installer also installs the core — this repository's stable build, the author source that can count per-account traffic — so the panel is ready to deploy a node on its first launch instead of asking for a core first. It installs one only when the host has none: upgrading the panel never replaces the core of a running node (pass `--no-core` to skip it, or switch cores from `[1] Core management` in the panel).
 
 After installation, the shortcut opens the dark dashboard:
 
@@ -129,7 +131,7 @@ Supports Debian / Ubuntu (systemd) and Alpine (OpenRC); run as root.
 | :--- | :--- |
 | 5-in-1 deployment | Ports allocated one by one; the node keeps only what no account owns (the Reality keypair), because credentials belong to accounts |
 | Accounts and traffic | Per-account credentials for every protocol, traffic quota, expiry date, protocol selection, enable switch, usage reset and token rotation; disabled, expired and over-quota accounts drop out of the core automatically |
-| Core management | Install, replace or remove stable and alpha builds; replace keeps the existing config |
+| Core management | Install, replace or remove stable and alpha builds; replace keeps the existing config; the one-click installer already brings the author-source stable core |
 | Version panel | Script version, local core, stable and alpha versions on top of the menu with update markers |
 | Device panel | Local IPv4/IPv6, swap, uptime, CPU cores and load, memory, disk, host, kernel, OS and timezone |
 | System info | The runtime the panel is running on, and the one place the look changes from inside the interface: `↑`/`↓` + `Enter` or `A`-`D` picks a skin, `T` flips dark/light, `I` swaps Unicode markers for ASCII. Every choice lands on the next frame, and the glyph preview row shows before a card anywhere else does whether the terminal font can draw the markers. The status strip and the hints stay put while the body swaps |
@@ -176,6 +178,7 @@ Files: server config `/etc/sing-box/config.json`, state `/etc/sing-box/easysb.co
 | `--renew-certs` | Renew every certificate, reloading sing-box and the subscription service only when one was actually renewed (called by the renewal timer) |
 | `--install-renew-timer` | Install the renewal timer (systemd timer / OpenRC); the unit names this binary's own path |
 | `--remove-renew-timer` | Remove the renewal timer |
+| `--install-core` | Install the core and exit (used by `install.sh`); skipped when the same combination is already there, `--core-channel`, `--core-source`, `--core-force` and `--core-if-missing` refine the request |
 | `--render --width N --height N` | Render the dashboard once and exit (debug; add `--screen system` to draw a subpage) |
 | `--serve` | Run the subscription service and the usage accounting loop (backs `easysb.service`) |
 | `--version` | Print the version and build hash |

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/MinimaxFlora/EasySB/internal/core"
+	"github.com/MinimaxFlora/EasySB/internal/kernel"
 	"github.com/MinimaxFlora/EasySB/internal/state"
 	"github.com/MinimaxFlora/EasySB/internal/theme"
 	"github.com/MinimaxFlora/EasySB/internal/ui"
@@ -531,7 +532,7 @@ func (a *App) coreSummary() (string, ui.Kind) {
 // The source recorded at install time is used when there is one; otherwise it is read off
 // the binary's build tags, which also covers a core installed before the record existed.
 func (a *App) coreSourceLabel() string {
-	if coreSourceFrom(a.status.CoreSource, a.status.StatsCapable) == core.SourceBuild {
+	if kernel.SourceFrom(a.status.CoreSource, a.status.StatsCapable) == core.SourceBuild {
 		return a.lang.T("kernel_source_author")
 	}
 	return a.lang.T("kernel_source_official")

@@ -18,6 +18,7 @@ import (
 	"github.com/MinimaxFlora/EasySB/internal/deploy"
 	"github.com/MinimaxFlora/EasySB/internal/firewall"
 	"github.com/MinimaxFlora/EasySB/internal/i18n"
+	"github.com/MinimaxFlora/EasySB/internal/kernel"
 	"github.com/MinimaxFlora/EasySB/internal/prefs"
 	"github.com/MinimaxFlora/EasySB/internal/service"
 	"github.com/MinimaxFlora/EasySB/internal/state"
@@ -55,6 +56,11 @@ func main() {
 	renewCerts := flag.Bool("renew-certs", false, "续期证书并重载服务（供定时器调用）/ renew certificates and reload the services")
 	installTimer := flag.Bool("install-renew-timer", false, "安装证书续期定时器 / install the certificate renewal timer")
 	removeTimer := flag.Bool("remove-renew-timer", false, "移除证书续期定时器 / remove the certificate renewal timer")
+	installCore := flag.Bool("install-core", false, "安装 sing-box 内核后退出（已装同一组合则跳过）/ install the sing-box core and exit (skipped when it is already there)")
+	coreChannel := flag.String("core-channel", "stable", "配合 --install-core 的通道：stable 或 alpha / channel for --install-core: stable or alpha")
+	coreSource := flag.String("core-source", "build", "配合 --install-core 的来源：build（作者源，含流量统计）或 upstream（官方源）/ source for --install-core: build (author) or upstream (official)")
+	coreForce := flag.Bool("core-force", false, "配合 --install-core：已装同一组合也重新安装 / with --install-core: reinstall a combination that is already installed")
+	coreIfMissing := flag.Bool("core-if-missing", false, "配合 --install-core：本机已有内核就跳过（安装脚本用）/ with --install-core: skip when a core is already installed (used by install.sh)")
 	serve := flag.Bool("serve", false, "运行订阅服务 / run the subscription service")
 	width := flag.Int("width", 100, "渲染宽度 / render width")
 	height := flag.Int("height", 36, "渲染高度 / render height")
@@ -95,6 +101,17 @@ func main() {
 	applySkin(*skinFlag)
 	lang := i18n.Parse(firstNonEmpty(*langFlag, os.Getenv("EASYSB_LANG")))
 
+	if *installCore {
+		runInstallCore(kernel.Request{
+			Channel:       *coreChannel,
+			Source:        *coreSource,
+			DoneKey:       "kernel_installed",
+			Force:         *coreForce,
+			OnlyIfMissing: *coreIfMissing,
+		}, lang)
+		return
+	}
+
 	app := tui.New(resolveVersion(), lang)
 
 	if *render {
@@ -129,6 +146,22 @@ func runSubscribeService() {
 		Log: logf,
 	}
 	if err := options.Run(ctx); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+// runInstallCore installs the core without the panel, which is what install.sh runs so a
+// one-click install comes with a core and the first `sb` is already usable. It has no deploy
+// path of its own — a config that no longer matches the new core is reported so the operator
+// can redeploy from the panel, rather than silently left behind a core that will not start.
+func runInstallCore(req kernel.Request, lang i18n.Lang) {
+	req = req.Normalize()
+	fmt.Println(lang.T("kernel_installing") + ": " + lang.T(kernel.CombinationKey(req.Channel, req.Source)))
+	if _, err := kernel.Install(context.Background(), kernel.Options{
+		Lang: lang,
+		Log:  func(line string) { fmt.Println(line) },
+	}, req); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

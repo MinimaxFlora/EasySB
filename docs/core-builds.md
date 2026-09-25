@@ -26,7 +26,11 @@ alpha channel, and so does the rebuild.
 The panel installs from the author source by default: `core.FetchPreferred` reads the
 channel's `version.ini` stamp and builds the download from it, falling back to the official
 release for a channel this repository has not published yet (`core.FetchBuildRelease` fails,
-`fetchUpstream` answers). 「内核管理 → 切换内核」 lists the four channel/source combinations
+`fetchUpstream` answers). `install.sh` installs the author source's stable build through
+`easysb --install-core --core-if-missing`, so a one-click install comes with a core and the
+first launch of the panel can deploy a node straight away; a host that already has a core is
+left untouched, because replacing the core of a running node is the operator's call, made in
+the panel. 「内核管理 → 切换内核」 lists the four channel/source combinations
 (正式版/测试版 × 作者源/官方源) and marks the one installed, so taking the official build and
 coming back are both one selection; 「更新内核」 refreshes the version of what is installed and
 keeps its source. The file names are

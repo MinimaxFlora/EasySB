@@ -8,6 +8,7 @@
 
 ### 新增
 
+- **一键安装自带内核**：`install.sh` 装完面板后调用 `easysb --install-core --core-if-missing`，把**作者源正式版**（带 `with_v2ray_api`、能统计流量）装到 `/etc/sing-box/sing-box`，因此 `sb` 第一次打开就是「可直接部署节点」的状态，不用先进「内核管理」点一次。**已装内核的机器一律跳过**（状态由内核自己判断，脚本不重复一份路径）：升级面板不会替换正在跑节点的内核，换内核仍是面板里的主动操作；想跳过本次内核安装可加 `--no-core`，内核装失败只警告、不影响面板安装。为此把内核的取版本、下载、落地、记录来源与「配置是否还匹配新内核」收进新包 `internal/kernel`（面板的「切换内核 / 更新内核」与命令行模式共用同一条安装路径），并给 `internal/service` 加了 `Command(action)`，日志里写的命令与实际执行的一致（OpenRC 下不再写成 systemctl）。
 - **带流量统计的内核构建工作流**：`.github/workflows/singbox-v2ray-api.yml` 用上游同一份源码加一个 `with_v2ray_api` 标签，重建正式版与测试版两条通道（滚动 release `singbox-stable` / `singbox-alpha`），产物与官方发布**同名**（`sing-box-<版本>-linux-<架构>.tar.gz` + `.sha256` + `version.ini` 版本戳），因此面板可以按同一套命名取用。上游版本没变就不重复构建；支持手动 dispatch（可选 both/stable/alpha 与强制重建）与每日定时。为什么需要它、光环标签怎么来、加架构要动哪几处：见 `docs/core-builds.md`。
 - **通道资产保留策略**：`prune` 任务每次运行都清掉通道不再提供的旧内核包（`scripts/prune_release_assets.py`）。固定通道 tag 让 release 永远只有两个，但包名带版本号，不清的话每个新版本都会在同一 release 里再堆 14 个文件；默认每个通道只留当前版本（15 个资产），dispatch 时可选 `keep_generations`（2=连上一代一起留，0=全留不清理）。
 

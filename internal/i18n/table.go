@@ -228,8 +228,10 @@ var table = []entry{
 	{"kernel_stats_off", "无流量统计", "no counters"},
 	{"kernel_redeploy_needed", "内核能力已变化，现有配置与新内核不符：按新内核重新生成配置", "The core's capabilities changed and the current config does not match it: regenerating the config for the core"},
 	{"kernel_redeploy_failed", "按新内核重新生成配置失败", "Regenerating the config for the new core failed"},
+	{"kernel_redeploy_pending", "配置文件与新内核不符，本进程无法重新生成：请到面板「节点管理 → 一键部署」重新部署节点", "the config does not match the new core and this process cannot regenerate it: redeploy the node from the panel (Node management → One-click deploy)"},
 	{"kernel_current_marker", "当前", "current"},
 	{"kernel_none", "尚未安装内核", "No core installed yet"},
+	{"kernel_present_skip", "本机已有内核，跳过安装（要换内核请进面板 [1] 内核管理）", "a core is already installed, skipping (switch it from [1] Core management in the panel)"},
 
 	{"node_title", "节点管理", "Node management"},
 	{"node_deploy", "一键部署", "One-click deploy"},

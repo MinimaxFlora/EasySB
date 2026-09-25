@@ -58,6 +58,7 @@ editing.
 | `internal/state` | read/write `easysb.conf`; protocol keys, default ports, default parameters |
 | `internal/config` | render the sing-box server configuration from state |
 | `internal/core` | sing-box release discovery, download (with proxy fallback), install, switch, update |
+| `internal/kernel` | the one core install path: which channel/source combination is wanted, whether it is already installed, recording the source, and regenerating the config when the new core can no longer serve it. The panel's Core screen and `--install-core` (which `install.sh` runs) both go through it |
 | `internal/cert` | acme.sh discovery, download and install, issue/renew/remove certificates, renewal timer unit, self-signed fallback |
 | `internal/prefs` | remember and re-apply the interface choices: skin, palette, marker set, language |
 | `internal/firewall` | Hysteria2 port-hopping DNAT rules and the boot restore unit |
@@ -84,6 +85,7 @@ graph TD
     B --> C["tui.New(version, lang)"]
     C --> D["tea.NewProgram alt-screen"]
     A --> E["--apply-firewall: firewall.Apply + WriteUnit"]
+    A --> I["--install-core: kernel.Install (used by install.sh)"]
     A --> F["--render: print Snapshot then exit"]
     A --> G["--version: print version line"]
     A --> H["--serve: subd.Options.Run (HTTP + accounting)"]
@@ -100,7 +102,8 @@ packages and report back through the app's log/progress channel.
 2. `internal/cert` resolves or issues a certificate.
 3. `internal/config` renders `/etc/sing-box/config.json` from the node state, the
    accounts that may be live and the templates.
-4. `internal/core` installs the core if missing.
+4. `internal/core` installs the core if missing — on a fresh host `install.sh` already
+   installed it through `internal/kernel`, so this step usually has nothing to do.
 5. `internal/service` installs and starts the `sing-box.service` unit.
 6. The operator installs `easysb.service` from `订阅管理`; `easysb --serve`
    answers subscriptions and accounts traffic.

@@ -12,6 +12,7 @@ import (
 	"github.com/MinimaxFlora/EasySB/internal/core"
 	"github.com/MinimaxFlora/EasySB/internal/deploy"
 	"github.com/MinimaxFlora/EasySB/internal/i18n"
+	"github.com/MinimaxFlora/EasySB/internal/kernel"
 	"github.com/MinimaxFlora/EasySB/internal/netutil"
 	"github.com/MinimaxFlora/EasySB/internal/service"
 	"github.com/MinimaxFlora/EasySB/internal/state"
@@ -103,7 +104,7 @@ func issueCertTask(lang i18n.Lang, email, domain string) taskFunc {
 			_ = service.Do(ctx, "stop")
 		}
 		running := func() {
-			if stopped && hasServerConfig() {
+			if stopped && kernel.HasServerConfig() {
 				r.Log("$ systemctl start " + sysinfo.ServiceName)
 				_ = service.Do(ctx, "start")
 			}

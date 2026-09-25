@@ -26,6 +26,7 @@ LANG_MODE='C'
 FROM_SOURCE=0
 LOCAL_BINARY=''
 SUDO=''
+INSTALL_CORE=1
 
 # ------------------------------------------------------------------------------
 # 输出辅助 / Output helpers
@@ -66,6 +67,7 @@ EasySB install.sh
   --lang C|E        输出语言 / output language
   --from-source     强制从源码构建 / force build from source
   --binary PATH     使用指定二进制 / use a local binary
+  --no-core         跳过内核安装 / do not install the sing-box core
   -h, --help        显示帮助 / show this help
 
 面板只用终端自带字形，不再安装 Nerd Font；为兼容旧脚本，--no-font 与
@@ -81,6 +83,7 @@ while [ "$#" -gt 0 ]; do
     --lang) LANG_MODE="${2:-C}"; shift 2 ;;
     --lang=*) LANG_MODE="${1#*=}"; shift ;;
     --no-font|--font-only) shift ;;
+    --no-core) INSTALL_CORE=0; shift ;;
     --from-source) FROM_SOURCE=1; shift ;;
     --binary) LOCAL_BINARY="${2:-}"; shift 2 ;;
     --binary=*) LOCAL_BINARY="${1#*=}"; shift ;;
@@ -303,6 +306,30 @@ install_binary() {
 }
 
 # ------------------------------------------------------------------------------
+# sing-box 内核 / sing-box core
+# ------------------------------------------------------------------------------
+# 一键安装同时把内核带上：面板第一次打开就是可用状态，不必再进「内核管理」点一次。
+# 只在没有内核时安装——升级面板绝不能覆盖正在跑节点的内核，换内核是操作者在内核管理里
+# 的主动选择（内核下载与落地都在面板自己的代码里，脚本不重复一份路径）。
+# The one-click install brings a core along, so the first `sb` opens a usable panel
+# instead of needing a visit to "Core management" first. It only installs when there
+# is none: a panel upgrade must never clobber the core of a running node, and
+# switching cores is a choice the operator makes in the panel. The download and the
+# install live in the panel's own code, so the path is not spelled out twice.
+ensure_core() {
+  if [ "$INSTALL_CORE" -eq 0 ]; then
+    dim "$(say '已按 --no-core 跳过内核安装' 'skipped the core (--no-core)')"
+    return 0
+  fi
+  log "$(say '安装 sing-box 内核（作者源 · 正式版）' 'Installing the sing-box core (author source, stable)')"
+  if as_root "$PREFIX/bin/$BIN_NAME" --install-core --core-if-missing --core-channel stable --core-source build --language "$LANG_MODE"; then
+    ok "$(say '内核就绪' 'core ready')"
+  else
+    warn "$(say '内核安装失败（面板已装好，不受影响）：进入面板后 [1] 内核管理 可重新安装' 'Core install failed (the panel is installed and unaffected): retry from [1] Core management in the panel')"
+  fi
+}
+
+# ------------------------------------------------------------------------------
 # 主流程 / Main
 # ------------------------------------------------------------------------------
 main() {
@@ -313,10 +340,11 @@ main() {
 
   ensure_runtime_deps
   install_binary
+  ensure_core
 
   printf '\n'
   ok "$(say '安装完成，运行 sb 启动' 'Installation complete, run sb to start')"
-  dim "$(say '首次运行会检测内核与节点状态' 'The dashboard shows core and node state on first launch')"
+  dim "$(say '面板自带内核，进入即可部署节点' 'The panel comes with a core: deploy the node right away')"
 }
 
 main "$@"
