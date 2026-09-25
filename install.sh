@@ -7,6 +7,10 @@
 #    1. 检测并安装运行与构建依赖（curl / openssl / jq / qrencode / tar / Go）
 #    2. 安装 EasySB 二进制到 /usr/local/bin，并创建 sb 快捷指令
 #
+#  内核已编译进面板：sing-box 是面板自己的依赖，装完就有，不需要再下载内核。
+#  The core is compiled into the panel — sing-box is a dependency of the binary
+#  itself, so a finished install already carries it and nothing downloads a core.
+#
 #  用法 / Usage:
 #    bash install.sh                # 安装或升级
 #    bash install.sh --from-source  # 强制从源码构建
@@ -16,11 +20,17 @@
 
 set -euo pipefail
 
-VERSION='4.2.2'
+VERSION='5.0.0'
 REPO='MinimaxFlora/EasySB'
 RELEASE_TAG="v${VERSION}"
 PREFIX="${PREFIX:-/usr/local}"
 BIN_NAME='easysb'
+# 源码构建必须带这些标签：with_v2ray_api 是账号流量统计的前提，缺了它面板会照常
+# 部署节点，但流量无法计数。release/TAGS 是唯一的标签来源，工作流读同一个文件。
+# A source build needs these tags: with_v2ray_api is what makes per-account traffic
+# counting possible, and without it the panel still deploys a working node but can
+# count nothing. release/TAGS is the single source of truth; the workflow reads it too.
+DEFAULT_TAGS='with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_acme,with_clash_api,with_tailscale,with_ccm,with_ocm,with_cloudflared,with_naive_outbound,with_usbip,with_openvpn,with_openconnect,badlinkname,tfogo_checklinkname0,with_v2ray_api'
 
 LANG_MODE='C'
 FROM_SOURCE=0
@@ -181,12 +191,12 @@ pkg_install() {
 # 运行时依赖 / Runtime dependencies
 ensure_runtime_deps() {
   log "$(say '检查运行时依赖' 'Checking runtime dependencies')"
-  # socat: acme.sh 的 standalone 验证需要一个能监听 80 端口的工具，缺它时申请证书只会
-  # 在最后一步报错。若仓库里没有 socat，面板也会在申请前直接提示。
-  # socat: acme.sh standalone validation needs a tool that can listen on port 80;
-  # without it issuance only fails at the last step. The panel also checks first.
+  # 证书用面板内置的 lego 申请，验证在面板自己的进程里完成，所以不再需要 socat 这类
+  # 帮 acme.sh 监听 80 端口的工具。
+  # Certificates come from the lego client compiled into the panel, which answers the
+  # challenge from its own process, so the helper acme.sh needed to hold port 80 is gone.
   local missing=()
-  for cmd in curl openssl jq tar gzip socat; do
+  for cmd in curl openssl jq tar gzip; do
     command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
   done
 
@@ -195,7 +205,7 @@ ensure_runtime_deps() {
     local pkgs=("${missing[@]}")
     pkg_install "${pkgs[@]}" || warn "$(say '部分依赖安装失败，请手动安装' 'some packages failed, install manually')"
   fi
-  for cmd in curl openssl jq tar gzip socat; do
+  for cmd in curl openssl jq tar gzip; do
     command -v "$cmd" >/dev/null 2>&1 && ok "$cmd" || warn "$cmd $(say '缺失' 'missing')"
   done
 
@@ -267,12 +277,16 @@ download_binary() {
 }
 
 build_from_source() {
-  local out="$1" srcdir
+  local out="$1" srcdir tags
   srcdir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   [ -f "$srcdir/go.mod" ] || { warn "$(say '未找到源码' 'source tree not found')"; return 1; }
   ensure_go
+  tags="$DEFAULT_TAGS"
+  [ -r "$srcdir/release/TAGS" ] && tags="$(tr -d '[:space:]' < "$srcdir/release/TAGS")"
   say "正在从源码构建" "Building from source"
-  ( cd "$srcdir" && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o "$out" . ) || return 1
+  dim "tags: $tags"
+  ( cd "$srcdir" && CGO_ENABLED=0 go build -trimpath -tags "$tags" \
+      -ldflags "-s -w -X main.version=${VERSION}" -o "$out" . ) || return 1
   [ -s "$out" ] || return 1
   return 0
 }
@@ -316,7 +330,7 @@ main() {
 
   printf '\n'
   ok "$(say '安装完成，运行 sb 启动' 'Installation complete, run sb to start')"
-  dim "$(say '首次运行会检测内核与节点状态' 'The dashboard shows core and node state on first launch')"
+  dim "$(say '内核已随面板安装，无需再装 sing-box' 'The sing-box core came with the panel, nothing else to install')"
 }
 
 main "$@"

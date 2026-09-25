@@ -4,7 +4,38 @@
 
 程序的版本号与构建提交在编译期注入，内核版本独立于程序版本，由官方 `SagerNet/sing-box` Releases 提供。
 
-## [Unreleased]
+## [5.0.0] - 2026-09-26
+
+### 破坏性变更
+
+- **sing-box 内核编译进面板**：`github.com/sagernet/sing-box v1.14.2` 成为 `go.mod` 的直接依赖，节点就是面板自己——`ExecStart=/usr/local/bin/easysb core run -c /etc/sing-box/config.json`，`/etc/sing-box/sing-box` 与 `/usr/local/bin/sing-box` 不再存在，面板装完即带内核，不需要再下载、安装或切换任何东西。新增 `internal/sbcore`（`Run` / `Check` / `Version` / 能力位）与 `internal/download`（面板自身更新与 BBR 内核包共用的下载层），`internal/core`（发布发现 / 下载 / 安装 / 切换）整体删除。
+- **构建标签只有一处定义**：`release/TAGS`（当前 `with_quic,with_utls,with_v2ray_api`），发布工作流与 `install.sh` 的源码构建读同一个文件。`with_v2ray_api` 是账号流量统计的前提，而它是编译期的事实、无法在运行时探测，因此由 `internal/sbcore/stats_on.go` / `stats_off.go` 这对带标签的文件回答，部署前用 `StatsCapable()` 决定要不要写 `experimental.v2ray_api`（不带该标签的构建照常部署可用节点，只是不计流量，并在部署日志里说明）。这次同时确认了上游 `DEFAULT_BUILD_TAGS` 里的 `with_naive_outbound` 会把 cronet 拖进来、在 386/armv7/riscv64/s390x 上直接编译不过，而面板的服务端配置不用它，所以不再随包携带。
+- **证书改为面板内置 lego**：`github.com/go-acme/lego/v5` 在面板进程内完成 ACME 开户与 HTTP-01 签发（自己监听 80 端口应答挑战），不再下载 acme.sh，也不再需要 socat / python。ACME 账户与证书放在 `/etc/sing-box/acme/`（可用 `EASYSB_ACME_DIR` 覆盖），续期定时器仍旧由面板安装（`--install-renew-timer` / `--renew-certs`），续期判定改为读本地叶证书的到期时间，`install.sh` 不再要求 socat。
+
+### 新增
+
+- **服务解锁状态**（占原来「内核管理」的位置）：新增 `internal/unlock`，用 Go 重新实现 RegionRestrictionCheck 那套探测——Netflix（含“仅原创”判定）、Disney+、YouTube Premium、Amazon Prime Video、DAZN、TVBAnywhere+、Spotify、Reddit、TikTok、ChatGPT、Gemini、Claude、Steam、Bilibili 中国大陆 / 港澳台 / 台湾、巴哈姆特動畫瘋，共 17 项。每项只发 1-3 个请求并读响应体，判断不出结论时返回「检测失败 + 原因」而不是猜「解锁」；结果按「解锁 / 部分解锁 / 屏蔽 / 检测失败」统计，看板显示上次检测时间与各项计数，单项也可单独检测。同一条探测能在没有终端的环境跑：`easysb --unlock` 输出纯文本报告。
+- `easysb core check -c <config>` / `core version`：前者用面板里那套引擎校验配置（部署路径用的就是它），后者打印本二进制携带的 sing-box 版本与能力位。
+
+### 变更
+
+- 版本行与系统卡片显示 `1.14.2 · 带流量统计`（内核版本 + 本构建能否计流量），不再显示「正式版/测试版」「作者源/官方源」这类已不存在的选项。
+- 状态文件不再写 `CORE_CHANNEL` / `CORE_SOURCE` / `STATS_API`：它们描述的是可下载、可切换的内核。旧文件照常读入，下次保存时丢掉这三个键。
+- 主菜单第一项由「内核管理」变为「服务解锁状态」；四套皮肤的导航分组同步调整（原「内核」分组改名「检测」，其余分组内位置不变）。
+- 任务页示例输出与内核相关的文案改为节点/订阅语境。
+
+### 移除
+
+- 「内核管理」整页（切换内核 / 更新内核 / 通道×来源四组合与相关状态键），「版本更新」保留。
+- `internal/core` 的发布发现、下载、解包、安装、切换、UUID 与 Reality 密钥生成（后两者早就由 `internal/secret` 本地生成），以及 `deploy.ErrNoCore` 与「内核未安装」类提示——内核永远在。
+- acme.sh 的下载与安装、`cert.EnsureACME` / `cert.ACMEInstalled` / `cert.ACMEDir` / `cert.CheckPort`（改名 `CheckPort80`），`install.sh` 的 socat 依赖。
+
+### 说明（未发布历史）
+
+- 下面 `[4.3.0 之前未发布]` 一节记录的是 5.0.0 之前、随本版本一并移除的「内核来源与通道」改动，保留在此仅供追溯；对应的代码与菜单已不在仓库里。
+
+## [4.3.0 之前未发布]
+
 
 ### 新增
 

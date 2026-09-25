@@ -1,5 +1,5 @@
-// Package uninstall removes the EasySB deployment, keeping acme.sh certificates
-// like the legacy shell implementation.
+// Package uninstall removes the EasySB deployment, keeping the issued
+// certificates like the legacy shell implementation.
 package uninstall
 
 import (
@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -53,6 +54,19 @@ func Run(ctx context.Context, log func(string)) error {
 
 	if _, err := Backup(log); err != nil {
 		log("backup failed: " + err.Error())
+	}
+	// The certificate state directory sits under the work directory, which is
+	// removed below, so it is moved aside first: a reinstall that had to issue
+	// certificates again would spend a Let's Encrypt rate limit to get back what
+	// was already there. A failure here is not fatal, the backup above holds a copy.
+	// A state directory that is not under the work directory needs no such care.
+	certDir := cert.Dir()
+	stashed := ""
+	if within(sysinfo.WorkDir, certDir) {
+		var err error
+		if stashed, err = stashCerts(certDir); err != nil {
+			log("certificates: " + err.Error())
+		}
 	}
 
 	log("$ service stop/disable " + sysinfo.ServiceName)
@@ -100,8 +114,57 @@ func Run(ctx context.Context, log func(string)) error {
 	}
 
 	log("done")
-	if cert.ACMEInstalled() {
-		log("acme certificates kept in " + cert.ACMEDir())
+	if restored := restoreCerts(stashed, certDir); restored != "" {
+		log("certificates: " + restored)
+	}
+	if len(cert.Domains()) > 0 {
+		log("certificates kept in " + certDir)
 	}
 	return nil
+}
+
+// stashCerts moves dir out of the way, into the system temporary directory, and
+// returns where it was put. The ACME account and the issued certificates are what
+// a reinstall would otherwise have to obtain again, and a Let's Encrypt rate limit
+// is the price of getting them.
+func stashCerts(dir string) (string, error) {
+	tmp, err := os.MkdirTemp("", "easysb-certs")
+	if err != nil {
+		return "", err
+	}
+	target := filepath.Join(tmp, filepath.Base(dir))
+	if err := os.Rename(dir, target); err != nil {
+		os.RemoveAll(tmp)
+		return "", err
+	}
+	return target, nil
+}
+
+// restoreCerts moves a directory stashed by stashCerts back to dir, and returns
+// the reason it could not be put back, if it could not. It reports nothing (an
+// empty string) when there was nothing to restore.
+func restoreCerts(stashed, dir string) string {
+	if stashed == "" {
+		return ""
+	}
+	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+		return err.Error() + "; they are in " + stashed
+	}
+	if err := os.Rename(stashed, dir); err != nil {
+		return err.Error() + "; they are in " + stashed
+	}
+	if err := os.RemoveAll(filepath.Dir(stashed)); err != nil {
+		return err.Error()
+	}
+	return ""
+}
+
+// within reports whether path is the directory dir itself or a file or directory
+// below it.
+func within(dir, path string) bool {
+	rel, err := filepath.Rel(dir, path)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }

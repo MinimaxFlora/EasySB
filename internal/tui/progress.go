@@ -22,11 +22,13 @@ import (
 type taskFunc func(ctx context.Context, r *taskReporter) error
 
 // taskReporter is a running task's link back to the screen that started it: Log for a
-// line of output, Progress for a download that is still arriving. A task never touches
-// the interface directly, so every screen sees its output in the order it was produced.
+// line of output, Progress for a download that is still arriving, SetResult for what
+// the screen should keep once the task is done. A task never touches the interface
+// directly, so every screen sees its output in the order it was produced.
 type taskReporter struct {
-	log  func(string)
-	prog func(label string, done, total int64)
+	log    func(string)
+	prog   func(label string, done, total int64)
+	result func(any)
 }
 
 // Log appends one line to the task's output.
@@ -41,6 +43,16 @@ func (r *taskReporter) Log(line string) {
 func (r *taskReporter) Progress(label string, done, total int64) {
 	if r.prog != nil {
 		r.prog(label, done, total)
+	}
+}
+
+// SetResult hands a value back to the model once the task is over, for the screens
+// whose 看板 shows what the task found: a subscription link grid or an unlock report
+// is worth more than the last run's log. Values are read back after taskDoneMsg, on
+// the render goroutine, so the model guards the handover.
+func (r *taskReporter) SetResult(value any) {
+	if r.result != nil {
+		r.result(value)
 	}
 }
 
@@ -80,9 +92,11 @@ type progressModel struct {
 	noCopy bool
 	width  int
 	height int
-	// mu guards dl, which the task goroutine writes while the screen is drawn.
-	mu sync.Mutex
-	dl downloadReading
+	// mu guards dl, which the task goroutine writes while the screen is drawn, and
+	// res, which the same goroutine hands over for the section that started it.
+	mu  sync.Mutex
+	dl  downloadReading
+	res any
 }
 
 // newProgress builds the model for one task. It returns a pointer because the task
@@ -108,14 +122,31 @@ func (p *progressModel) Init() tea.Cmd {
 	errCh := p.errCh
 	go func() {
 		r := &taskReporter{
-			log:  func(s string) { ch <- s },
-			prog: p.setDownload,
+			log:    func(s string) { ch <- s },
+			prog:   p.setDownload,
+			result: p.setResult,
 		}
 		err := fn(ctx, r)
 		errCh <- err
 		close(ch)
 	}()
 	return tea.Batch(p.tickCmd(), waitLog(ch))
+}
+
+// setResult records the value the task wants the model to keep. It is called from the
+// task goroutine, so it takes the same lock the download reading uses.
+func (p *progressModel) setResult(value any) {
+	p.mu.Lock()
+	p.res = value
+	p.mu.Unlock()
+}
+
+// taskResult is what the finished task handed over, or nil. It is read on the render
+// goroutine once the task is done.
+func (p *progressModel) taskResult() any {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.res
 }
 
 // setDownload records one reading of a download. It is called from the task

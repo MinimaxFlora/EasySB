@@ -18,6 +18,7 @@ import (
 	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
 	"github.com/MinimaxFlora/EasySB/internal/theme"
 	"github.com/MinimaxFlora/EasySB/internal/ui"
+	"github.com/MinimaxFlora/EasySB/internal/unlock"
 	"github.com/MinimaxFlora/EasySB/internal/user"
 )
 
@@ -38,9 +39,13 @@ type App struct {
 	status        sysinfo.Status
 	ready         bool
 	sized         bool
-	quote         string
-	toast         string
-	toastErr      bool
+	// unlockReport is the last 服务解锁状态 run the operator started. A probe run
+	// leaves the process, so the panel keeps the result of the one it ran instead
+	// of re-probing whenever the section is opened.
+	unlockReport *unlock.Report
+	quote        string
+	toast        string
+	toastErr     bool
 	// section is the root entry the panel is standing in, empty on the main
 	// menu. It is set when a root entry is entered and cleared on the way back.
 	section string
@@ -201,9 +206,6 @@ func (a *App) SnapshotScreen(screen string, width, height int) string {
 	switch screen {
 	case "system":
 		a.openSystem()
-	case "kernel-switch":
-		a.enterSection("kernel")
-		a.push(buildKernelSwitch())
 	case "bbr-qdisc":
 		a.push(buildBBR())
 		a.section = "bbr"
@@ -221,7 +223,7 @@ func (a *App) SnapshotScreen(screen string, width, height int) string {
 		// The task screen is where every action lands, and its download bar only
 		// exists while a download is in flight, so a rendered frame takes a sample
 		// reading rather than an idle one.
-		p := newProgress(a.lang.T("kernel_installing"), func(context.Context, *taskReporter) error { return nil })
+		p := newProgress(a.lang.T("task_running"), func(context.Context, *taskReporter) error { return nil })
 		for _, line := range previewTaskLog() {
 			p.appendLog(line)
 		}
@@ -235,16 +237,16 @@ func (a *App) SnapshotScreen(screen string, width, height int) string {
 // previewTaskLog is the sample output of a rendered task screen.
 func previewTaskLog() []string {
 	return []string{
-		"$ systemctl stop " + sysinfo.ServiceName,
-		"GET https://github.com/SagerNet/sing-box/releases/download/v1.14.1/sing-box-1.14.1-linux-amd64.tar.gz",
-		"extract -> " + sysinfo.CoreBin,
-		"内核已切换：稳定版 1.14.1",
+		"$ systemctl restart " + sysinfo.ServiceName,
+		"write " + sysinfo.ConfigJSON,
+		"config ok: " + sysinfo.ConfigJSON,
+		"节点已部署：账号与流量、订阅地址已就绪",
 	}
 }
 
 // previewDownload is the sample download reading of a rendered task screen.
 func previewDownload() (string, int64, int64) {
-	return "sing-box-1.14.1-linux-amd64.tar.gz", 12 << 20, 29 << 20
+	return "easysb-linux-amd64", 12 << 20, 29 << 20
 }
 
 // enterSection pushes the submenu of a root entry by id, so a page can be rendered by
@@ -547,6 +549,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// 看板 reads the machine (BBR) takes its reading again too, or the
 				// page would keep showing what it said before the task ran.
 				a.loadAccounts()
+				a.adoptTaskResult()
 				return a, tea.Batch(cmd, collectStatus(a.scriptVersion), a.sectionRefresh())
 			}
 			return a, tea.Batch(cmd, collectStatus(a.scriptVersion))

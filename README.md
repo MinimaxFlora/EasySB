@@ -30,7 +30,7 @@
 - [Config Templates](#config-templates)
 - [Subscription](#subscription)
 - [Firewall and Port Hopping](#firewall-and-port-hopping)
-- [Core Management](#core-management)
+- [Service Unlock Status](#service-unlock-status)
 - [Developers: Build and Test](#developers-build-and-test)
 - [Security Notes](#security-notes)
 - [License](#license)
@@ -39,14 +39,15 @@
 
 ## Introduction
 
-EasySB is a 5-in-1 sing-box deployment script for Linux VPS. It brings protocol deployment, certificate issuance, core version management and subscription generation into one interactive menu.
+EasySB is a 5-in-1 sing-box deployment tool for Linux VPS. It brings protocol deployment, certificate issuance, service unlock checks and subscription generation into one interactive menu.
 
 - **Go (primary implementation)**: a root Go module built with bubbletea / bubbles / lipgloss, compiled into a single static binary exposed as `sb`.
 - **Templates**: `templates/` ships readable JSONC samples for the five protocols plus the subscription template. Use them on their own, or let the tool deploy them.
-- **Core**: the sing-box binary comes from the official [SagerNet/sing-box](https://github.com/SagerNet/sing-box) releases. Stable and alpha builds can be installed, replaced or removed at any time.
+- **Core**: sing-box is **compiled into the panel** — `github.com/sagernet/sing-box` is a `go.mod` requirement, so installing EasySB installs the core with it, and the node is `easysb core run`. There is no core binary to download, replace or switch, and the traffic counters come with the build (`with_v2ray_api`, see `release/TAGS`).
+- **Certificates**: Let's Encrypt through `go-acme/lego`, in the panel's own process. No acme.sh, no socat, nothing downloaded to issue a certificate.
 
 - Homepage: https://github.com/MinimaxFlora/EasySB
-- Core source: https://github.com/SagerNet/sing-box
+- Core source (compiled in): https://github.com/SagerNet/sing-box
 - Changelog: [CHANGELOG.md](CHANGELOG.md)
 - Contributing: [CONTRIBUTING.md](CONTRIBUTING.md)
 - Security: [SECURITY.md](SECURITY.md)
@@ -129,12 +130,13 @@ Supports Debian / Ubuntu (systemd) and Alpine (OpenRC); run as root.
 | :--- | :--- |
 | 5-in-1 deployment | Ports allocated one by one; the node keeps only what no account owns (the Reality keypair), because credentials belong to accounts |
 | Accounts and traffic | Per-account credentials for every protocol, traffic quota, expiry date, protocol selection, enable switch, usage reset and token rotation; disabled, expired and over-quota accounts drop out of the core automatically |
-| Core management | Install, replace or remove stable and alpha builds; replace keeps the existing config |
-| Version panel | Script version, local core, stable and alpha versions on top of the menu with update markers |
+| Service unlock status | Probes what this IP can really use: Netflix (including the originals-only case), Disney+, YouTube Premium, Amazon Prime Video, DAZN, TVBAnywhere+, Spotify, Reddit, TikTok, ChatGPT, Gemini, Claude, Steam, BiliBili (mainland / HK-Macau-Taiwan / Taiwan) and 巴哈姆特動畫瘋 — 17 services, one to three HTTP requests each, classified as unlocked / partially unlocked / blocked / failed with a reason. A probe that cannot read the answer reports a failure instead of claiming the service works |
+| Core inside the panel | sing-box is a `go.mod` requirement, so the node is `easysb core run -c /etc/sing-box/config.json` and the version line reads the compiled-in release. `easysb core check` validates a configuration with the same engine the node uses, and the per-account counters exist when the build carries `with_v2ray_api` (`release/TAGS`), which the panel reports rather than assumes |
+| Version panel | Program version and the sing-box release inside it, with whether this build can count traffic |
 | Device panel | Local IPv4/IPv6, swap, uptime, CPU cores and load, memory, disk, host, kernel, OS and timezone |
 | System info | The runtime the panel is running on, and the one place the look changes from inside the interface: `↑`/`↓` + `Enter` or `A`-`D` picks a skin, `T` flips dark/light, `I` swaps Unicode markers for ASCII. Every choice lands on the next frame, and the glyph preview row shows before a card anywhere else does whether the terminal font can draw the markers. The status strip and the hints stay put while the body swaps |
 | Copy links | Subscription and share-link results render as a card grid inside the same fixed panel as the main menu. Subscription cards show the subscription name (sing-box / mihomo / Base64) plus a format note, share-link cards show the protocol name, and neither draws the host or the full URL. Select with `↑`/`↓`/`←`/`→` (or a number key), `Enter` copies the card, `C` copies all, `Q` quits the program, `Esc` returns. A copied card turns green and copy-all reports in the header. Narrow or short windows reflow the grid and truncate content, never overflowing the panel. On log screens `C` copies the log (OSC52) |
-| Certificates | acme.sh `--standalone` issue, list, switch active and remove; the preflight check covers socat and DNS before an attempt is spent, the core is stopped to free port 80 during the challenge, and acme.sh is installed with `--nocron` because a minimal image has no cron: renewal is driven by the panel's own systemd timer (or OpenRC script), which also reloads sing-box and the subscription service |
+| Certificates | Let's Encrypt issuance in process through lego with the HTTP-01 standalone challenge: issue, list, switch active and remove. The preflight check covers DNS before an attempt is spent, the core is stopped to free port 80 during the challenge, and nothing is downloaded to do any of it. Renewal is decided by expiry (30 days before it) and driven by the panel's own systemd timer (or OpenRC script), which also reloads sing-box and the subscription service |
 | Subscription | One URL per account (`/sub/<token>`) served by the built-in service, which picks the format from the client (`templates/config/tun-fakeip.json`, `templates/config/mihomo.yaml` or Base64 share links) and reports usage in `Subscription-Userinfo`; QR codes and per-protocol share links in the panel |
 | Port hopping | Hysteria2 defaults to `2080:3000`, auto-applies iptables / nftables DNAT and a boot restore unit |
 | Service control | Start, stop, restart, status and enable-on-boot |
@@ -148,7 +150,7 @@ Supports Debian / Ubuntu (systemd) and Alpine (OpenRC); run as root.
 
 ```text
 Main menu (one card, two columns, ten entries)
-├── Core management      Install stable / alpha, switch channel, update current channel
+├── Service unlock      Check what this IP can use: streaming, AI, game stores, mainland-China and Taiwan catalogues
 ├── Node management      One-click deploy, enable protocols, parameters (UUID / password / hop / ports / SNI / Reality keys)
 ├── Domain management    Issue (with preflight checks), renew now, renewal timer, list, switch active and remove certificates
 ├── Subscription         One account's URL, QR code and share links (pick the account first, then the panel prints the endpoint prefix); install / restart / status of the subscription service
@@ -256,33 +258,61 @@ The unit restores rules via `easysb --apply-firewall`. It is not created when Hy
 
 ---
 
-## Core Management
+## Service Unlock Status
+
+The section that replaced 内核管理 answers the question a VPS operator actually has: which
+of these services work from *this* IP. The probes are a Go re-implementation of
+[RegionRestrictionCheck](https://github.com/lmc999/RegionRestrictionCheck) — one to three
+HTTP requests per service, then a read of the body, no login and no extra data files.
 
 | Item | Description |
 | :--- | :--- |
-| Core source | Official `SagerNet/sing-box` releases; the tool downloads official assets directly |
-| Stable | Official latest release |
-| Alpha | Official prerelease |
-| Install | Downloads and verifies for the architecture, writes `/etc/sing-box/sing-box` |
-| Replace | Swaps the binary only, keeps `/etc/sing-box/config.json` |
-| Uninstall | Stops the service and removes the core |
-| Release | `.github/workflows/easysb-go-release.yml` cross-compiles every platform binary and publishes them under the `v<VERSION>` tag (currently `v4.1.0`) |
+| Streaming | Netflix (a blocked title may still play originals, which is reported as partially unlocked), Disney+, YouTube Premium, Amazon Prime Video, DAZN, TVBAnywhere+, Spotify, Reddit, TikTok |
+| AI | ChatGPT, Google Gemini, Claude |
+| Game store | Steam (its regional signal is the store currency) |
+| Mainland China / Taiwan | BiliBili mainland, BiliBili Hong Kong-Macau-Taiwan, BiliBili Taiwan, 巴哈姆特動畫瘋 |
+| Verdicts | unlocked / partially unlocked / blocked / failed. A probe never reports "unlocked" on partial evidence: an unreadable answer becomes a failure with the reason it saw, and the board counts each verdict |
+| Where to run it | The panel page (whole catalogue or one service, results land in the task screen and stay on the board) and `sb --unlock` for a plain-text report without a terminal |
+| Core | None of this needs a core binary: the checks are the panel's own HTTP client, and so is the sing-box engine the node runs |
+
+## The core inside the panel
+
+| Item | Description |
+| :--- | :--- |
+| Source | `github.com/sagernet/sing-box` as a `go.mod` requirement (currently `v1.14.2`); installing the panel installs the core |
+| Node | `ExecStart=/usr/local/bin/easysb core run -c /etc/sing-box/config.json`; `/etc/sing-box/sing-box` no longer exists |
+| Validation | `easysb core check -c <config>` builds the configuration with the same engine that would serve it, which is what the deploy path runs before restarting |
+| Counters | `with_v2ray_api` (`release/TAGS`) is compiled in, and the deploy path writes `experimental.v2ray_api` only when `sbcore.StatsCapable()` says so, because a core without the API rejects the whole document |
+| Release | `.github/workflows/easysb-go-release.yml` cross-compiles every architecture with the tags from `release/TAGS` and publishes them under the `v<VERSION>` tag |
 
 ---
 
 ## Developers: Build and Test
 
-Go implementation (primary, requires Go 1.27.1; `go.mod` declares `go 1.27.1`, and `GOTOOLCHAIN=auto` fetches that toolchain automatically). `internal/tui/` holds the TUI shell and interaction logic; the other packages under `internal/` cover the core, certificate, service, subscription and firewall modules, mapped in `docs/architecture.md`:
+Go implementation (primary, requires Go 1.27.1; `go.mod` declares `go 1.27.1`, and `GOTOOLCHAIN=auto` fetches that toolchain automatically). `internal/tui/` holds the TUI shell and interaction logic; the other packages under `internal/` cover the compiled-in core, certificates, service, subscription, unlock probes and firewall modules, mapped in `docs/architecture.md`:
 
 ```bash
-# Build the binary
-go build -o easysb .
+# The build tags are defined once, in release/TAGS
+tags=$(tr -d '[:space:]' < release/TAGS)
 
-# Run tests
+# Build the binary (the core and its counters come with it)
+go build -tags "$tags" -o easysb .
+
+# Run tests, tagged and untagged
+go test -tags "$tags" ./...
 go test ./...
+
+# What this binary carries, and whether it can count traffic
+./easysb core version
+
+# Validate a rendered node configuration with the compiled-in engine
+./easysb core check -c /etc/sing-box/config.json
 
 # Render the dashboard once without interaction (preview / screenshot / debug)
 ./easysb --render --width 100 --height 34
+
+# Print the service unlock report without a terminal
+./easysb --unlock
 
 # Switch language, icon mode, theme and skin
 ./easysb --language E --icons ascii --theme dark --skin graphite

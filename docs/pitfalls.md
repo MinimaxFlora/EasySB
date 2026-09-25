@@ -58,12 +58,21 @@ Traps already hit in this repository. Each entry names the symptom and the fix.
   `{{ ... }}` even inside YAML/JSON comments. A `{{ .Proxies }}` in a mihomo
   header comment injects uncommented proxy entries above the document root and
   makes the profile unparseable. Keep actions out of comments.
-- **`releases.atom` tags omit the `v` prefix.** `core.normalizeTag` re-adds it;
-  do not compare raw tags.
+- **A build tag cannot be probed at run time.** Whether this binary counts traffic
+  per account is `with_v2ray_api`, so the answer lives in a tagged file pair
+  (`internal/sbcore/stats_on.go` / `stats_off.go`) and the deploy path asks
+  `sbcore.StatsCapable()` before writing `experimental.v2ray_api` — the core
+  rejects a whole configuration naming an API it was not built with.
+- **`with_naive_outbound` must stay out of `release/TAGS`.** Upstream's
+  `DEFAULT_BUILD_TAGS` includes it, and it drags in the cronet/Chromium libraries,
+  which have no build for 386, armv7, riscv64 or s390x (and need `with_purego` on
+  windows): copying upstream's list verbatim breaks four of the six release
+  architectures. The panel's node configuration never uses a naive outbound, so the
+  tag set is deliberately narrower.
 - **Downloads assume direct GitHub access.** Deployment targets are overseas,
-  so core and binary downloads go straight to `github.com`. Mirror prefixes were
-  removed on purpose; do not reintroduce them to work around a local network
-  problem.
+  so binary and kernel-package downloads go straight to `github.com`. Mirror
+  prefixes were removed on purpose; do not reintroduce them to work around a local
+  network problem.
 - **Comments are invalid JSON.** `templates/` files are JSONC for humans. Strip
   comments before handing anything to `sing-box check`.
 
@@ -74,7 +83,8 @@ Traps already hit in this repository. Each entry names the symptom and the fix.
   half-valid profile out of a client: an empty `proxies` list is rejected by the
   Clash-family parsers, and an empty sing-box profile fails to parse outright.
 - **The URL and the listener agree on the scheme.** Both ask
-  `cert.Usable(DOMAIN)`, which requires a real acme.sh pair. Publishing an
+  `cert.Usable(DOMAIN)`, which requires a certificate a client will accept: one
+  the panel issued itself, not the self-signed placeholder. Publishing an
   `https://` URL for a listener that fell back to HTTP (no certificate, or only
   the self-signed one, which clients reject) breaks every import.
 - **The core user name is the subscription token.** The V2Ray counter key is
@@ -89,36 +99,43 @@ Traps already hit in this repository. Each entry names the symptom and the fix.
 
 ## Certificates
 
-- **acme.sh must be installed with `--nocron`.** `get.acme.sh` (the wrapper the
-  project used first) always reaches for a crontab, and on a minimal image
-  without cron it stops at `Pre-check failed, cannot install` while printing a
-  China-mirror wiki link as the last line, so the real reason is hidden. The
-  project downloads the release script and runs
-  `./acme.sh --install --nocron --noprofile --home <dir>` from the directory it
-  was downloaded into; acme.sh copies `acme.sh` from the working directory, so
-  invoking it from anywhere else fails with `cannot stat 'acme.sh'`.
-- **Without a crontab nothing renews.** Installing with `--nocron` moves the
-  responsibility to `easysb-acme.timer` (or the OpenRC script), which runs
-  `easysb --renew-certs`. Certificates that are renewed but not reloaded are
-  still the old ones in a running core: `--renew-certs` restarts sing-box and the
-  subscription service for that reason. If issuance ever moves off `--nocron`,
-  the timer must be removed in the same change or renewals happen twice.
-- **The acme.sh directory is not `$HOME/.acme.sh` until proven.** The install
-  script, sudo and the systemd units each supply a different `HOME`, so
-  `cert.ACMEDir()` probes for an installation and every acme.sh call passes
-  `--home`, which is what makes the write location and the read location the same.
-- **`--standalone` needs socat or python**, and it needs port 80 free: the
-  installer depends on socat, and `cert.CheckPort80()` runs after the core is
-  stopped, because a running core is usually what holds the port. Both checks
-  happen before an ACME attempt is spent. Debian 13 minimal images ship socat and
-  python3 but no cron and no crontab, which is the combination that made the
-  wrapper script unusable there.
-- **A failing challenge usually means DNS, not acme.sh.** A domain behind a CDN
+- **Issuance is in process; nothing is downloaded to do it.** The panel orders
+  through `github.com/go-acme/lego/v5` with the HTTP-01 standalone challenge: no
+  acme.sh script to install, no socat or python to keep on the image, and no log
+  output to parse. What acme.sh's output used to be read for is a value here — the
+  account URL in `<dir>/account.json`, the pair on disk, and the expiry of the
+  leaf. `EASYSB_ACME_DIR` moves the state directory; the default is
+  `/etc/sing-box/acme`, and the account and the certificates share it.
+- **The account key is the account; the file only saves a lookup.** A panel that
+  lost `account.json` re-registers with the key it still has and gets the same
+  account back. Losing `account.key` means a new account, and on a domain that has
+  already spent its five duplicate certificates for the week that means a wait.
+- **Without the timer nothing renews.** `easysb-acme.timer` (or the OpenRC script)
+  runs `easysb --renew-certs`, and it is the only thing that does. A renewal
+  replaces the pair in place, so a certificate that is renewed but not reloaded is
+  still the old one in a running core: `--renew-certs` restarts sing-box and the
+  subscription service for exactly that reason.
+- **A renewal only spends a certificate when one is due.** `cert.RenewBefore` is 30
+  days: the nightly pass skips anything further out without contacting the CA, and
+  `Issue()` returns success without ordering when the certificate in place is still
+  valid. That is what keeps a second click from costing one of the five duplicate
+  certificates Let's Encrypt allows a week; `Remove()` first when a certificate has
+  to be replaced early.
+- **The challenge listener needs port 80 free.** `cert.CheckPort80()` runs after
+  the node is stopped, because the node is what would hold the port if a protocol
+  was put on it, and the check happens before an ACME attempt is spent. The
+  listener itself is the standard library now, so socat or python being absent is
+  no longer a reason for a challenge to fail.
+- **The challenge answers only the name it was presented for.** lego's HTTP-01
+  server matches the `Host` header against the domain, its answer to DNS
+  rebinding, and answers `TEST` otherwise. A check that fetches the token itself
+  has to send the domain as the Host header, or it fails on that `TEST`.
+- **A failing challenge usually means DNS, not the panel.** A domain behind a CDN
   (or the Cloudflare orange cloud) answers HTTP-01 from the CDN and never reaches
-  the host, which shows up as `Verify error` in acme.sh output. The preflight
-  report compares the resolved addresses with the host's public IP and says so;
-  `EASYSB_ACME_STAGING=1` lets the whole flow be tried without consuming the
-  Let's Encrypt rate limit.
+  the host, which shows up as a validation error naming a URL the host never saw.
+  The preflight report compares the resolved addresses with the host's public IP
+  and says so; `EASYSB_ACME_STAGING=1` lets the whole flow be tried without
+  consuming the Let's Encrypt rate limit.
 - **A stale A record next to a correct one also fails the order.** Let's Encrypt
   validates the challenge against *every* address a domain resolves to, so a
   leftover record pointing at a host that no longer answers fails the issuance
@@ -130,22 +147,18 @@ Traps already hit in this repository. Each entry names the symptom and the fix.
   authoritative answer, and a name that resolves to two addresses has two records
   (a wildcard would also have answered for a random subdomain, and a CDN proxy
   would have answered with the CDN's addresses).
-- **The CA must be pinned, not inherited.** acme.sh's default CA is ZeroSSL (it
-  used to be Let's Encrypt), so leaving `--server` out makes the signing CA depend
-  on the installed acme.sh version and splits it from the staging switch, which
-  points at Let's Encrypt's test endpoint. `issueArgs()` always passes
-  `--server letsencrypt` (`letsencrypt_test` when staging). The CA is recorded per
-  domain in `<domain>_ecc/<domain>.conf` as `Le_API`, so a pinned flag only
-  affects new issuances; an existing certificate keeps renewing from its own CA
-  until it is removed and reissued.
-- **`acme.sh --remove` unregisters but does not delete.** It prints `The key and
-  cert files are in <dir>` and leaves them there, so reissuing immediately fails
-  with `Error creating domain key` until the `_ecc` directory is deleted. Remove
-  both when replacing a certificate.
-- **Reissuing a valid certificate is not a failure.** acme.sh exits non-zero with
-  `Domains not changed. | Skipping. Next renewal time is: …`, which `errorDetail()`
-  would otherwise report as a broken issuance to someone who simply clicked the
-  button twice. `Issue()` recognises that sentence and returns success.
+- **The CA must be pinned, not inherited.** `letsEncryptDirectory()` names Let's
+  Encrypt, or its staging endpoint, instead of taking a default: acme.sh moved its
+  own default from Let's Encrypt to ZeroSSL, so a default that can move silently
+  changes who signs the panel's certificates.
+- **The key is written before the certificate.** `installPair()` writes
+  `private.key` first and `fullchain.cer` second, so a failure between the two
+  leaves a pair that does not exist rather than a certificate next to a key it was
+  not issued for — the one combination sing-box refuses to start with. `Paths()`
+  reports a pair only when both files are there and non-empty.
+- **Reissuing a valid certificate is not a failure.** `Issue()` returns success
+  and says why ("… is still valid until …") when the certificate in place is not
+  due; that is what a second click on the button produces.
 
 ## State and templates
 

@@ -9,7 +9,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/MinimaxFlora/EasySB/internal/cert"
-	"github.com/MinimaxFlora/EasySB/internal/core"
 	"github.com/MinimaxFlora/EasySB/internal/deploy"
 	"github.com/MinimaxFlora/EasySB/internal/i18n"
 	"github.com/MinimaxFlora/EasySB/internal/netutil"
@@ -35,9 +34,8 @@ func issueCertAction() actionFunc {
 			})
 		}
 
-		// The address is asked for once and then remembered: acme.sh needs it for the
-		// account, and re-registering on a later issue should not cost another
-		// question.
+		// The address is asked for once and then remembered: it is the ACME
+		// account's contact address, and a later issue does not ask for it again.
 		if saved := strings.TrimSpace(state.Load().ACMEEmail); saved != "" {
 			startDomainPrompt(saved)
 			return nil
@@ -61,9 +59,6 @@ func issueCertTask(lang i18n.Lang, email, domain string) taskFunc {
 		// into a specific sentence when they are wrong.
 		report := cert.Preflight(ctx, domain)
 		r.Log(fmt.Sprintf("%s: %s / %s", lang.T("domain_check"), resolvedText(report, lang), ipText(report.PublicIP, lang)))
-		if !report.Listener() {
-			return errors.New(lang.T("domain_need_socat"))
-		}
 		if report.Mismatch() {
 			r.Log(lang.T("domain_dns_mismatch") + ": " + strings.Join(report.Resolved, ", "))
 			r.Log(lang.T("domain_dns_hint"))
@@ -81,11 +76,11 @@ func issueCertTask(lang i18n.Lang, email, domain string) taskFunc {
 			r.Log(lang.T("domain_staging"))
 		}
 
-		if !cert.ACMEInstalled() {
-			r.Log(lang.T("domain_installing_acme"))
-			if err := cert.EnsureACME(ctx, email, r.Log); err != nil {
-				return err
-			}
+		// The account is registered before the core is stopped, so a network or
+		// address problem costs nothing but a message. It is a no-op once the panel
+		// has an account, which is why it is called on every issuance.
+		if err := cert.EnsureAccount(ctx, email, r.Log); err != nil {
+			return err
 		}
 
 		cfg := state.Load()
@@ -137,15 +132,16 @@ func issueCertTask(lang i18n.Lang, email, domain string) taskFunc {
 		}
 		r.Log(lang.T("domain_issued") + ": " + domain)
 
-		// The certificate is renewed by our own timer: acme.sh was installed
-		// without a crontab, so nothing else would renew it.
+		// The certificate is renewed by our own timer, which is installed here:
+		// nothing else on the host renews it, because the panel does the ACME work
+		// itself.
 		if err := cert.InstallTimer(ctx, r.Log); err != nil {
 			r.Log(lang.T("domain_timer_failed") + ": " + err.Error())
 		} else {
 			r.Log(lang.T("domain_timer_on"))
 		}
 
-		if cfg.NodeDeployed && core.Installed() {
+		if cfg.NodeDeployed {
 			accounts, err := loadUsers()
 			if err != nil {
 				return err
@@ -198,20 +194,20 @@ func renewCertAction() actionFunc {
 	return func(a *App) tea.Cmd {
 		lang := a.lang
 		return a.startTask(lang.T("domain_renew"), func(ctx context.Context, r *taskReporter) error {
-			if !cert.ACMEInstalled() {
+			if !cert.Registered() {
 				return errors.New(lang.T("domain_no_acme"))
 			}
 			if len(cert.Domains()) == 0 {
 				return errors.New(lang.T("domain_empty"))
 			}
 			renewed, err := cert.Renew(ctx, r.Log)
-			if err != nil {
-				return err
-			}
 			// Nothing changed, so nothing has to be reloaded: the certificate the
 			// running core holds is still the current one. This matters because the
 			// renewal timer takes this same path every night.
 			if len(renewed) == 0 {
+				if err != nil {
+					return err
+				}
 				r.Log(lang.T("domain_renew_uptodate"))
 				return nil
 			}
@@ -230,7 +226,10 @@ func renewCertAction() actionFunc {
 				}
 			}
 			r.Log(lang.T("domain_renewed"))
-			return nil
+			// A domain whose renewal failed does not hold back the ones that
+			// succeeded: what was renewed has just been reloaded above, and the
+			// failure is still reported.
+			return err
 		})
 	}
 }
@@ -313,7 +312,7 @@ func switchCert(a *App, domain string) tea.Cmd {
 		a.setToast(err.Error(), true)
 		return nil
 	}
-	if !cfg.NodeDeployed || !core.Installed() {
+	if !cfg.NodeDeployed {
 		a.setToast(lang.T("domain_switched")+": "+domain, false)
 		return nil
 	}

@@ -27,7 +27,6 @@ func TestApplyRaw(t *testing.T) {
 		"DOMAIN":           "example.com",
 		"NODE_DEPLOYED":    "yes",
 		"REALITY_SHORT_ID": "abcd",
-		"CORE_CHANNEL":     "alpha",
 		"UNRECOGNISED_KEY": "keep-me",
 	}
 	c.applyRaw()
@@ -46,9 +45,6 @@ func TestApplyRaw(t *testing.T) {
 	}
 	if !c.NodeDeployed {
 		t.Fatal("NODE_DEPLOYED=yes should set NodeDeployed")
-	}
-	if c.CoreChannel != "alpha" {
-		t.Fatalf("channel = %q", c.CoreChannel)
 	}
 	extra := c.extraKeys()
 	if len(extra) != 1 || extra[0] != "UNRECOGNISED_KEY" {

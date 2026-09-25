@@ -11,10 +11,10 @@ import (
 	"github.com/MinimaxFlora/EasySB/internal/service"
 )
 
-// The renewal timer replaces the crontab acme.sh would otherwise install. A
-// minimal server image has no cron at all, and a container has no init to run it,
-// so the panel drives renewal the same way it drives everything else: a systemd
-// unit or an OpenRC init script.
+// The renewal timer is what renews the certificates: no crontab is installed and
+// nothing else on the host renews them. A minimal server image has no cron at all,
+// and a container has no init to run it, so the panel drives renewal the same way
+// it drives everything else: a systemd unit or an OpenRC init script.
 const (
 	systemdServicePath = "/etc/systemd/system/easysb-acme.service"
 	systemdTimerPath   = "/etc/systemd/system/easysb-acme.timer"

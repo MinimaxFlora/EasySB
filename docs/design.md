@@ -5,8 +5,10 @@ one of them, treat the change as a design discussion rather than a local edit.
 
 ## Single static binary
 
-Everything except the sing-box core and acme.sh is compiled in. There is no
-runtime package manager call on the hot path and no script interpreter needed.
+Everything except the sing-box core is compiled in, certificates included.
+There is no
+runtime package manager call on the hot path and no script interpreter needed to
+issue a certificate either.
 The binary is invoked as `sb` after `install.sh` links it.
 
 ## Legacy-compatible state
@@ -71,15 +73,16 @@ the key hints never move. A section is left with `Esc`, the way a submenu is, an
 ## Long operations report where they are
 
 A task that downloads something streams its readings to the screen instead of
-printing a line per megabyte: `internal/core` reports byte counts through a
+printing a line per megabyte: `internal/download` reports byte counts through a
 `Progress` callback, `internal/tui` collects them in the task reporter and draws a
-bar above the log. Anything that can take minutes — a core tarball, the panel's own
-binary, a kernel package — goes through that path, and a step that only changes
-local state stays silent rather than showing a bar that never moves.
+bar above the log. Anything that can take minutes — the panel's own binary, a
+kernel package — goes through that path, and a step that only changes local state
+stays silent rather than showing a bar that never moves. The core is not on that
+list any more: it is compiled in, so nothing about the node downloads.
 
 ## Direct downloads, tolerant parsing
 
-Deployment targets are overseas hosts with direct GitHub access, so core and
-binary downloads go straight to `github.com` with no mirror prefix. Release tag
-parsing still tolerates a missing `v` prefix, because the `releases.atom` feed
+Deployment targets are overseas hosts with direct GitHub access, so binary and
+kernel-package downloads go straight to `github.com` with no mirror prefix. Release
+tag parsing still tolerates a missing `v` prefix, because the `releases.atom` feed
 omits it.

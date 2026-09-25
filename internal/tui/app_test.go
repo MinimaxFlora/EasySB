@@ -14,12 +14,12 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/MinimaxFlora/EasySB/internal/bbr"
-	"github.com/MinimaxFlora/EasySB/internal/core"
 	"github.com/MinimaxFlora/EasySB/internal/i18n"
 	"github.com/MinimaxFlora/EasySB/internal/prefs"
 	"github.com/MinimaxFlora/EasySB/internal/state"
 	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
 	"github.com/MinimaxFlora/EasySB/internal/theme"
+	"github.com/MinimaxFlora/EasySB/internal/unlock"
 	"github.com/MinimaxFlora/EasySB/internal/user"
 )
 
@@ -48,7 +48,6 @@ func newTestApp(t *testing.T) *App {
 	m, _ = a.Update(statusMsg(sysinfo.Status{
 		Service:     "running",
 		CoreVersion: "1.15.0-alpha.6",
-		CoreChannel: "alpha",
 		Autostart:   "enabled",
 		Domain:      "example.com",
 		Deployed:    true,
@@ -198,7 +197,7 @@ func TestRootMenuHasNoNav(t *testing.T) {
 	// The root entries are the panel's map: every screen has to be reachable from
 	// here, and from the navigation grouping as well, or it is hidden behind a
 	// scroll nobody knows about.
-	want := []string{"kernel", "node", "domain", "subscribe", "users", "service", "system", "bbr", "script-update", "uninstall"}
+	want := []string{"unlock", "node", "domain", "subscribe", "users", "service", "system", "bbr", "script-update", "uninstall"}
 	got := map[string]bool{}
 	for _, n := range a.current().nodes {
 		got[n.id] = true
@@ -251,25 +250,27 @@ func TestRootMenuHasNoNav(t *testing.T) {
 	}
 }
 
-func TestKernelMenuEntries(t *testing.T) {
+// The 服务解锁状态 section stands where 内核管理 used to: the core is compiled into the
+// panel, so what an operator needs there is which services this IP can really use.
+func TestUnlockMenuEntries(t *testing.T) {
 	a := newTestApp(t)
-	a.push(buildKernel())
-	want := []string{"kernel-switch", "kernel-update"}
+	a.push(buildUnlock())
+	want := []string{"unlock-check", "unlock-single"}
 	if got := len(a.current().nodes); got != len(want) {
-		t.Fatalf("kernel menu has %d entries, want %d", got, len(want))
+		t.Fatalf("unlock menu has %d entries, want %d", got, len(want))
 	}
 	for i, id := range want {
 		if got := a.current().nodes[i].id; got != id {
-			t.Fatalf("kernel entry %d = %s, want %s", i, got, id)
+			t.Fatalf("unlock entry %d = %s, want %s", i, got, id)
 		}
 	}
 	if !a.hasNavRow() {
-		t.Fatalf("kernel menu should show a navigation row")
+		t.Fatalf("unlock menu should show a navigation row")
 	}
 	view := a.View().Content
-	for _, label := range []string{"切换内核", "更新内核", i18n.Chinese.T("nav_back")} {
+	for _, label := range []string{i18n.Chinese.T("unlock_check"), i18n.Chinese.T("unlock_single"), i18n.Chinese.T("nav_back")} {
 		if !strings.Contains(view, label) {
-			t.Fatalf("kernel menu view missing %q: %s", label, view)
+			t.Fatalf("unlock menu view missing %q: %s", label, view)
 		}
 	}
 	m, _ := a.Update(press('0'))
@@ -277,62 +278,34 @@ func TestKernelMenuEntries(t *testing.T) {
 	if !a.onNavRow() {
 		t.Fatalf("digit 0 should select the navigation row in a submenu")
 	}
-	if a.current().id != "kernel" {
-		t.Fatalf("expected kernel submenu, got %s", a.current().id)
+	if a.current().id != "unlock" {
+		t.Fatalf("expected unlock submenu, got %s", a.current().id)
 	}
 }
 
-// Switching the core is one list of the four channel/source combinations, so taking the
-// official core and going back to the author's build are the same kind of move.
-func TestKernelSwitchEntries(t *testing.T) {
+// Every service in the catalogue gets one entry, in the catalogue's own order, so a
+// single verdict can be re-checked without probing the whole list.
+func TestUnlockSingleEntriesFollowTheCatalogue(t *testing.T) {
 	a := newTestApp(t)
-	a.push(buildKernelSwitch())
-	want := []struct{ id, label string }{
-		{"kernel-apply-stable-author", "正式版 · 作者源"},
-		{"kernel-apply-alpha-author", "测试版 · 作者源"},
-		{"kernel-apply-stable-official", "正式版 · 官方源"},
-		{"kernel-apply-alpha-official", "测试版 · 官方源"},
-	}
-	if got := len(a.current().nodes); got != len(want) {
-		t.Fatalf("switch menu has %d entries, want %d", got, len(want))
+	a.push(buildUnlockSingle())
+	catalogue := unlock.Catalogue()
+	if got := len(a.current().nodes); got != len(catalogue) {
+		t.Fatalf("single-probe menu has %d entries, want %d", got, len(catalogue))
 	}
 	view := a.View().Content
-	for i, entry := range want {
-		if got := a.current().nodes[i].id; got != entry.id {
-			t.Fatalf("switch entry %d = %s, want %s", i, got, entry.id)
+	for i, service := range catalogue {
+		if got := a.current().nodes[i].id; got != "unlock-"+service.ID {
+			t.Fatalf("single-probe entry %d = %s, want unlock-%s", i, got, service.ID)
 		}
-		if got := a.current().nodes[i].label(i18n.Chinese); got != entry.label {
-			t.Fatalf("switch entry %d label = %q, want %q", i, got, entry.label)
+		// A service with a translation in the table is shown translated, and one
+		// without keeps the catalogue's own name rather than a raw key.
+		name := unlockServiceName(i18n.Chinese, service)
+		if strings.HasPrefix(name, "unlock_service_") {
+			t.Fatalf("service %s rendered its raw key", service.ID)
 		}
-		if !strings.Contains(view, entry.label) {
-			t.Fatalf("switch menu view missing %q: %s", entry.label, view)
+		if !strings.Contains(view, name) {
+			t.Fatalf("single-probe view missing %q: %s", name, view)
 		}
-	}
-	if !a.hasNavRow() {
-		t.Fatalf("switch menu should show a navigation row")
-	}
-}
-
-// The combination that is installed is marked, and the mark comes from the recorded state:
-// without a record nothing is marked, because the core page's 看板 answers from the binary.
-func TestKernelCurrentKey(t *testing.T) {
-	cases := []struct {
-		name string
-		cfg  state.Config
-		want string
-	}{
-		{"author stable", state.Config{CoreChannel: "stable", CoreSource: core.SourceBuild}, "stable:build"},
-		{"official alpha", state.Config{CoreChannel: "alpha", CoreSource: core.SourceUpstream}, "alpha:upstream"},
-		{"channel missing", state.Config{CoreSource: core.SourceBuild}, "stable:build"},
-		{"no record", state.Config{CoreChannel: "stable"}, ""},
-		{"nothing at all", state.Config{}, ""},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := kernelCurrentKey(tc.cfg); got != tc.want {
-				t.Fatalf("kernelCurrentKey(%+v) = %q, want %q", tc.cfg, got, tc.want)
-			}
-		})
 	}
 }
 
@@ -523,7 +496,7 @@ func TestDashboardShowsLogoAndMenuDescriptions(t *testing.T) {
 // second-level page shows a 看板 of its own in the top box and its entries in the
 // bottom one, so moving between pages swaps those two contents and nothing else.
 func TestEverySectionHasItsOwnPanel(t *testing.T) {
-	ids := []string{"kernel", "node", "domain", "subscribe", "users", "service", "bbr", "script-update", "uninstall"}
+	ids := []string{"unlock", "node", "domain", "subscribe", "users", "service", "bbr", "script-update", "uninstall"}
 	seen := make(map[string]string, len(ids))
 	for _, id := range ids {
 		a := newTestApp(t)
@@ -610,7 +583,7 @@ func TestBBRMenuShape(t *testing.T) {
 	// Two columns of five fill the card: the second column starts at the entries
 	// after the fifth, and the last entry stays reachable on the same screen.
 	view := a.SnapshotScreen("", 100, 40)
-	for _, want := range []string{i18n.Chinese.T("kernel_title"), i18n.Chinese.T("svc_title"), i18n.Chinese.T("menu_uninstall")} {
+	for _, want := range []string{i18n.Chinese.T("unlock_title"), i18n.Chinese.T("svc_title"), i18n.Chinese.T("menu_uninstall")} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("main menu missing %q:\n%s", want, view)
 		}
@@ -1162,87 +1135,31 @@ func TestThemeEnvOverrideWins(t *testing.T) {
 	}
 }
 
-// The core page has to say whether the installed core came from this repository's builds
-// or from the official releases, and whether it can count traffic: the source decides
-// whether per-account accounting works at all.
-func TestCoreSourceLabel(t *testing.T) {
+// The core the panel carries has to say whether this build counts per-account traffic:
+// that decides whether the traffic columns exist at all. The answer is a build tag, so it
+// comes from the binary rather than from anything stored on the host.
+func TestCoreStatsLabel(t *testing.T) {
 	cases := []struct {
-		name    string
-		source  string
-		stats   bool
-		want    string
-		wantRow string
+		name  string
+		stats bool
+		want  string
 	}{
-		{"recorded author source", core.SourceBuild, true, "作者源", "作者源 · 带流量统计"},
-		{"recorded author source, binary without counters", core.SourceBuild, false, "作者源", "作者源 · 无流量统计"},
-		{"recorded official source", core.SourceUpstream, false, "官方源", "官方源 · 无流量统计"},
-		{"no record, counters present", "", true, "作者源", "作者源 · 带流量统计"},
-		{"no record, no counters", "", false, "官方源", "官方源 · 无流量统计"},
+		{"counters compiled in", true, "带流量统计"},
+		{"no counters in this build", false, "无流量统计"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			a := newTestApp(t)
-			a.status.CoreSource = tc.source
 			a.status.StatsCapable = tc.stats
-			if got := a.coreSourceLabel(); got != tc.want {
-				t.Fatalf("coreSourceLabel = %q, want %q", got, tc.want)
+			if got := a.coreStatsLabel(); got != tc.want {
+				t.Fatalf("coreStatsLabel = %q, want %q", got, tc.want)
 			}
-			if got := a.coreSourceText(); got != tc.wantRow {
-				t.Fatalf("coreSourceText = %q, want %q", got, tc.wantRow)
-			}
-			// The version line names the source too, so the answer is on every page.
+			// The wordmark card and the version line name it too, so the answer is
+			// visible without opening a section.
 			summary, _ := a.coreSummary()
 			if !strings.Contains(summary, tc.want) {
 				t.Fatalf("coreSummary = %q, want it to name %q", summary, tc.want)
 			}
 		})
-	}
-}
-
-// An install request has nothing to do only when the channel *and* the source are the ones
-// already installed: comparing channels alone made the way back from the official source a
-// no-op.
-func TestSameInstall(t *testing.T) {
-	cases := []struct {
-		name       string
-		installed  bool
-		haveCh     string
-		haveSource string
-		wantCh     string
-		wantSource string
-		want       bool
-	}{
-		{"author stable already there", true, "stable", core.SourceBuild, "stable", core.SourceBuild, true},
-		{"official installed, author wanted", true, "stable", core.SourceUpstream, "stable", core.SourceBuild, false},
-		{"author installed, official wanted", true, "stable", core.SourceBuild, "stable", core.SourceUpstream, false},
-		{"other channel", true, "stable", core.SourceBuild, "alpha", core.SourceBuild, false},
-		{"nothing installed", false, "", core.SourceUpstream, "stable", core.SourceBuild, false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := sameInstall(tc.installed, tc.haveCh, tc.haveSource, tc.wantCh, tc.wantSource)
-			if got != tc.want {
-				t.Fatalf("sameInstall(%v, %q, %q, %q, %q) = %v, want %v",
-					tc.installed, tc.haveCh, tc.haveSource, tc.wantCh, tc.wantSource, got, tc.want)
-			}
-		})
-	}
-}
-
-func TestCoreSourceFrom(t *testing.T) {
-	cases := []struct {
-		recorded string
-		stats    bool
-		want     string
-	}{
-		{"build", false, core.SourceBuild},
-		{core.SourceUpstream, true, core.SourceUpstream},
-		{"", true, core.SourceBuild},
-		{"", false, core.SourceUpstream},
-	}
-	for _, tc := range cases {
-		if got := coreSourceFrom(tc.recorded, tc.stats); got != tc.want {
-			t.Errorf("coreSourceFrom(%q, %v) = %q, want %q", tc.recorded, tc.stats, got, tc.want)
-		}
 	}
 }

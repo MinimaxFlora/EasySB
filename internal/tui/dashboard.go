@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MinimaxFlora/EasySB/internal/core"
 	"github.com/MinimaxFlora/EasySB/internal/state"
 	"github.com/MinimaxFlora/EasySB/internal/theme"
 	"github.com/MinimaxFlora/EasySB/internal/ui"
@@ -169,8 +168,8 @@ func (a *App) sectionMenu(w, h int) []string {
 // its entries, and only those two contents are swapped as the navigation moves.
 func (a *App) sectionPanel(w int) (string, []string) {
 	switch a.sectionID() {
-	case "kernel":
-		return a.lang.T("panel_kernel"), a.kernelBody(w)
+	case "unlock":
+		return a.lang.T("panel_unlock"), a.unlockBody(w)
 	case "node":
 		return a.lang.T("panel_node"), a.nodeBody(w)
 	case "domain":
@@ -189,26 +188,6 @@ func (a *App) sectionPanel(w int) (string, []string) {
 		return a.lang.T("panel_uninstall"), a.selfBody(w)
 	}
 	return a.lang.T("panel_overview"), a.overviewBody(w)
-}
-
-// kernelBody is the core section's 看板: which sing-box is installed, whether the
-// service runs it, and whether its node is deployed.
-func (a *App) kernelBody(w int) []string {
-	s := a.style()
-	inner := ui.InnerWidth(s, w)
-	coreText, coreKind := a.coreSummary()
-	nodeText, nodeKind := a.nodeState()
-	service, svcKind := a.serviceState()
-	left := [][2]string{
-		a.kv("status_core", coreText, coreKind),
-		a.kv("kernel_source", a.coreSourceText(), ui.KindPlain),
-		a.kv("status_service", service, svcKind),
-	}
-	right := [][2]string{
-		a.kv("status_node", nodeText, nodeKind),
-		a.kv("status_ports", a.panelValue(enabledPorts(a.status.Ports)), ui.KindPlain),
-	}
-	return ui.TwoCol(s, left, right, inner)
 }
 
 // domainBody is the domain section's 看板: the name in use and what is deployed
@@ -485,13 +464,9 @@ func (a *App) statusStrip(w int) string {
 		ui.StripItem{Icon: a.iconSet.Rocket, Label: a.lang.T("status_node"), Value: nodeText, Kind: nodeKind},
 	)
 	if st.CoreVersion == "" {
-		items = append(items, ui.StripItem{Icon: a.iconSet.Core, Label: a.lang.T("status_core"), Value: a.lang.T("ver_not_installed")})
+		items = append(items, ui.StripItem{Icon: a.iconSet.Core, Label: a.lang.T("status_core"), Value: a.lang.T("state_unknown")})
 	} else {
-		kind := ui.KindOK
-		if st.CoreChannel == "alpha" {
-			kind = ui.KindWarn
-		}
-		items = append(items, ui.StripItem{Icon: a.iconSet.Core, Label: a.lang.T("status_core"), Value: st.CoreVersion, Kind: kind})
+		items = append(items, ui.StripItem{Icon: a.iconSet.Core, Label: a.lang.T("status_core"), Value: st.CoreVersion, Kind: ui.KindOK})
 	}
 	if st.MemTotal > 0 {
 		used := st.MemTotal - minU64(st.MemAvail, st.MemTotal)
@@ -510,45 +485,24 @@ func (a *App) statusStrip(w int) string {
 	return ui.Strip(s, items, w)
 }
 
-// coreSummary words the installed core as "version [channel]", with a marker when the
-// binary can count traffic, or says it is not installed. The wordmark card, the core
-// section's 看板 and the version section's all show it, so it is worded once here.
+// coreSummary words the core the panel carries as "version · counters", where the
+// counters half says whether per-account traffic can be measured at all. It is the same
+// answer in the wordmark card, the 看板 and the system card, so it is worded once here.
 func (a *App) coreSummary() (string, ui.Kind) {
 	if a.status.CoreVersion == "" {
-		return a.lang.T("ver_not_installed"), ui.KindPlain
+		return a.lang.T("state_unknown"), ui.KindPlain
 	}
-	kind := ui.KindOK
-	if a.status.CoreChannel == "alpha" {
-		kind = ui.KindWarn
-	}
-	text := a.status.CoreVersion + " [" + a.lang.T(channelTagKey(a.status.CoreChannel)) + "]"
-	text += " · " + a.coreSourceLabel()
-	return text, kind
+	return a.status.CoreVersion + " · " + a.coreStatsLabel(), ui.KindOK
 }
 
-// coreSourceLabel names where the installed core came from: this repository's builds (the
-// default, and the only ones that can count traffic) or the official SagerNet releases.
-// The source recorded at install time is used when there is one; otherwise it is read off
-// the binary's build tags, which also covers a core installed before the record existed.
-func (a *App) coreSourceLabel() string {
-	if coreSourceFrom(a.status.CoreSource, a.status.StatsCapable) == core.SourceBuild {
-		return a.lang.T("kernel_source_author")
-	}
-	return a.lang.T("kernel_source_official")
-}
-
-// coreSourceText words the installed core's source together with whether it can count
-// per-account traffic. The counter half is measured from the binary, not remembered, so
-// it cannot drift from what is actually installed.
-func (a *App) coreSourceText() string {
-	if a.status.CoreVersion == "" {
-		return a.lang.T("state_unknown")
-	}
-	stats := a.lang.T("kernel_stats_off")
+// coreStatsLabel says whether this build counts per-account traffic. The answer comes
+// from the build tags the binary was compiled with, so it cannot drift from what the
+// core actually does.
+func (a *App) coreStatsLabel() string {
 	if a.status.StatsCapable {
-		stats = a.lang.T("kernel_stats_on")
+		return a.lang.T("core_stats_on")
 	}
-	return a.coreSourceLabel() + " · " + stats
+	return a.lang.T("core_stats_off")
 }
 
 // overviewBody is the service/node/version card.

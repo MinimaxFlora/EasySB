@@ -128,13 +128,6 @@ func (a *App) panelValue(v string) string {
 	return v
 }
 
-func channelTagKey(channel string) string {
-	if channel == "alpha" {
-		return "ver_channel_test"
-	}
-	return "ver_channel_stable"
-}
-
 // cpuSummary renders the processor core count, e.g. "8 cores".
 func (a *App) cpuSummary() string {
 	if a.status.CPUCores <= 0 {

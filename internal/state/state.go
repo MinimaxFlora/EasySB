@@ -1,8 +1,14 @@
 // Package state reads and writes the EasySB node state file
 // (/etc/sing-box/easysb.conf). The key/value layout is kept from the legacy
-// shell implementation, but v4 drops the node-wide credential and the nginx
-// subscription keys: credentials belong to the accounts in internal/user, and
-// the endpoint is built from SUB_SERVE_PORT.
+// shell implementation, but later versions drop the keys whose component is
+// gone: v4 removed the node-wide credential and the nginx subscription keys
+// (credentials belong to the accounts in internal/user, and the endpoint is
+// built from SUB_SERVE_PORT), and v5 removes CORE_CHANNEL, CORE_SOURCE and
+// STATS_API, which described the switchable, downloadable core — the core is
+// compiled into the panel now, so which release it is and whether it carries
+// the V2Ray API are properties of the build (internal/sbcore), not of the host.
+// A file that still holds those keys loads fine and loses them on the next
+// save.
 package state
 
 import (
@@ -51,7 +57,6 @@ var DefaultPorts = map[string]string{
 const (
 	DefaultHopRange = "2080:3000"
 	DefaultSNI      = "apple.com"
-	DefaultChannel  = "stable"
 
 	// DefaultSubServePort is the listen port of the built-in subscription
 	// service that replaced the nginx site.
@@ -75,31 +80,12 @@ type Config struct {
 	Domain       string
 	CertDomain   string
 	ACMEEmail    string
-	CoreChannel  string
 	NodeDeployed bool
-	// StatsAPI records which counter source the deployed core offers. It is
-	// "none" when the core was built without the V2Ray API, which is the case
-	// for the official release builds: the config then carries no
-	// experimental.v2ray_api block, because sing-box refuses a config that
-	// names an API it was not built with. Empty means the historical value
-	// ("v2ray"), so an existing deployment keeps its counters.
-	StatsAPI     string
-	// CoreSource records where the installed core came from ("build" for this
-	// repository's builds, "upstream" for the official releases), so the panel can
-	// say which source is installed. Empty on an install made before the record.
-	CoreSource   string
 	SubServePort int
 	SubSyncSecs  int
 	ServerIP     string
 	raw          map[string]string
 }
-
-// StatsAPINone is the StatsAPI value for a core without the V2Ray API.
-const StatsAPINone = "none"
-
-// V2RayStats reports whether the core being configured offers the V2Ray stats
-// API, which is where the per-account byte counters come from.
-func (c Config) V2RayStats() bool { return !strings.EqualFold(c.StatsAPI, StatsAPINone) }
 
 // Default returns a Config populated with built-in defaults.
 func Default() Config {
@@ -108,7 +94,6 @@ func Default() Config {
 		Ports:        map[string]string{},
 		HopRange:     DefaultHopRange,
 		RealitySNI:   DefaultSNI,
-		CoreChannel:  DefaultChannel,
 		SubServePort: DefaultSubServePort,
 		SubSyncSecs:  DefaultSubSyncSeconds,
 		NodeDeployed: false,
@@ -184,10 +169,7 @@ func (c *Config) applyRaw() {
 	set(&c.Domain, "DOMAIN")
 	set(&c.CertDomain, "CERT_DOMAIN")
 	set(&c.ACMEEmail, "ACME_EMAIL")
-	set(&c.CoreChannel, "CORE_CHANNEL")
 	set(&c.ServerIP, "SERVER_IP")
-	set(&c.StatsAPI, "STATS_API")
-	set(&c.CoreSource, "CORE_SOURCE")
 	if n, err := strconv.Atoi(c.raw["SUB_SERVE_PORT"]); err == nil && n > 0 && n < 65536 {
 		c.SubServePort = n
 	}
@@ -278,10 +260,7 @@ func (c Config) Save() error {
 		{"DOMAIN", c.Domain},
 		{"CERT_DOMAIN", c.CertDomain},
 		{"ACME_EMAIL", c.ACMEEmail},
-		{"CORE_CHANNEL", c.CoreChannel},
 		{"NODE_DEPLOYED", deployed},
-		{"STATS_API", c.StatsAPI},
-		{"CORE_SOURCE", c.CoreSource},
 		{"SUB_SERVE_PORT", strconv.Itoa(c.SubServePort)},
 		{"SUB_SYNC_SECONDS", strconv.Itoa(c.SubSyncSecs)},
 		{"SERVER_IP", c.ServerIP},
@@ -310,9 +289,11 @@ func (c Config) extraKeys() []string {
 		"PORT_VLESS_REALITY": true, "PORT_VMESS_WS_TLS": true,
 		"HY2_HOP_RANGE": true, "REALITY_SNI": true, "REALITY_PRIVATE": true,
 		"REALITY_PUBLIC": true, "REALITY_SHORT_ID": true, "DOMAIN": true,
-		"CERT_DOMAIN": true, "ACME_EMAIL": true, "CORE_CHANNEL": true, "NODE_DEPLOYED": true,
-		"STATS_API": true,
-		"CORE_SOURCE": true,
+		"CERT_DOMAIN": true, "ACME_EMAIL": true, "NODE_DEPLOYED": true,
+		// Keys of the switchable core. They are still listed as known so that a
+		// state file written by v4 loses them on the next save instead of carrying
+		// them along as unknown keys; nothing reads them any more.
+		"CORE_CHANNEL": true, "CORE_SOURCE": true, "STATS_API": true,
 		"SUB_SERVE_PORT": true, "SUB_SYNC_SECONDS": true, "SERVER_IP": true,
 	}
 	var out []string

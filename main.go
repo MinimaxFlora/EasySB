@@ -19,12 +19,14 @@ import (
 	"github.com/MinimaxFlora/EasySB/internal/firewall"
 	"github.com/MinimaxFlora/EasySB/internal/i18n"
 	"github.com/MinimaxFlora/EasySB/internal/prefs"
+	"github.com/MinimaxFlora/EasySB/internal/sbcore"
 	"github.com/MinimaxFlora/EasySB/internal/service"
 	"github.com/MinimaxFlora/EasySB/internal/state"
 	"github.com/MinimaxFlora/EasySB/internal/stats"
 	"github.com/MinimaxFlora/EasySB/internal/subd"
 	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
 	"github.com/MinimaxFlora/EasySB/internal/tui"
+	"github.com/MinimaxFlora/EasySB/internal/unlock"
 	"github.com/MinimaxFlora/EasySB/internal/user"
 )
 
@@ -44,18 +46,27 @@ func versionLine() string {
 }
 
 func main() {
+	// Node mode is a subcommand, not a flag: the service unit runs
+	// `easysb core run -c /etc/sing-box/config.json`, so the same argument shape
+	// has to work from a shell too.
+	if len(os.Args) > 1 && os.Args[1] == "core" {
+		runCoreCommand(os.Args[2:])
+		return
+	}
+
 	langFlag := flag.String("language", "", "界面语言 / UI language: C (中文) or E (English)")
 	iconsFlag := flag.String("icons", "", "图标方案 / icon set: symbols, ascii (or on, off)")
 	themeFlag := flag.String("theme", "", "配色方案 / color theme: auto, dark, light")
 	skinFlag := flag.String("skin", "", "界面皮肤 / UI skin: jade, aurora, ember, graphite (or a-d)")
 	showVersion := flag.Bool("version", false, "显示版本 / show version")
 	render := flag.Bool("render", false, "渲染一次仪表盘后退出 / render once and exit")
-	screen := flag.String("screen", "", "配合 --render 渲染指定界面，用栏目 id（kernel/node/domain/bbr…）、system、task 或 bbr-versions / with --render, draw this screen by section id, or system, task, bbr-qdisc, bbr-versions, kernel-switch")
+	screen := flag.String("screen", "", "配合 --render 渲染指定界面，用栏目 id（unlock/node/domain/bbr…）、system、task 或 bbr-versions / with --render, draw this screen by section id, or system, task, bbr-qdisc, bbr-versions")
 	applyFirewall := flag.Bool("apply-firewall", false, "应用端口跳跃防火墙规则 / apply port-hopping firewall rules")
 	renewCerts := flag.Bool("renew-certs", false, "续期证书并重载服务（供定时器调用）/ renew certificates and reload the services")
 	installTimer := flag.Bool("install-renew-timer", false, "安装证书续期定时器 / install the certificate renewal timer")
 	removeTimer := flag.Bool("remove-renew-timer", false, "移除证书续期定时器 / remove the certificate renewal timer")
 	serve := flag.Bool("serve", false, "运行订阅服务 / run the subscription service")
+	unlockCheck := flag.Bool("unlock", false, "检测服务解锁状态并输出报告 / probe the service unlock status and print a report")
 	width := flag.Int("width", 100, "渲染宽度 / render width")
 	height := flag.Int("height", 36, "渲染高度 / render height")
 	flag.Parse()
@@ -67,6 +78,11 @@ func main() {
 
 	if *applyFirewall {
 		runApplyFirewall()
+		return
+	}
+
+	if *unlockCheck {
+		runUnlockCheck()
 		return
 	}
 
@@ -109,6 +125,119 @@ func main() {
 	}
 }
 
+// runCoreCommand is the core the panel carries, exposed the way a service unit
+// needs it: `core run` is the node (`ExecStart=… core run -c <config>`), `core
+// check` validates a configuration without starting anything, and `core version`
+// answers what this build carries.
+func runCoreCommand(args []string) {
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "usage: easysb core run|check|version [-c <config>]")
+		os.Exit(2)
+	}
+	command := args[0]
+	flags := flag.NewFlagSet("core "+command, flag.ExitOnError)
+	configPath := flags.String("c", sysinfo.ConfigJSON, "配置文件 / configuration file")
+	switch command {
+	case "run", "check":
+		if err := flags.Parse(args[1:]); err != nil {
+			os.Exit(2)
+		}
+	case "version":
+		fmt.Printf("EasySB %s\nsing-box %s\nbuild: %s\n", versionLine(), sbcore.Version(), coreCapability())
+		return
+	default:
+		fmt.Fprintf(os.Stderr, "unknown core command %q: use run, check or version\n", command)
+		os.Exit(2)
+	}
+
+	if command == "check" {
+		if err := sbcore.Check(context.Background(), *configPath); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Println("config ok: " + *configPath)
+		return
+	}
+
+	// The node runs until the service manager stops it: SIGTERM ends the context
+	// and the engine closes its listeners on the way out.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	logf := func(line string) { fmt.Printf("%s %s\n", time.Now().Format(time.RFC3339), line) }
+	logf("EasySB " + versionLine() + " · sing-box " + sbcore.Version() + " · " + coreCapability())
+	logf("config: " + *configPath)
+	if err := sbcore.Run(ctx, *configPath); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+// coreCapability names the one build flag that changes what the panel can do.
+func coreCapability() string {
+	if sbcore.StatsCapable() {
+		return "with_v2ray_api (per-account traffic counters)"
+	}
+	return "no v2ray api (usage cannot be counted)"
+}
+
+// runUnlockCheck probes every service in the catalogue and prints one line per
+// verdict. It is the headless form of the 服务解锁状态 page, for a host where the
+// panel is scripted rather than opened.
+func runUnlockCheck() {
+	ctx := context.Background()
+	report := unlock.New(unlock.Options{}).Report(ctx)
+	fmt.Printf("service unlock check · %d services · %s\n\n", len(report.Results), report.Elapsed.Round(time.Millisecond))
+	group := ""
+	for _, res := range report.Results {
+		if res.Group != group {
+			group = res.Group
+			fmt.Println("[" + unlockGroupName(group) + "]")
+		}
+		line := fmt.Sprintf("  %-26s %-10s", res.Name, unlockStatusName(res.Status))
+		if res.Region != "" {
+			line += " " + res.Region
+		}
+		if res.Text != "" && res.Status != unlock.StatusUnlocked {
+			line += "  " + res.Text
+		}
+		fmt.Println(line)
+	}
+	fmt.Printf("\nunlocked %d · partial %d · blocked %d · failed %d\n",
+		report.Count(unlock.StatusUnlocked), report.Count(unlock.StatusPartial),
+		report.Count(unlock.StatusBlocked), report.Count(unlock.StatusFailed))
+}
+
+// unlockGroupName names a catalogue group in the report's own language, which is
+// English: this output goes to a log or a pipe, not to the bilingual panel.
+func unlockGroupName(group string) string {
+	switch group {
+	case unlock.GroupMultination:
+		return "streaming"
+	case unlock.GroupAI:
+		return "ai"
+	case unlock.GroupGame:
+		return "game"
+	case unlock.GroupChina:
+		return "china"
+	case unlock.GroupTaiwan:
+		return "taiwan"
+	}
+	return group
+}
+
+// unlockStatusName words a verdict for the plain-text report.
+func unlockStatusName(status unlock.Status) string {
+	switch status {
+	case unlock.StatusUnlocked:
+		return "unlocked"
+	case unlock.StatusPartial:
+		return "partial"
+	case unlock.StatusBlocked:
+		return "blocked"
+	}
+	return "failed"
+}
+
 // runSubscribeService serves the subscription endpoint and enforces the account
 // policy. It backs the easysb service unit and is the only long-running mode of
 // this binary.
@@ -149,9 +278,9 @@ func runApplyFirewall() {
 	}
 }
 
-// runRenewCerts is the entry point of the renewal timer: it renews what acme.sh
-// manages and then reloads the services that hold the old certificate open, so a
-// renewal is actually served instead of only stored on disk.
+// runRenewCerts is the entry point of the renewal timer: it renews the
+// certificates the panel manages and then reloads the services that hold the old
+// one open, so a renewal is actually served instead of only stored on disk.
 // runRenewTimer installs or removes the renewal timer, the same work the domain
 // screen offers. It is a command line mode because the unit names this binary's own
 // path, so the binary has to be the thing that writes it: a headless or scripted
@@ -179,14 +308,14 @@ func runRenewCerts() {
 	ctx := context.Background()
 	log := func(line string) { fmt.Println(line) }
 	renewed, err := cert.Renew(ctx, log)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
 	// A renewal that changed nothing needs no reload: the core keeps running with
 	// the certificate it already has. This timer runs every night, so restarting
 	// the services unconditionally would drop every connection once a day.
 	if len(renewed) == 0 {
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 		fmt.Println("no certificate needed renewal")
 		return
 	}
@@ -207,6 +336,13 @@ func runRenewCerts() {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
+	}
+	// A domain whose renewal failed does not hold back the ones that succeeded:
+	// they were just reloaded, and the failure is still reported so the timer shows
+	// up as failed in the journal.
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
 	}
 }
 

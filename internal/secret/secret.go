@@ -2,7 +2,9 @@
 package secret
 
 import (
+	"crypto/ecdh"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -79,4 +81,19 @@ func ShortID() string {
 		return ""
 	}
 	return hex.EncodeToString(b)
+}
+
+// RealityKeypair returns the X25519 keypair a VLESS Reality inbound needs: 32 random
+// bytes as the private key and its base point multiple as the public key, both in
+// base64 with the URL alphabet and no padding, which is the encoding sing-box's
+// configuration uses. Generating it here rather than asking the core for it is the
+// same reason UUID does its own work: the panel then needs no second program.
+func RealityKeypair() (privateKey, publicKey string) {
+	key, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		return "", ""
+	}
+	privateKey = base64.RawURLEncoding.EncodeToString(key.Bytes())
+	publicKey = base64.RawURLEncoding.EncodeToString(key.PublicKey().Bytes())
+	return privateKey, publicKey
 }

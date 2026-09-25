@@ -2,219 +2,462 @@ package cert
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"errors"
-	"net/http"
-	"net/http/httptest"
+	"math/big"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/go-acme/lego/v5/challenge/http01"
+	"github.com/go-acme/lego/v5/lego"
 )
 
-// acmeHome points the package at a throwaway acme.sh home. Every lookup reads
-// ACMEDir(), so setting the override keeps the tests off the real HOME, which is
-// what os.UserHomeDir() would otherwise hand them on Windows and under sudo.
-func acmeHome(t *testing.T) string {
+// tempDir points the package at a throwaway state directory. Every path the
+// package resolves starts at Dir(), so this is what keeps the tests off
+// /etc/sing-box, where the panel writes when it runs as root.
+func tempDir(t *testing.T) string {
 	t.Helper()
-	dir := filepath.Join(t.TempDir(), ".acme.sh")
-	t.Setenv(ACMEHomeEnv, dir)
+	dir := filepath.Join(t.TempDir(), "acme")
+	t.Setenv(DirEnv, dir)
 	return dir
 }
 
-func write(t *testing.T, path, body string, mode os.FileMode) {
+// writePair plants a certificate pair for a domain, expiring at notAfter. The
+// issued pair is written by the package under test, so the tests build their own
+// to control the expiry: renewal is a decision about a date.
+//
+// The leaf is signed by a throwaway CA rather than by itself: a self-signed pair is
+// the placeholder, and `Usable` rejects one, so a fixture for "the panel issued this"
+// has to look like something a CA issued.
+func writePair(t *testing.T, dir, domain string, notAfter time.Time) (fullchain, key string) {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte(body), mode); err != nil {
+	caSerial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 96))
+	if err != nil {
 		t.Fatal(err)
+	}
+	caTemplate := &x509.Certificate{
+		SerialNumber:          caSerial,
+		Subject:               pkix.Name{CommonName: "EasySB test CA"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              notAfter.AddDate(1, 0, 0),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+	caDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ca, err := x509.ParseCertificate(caDER)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	keyPair, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 96))
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := &x509.Certificate{
+		SerialNumber:          serial,
+		Subject:               pkix.Name{CommonName: domain},
+		DNSNames:              []string{domain},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              notAfter,
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, ca, &keyPair.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyDER, err := x509.MarshalECPrivateKey(keyPair)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fullchain = filepath.Join(dir, domain, fullchainName)
+	key = filepath.Join(dir, domain, keyName)
+	if err := os.MkdirAll(filepath.Dir(fullchain), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(key, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fullchain, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return fullchain, key
+}
+
+// A host that was upgraded has its certificate where the previous version put it, and
+// the panel has to keep serving it: clients must not notice the upgrade. The panel's
+// own directory wins once it has issued one there.
+func TestPathsReadsWhatAnEarlierVersionLeft(t *testing.T) {
+	t.Run("acme.sh home of a 4.x host", func(t *testing.T) {
+		tempDir(t)
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+
+		legacy := filepath.Join(home, ".acme.sh", "example.com_ecc")
+		if err := os.MkdirAll(legacy, 0o700); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		writePair(t, filepath.Dir(legacy), filepath.Base(legacy), time.Now().AddDate(0, 3, 0))
+		// acme.sh names the key after the domain, inside the *_ecc directory.
+		if err := os.Rename(filepath.Join(legacy, keyName), filepath.Join(legacy, "example.com.key")); err != nil {
+			t.Fatalf("rename key: %v", err)
+		}
+
+		fullchain, key, ok := Paths("example.com")
+		if !ok {
+			t.Fatal("a certificate the previous version issued should still resolve")
+		}
+		if !strings.HasPrefix(fullchain, legacy) || !strings.HasSuffix(key, "example.com.key") {
+			t.Fatalf("resolved %s / %s, want the acme.sh pair", fullchain, key)
+		}
+	})
+
+	t.Run("the panel's own pair wins", func(t *testing.T) {
+		dir := tempDir(t)
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		legacy := filepath.Join(home, ".acme.sh", "example.com_ecc")
+		if err := os.MkdirAll(legacy, 0o700); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		writePair(t, filepath.Dir(legacy), filepath.Base(legacy), time.Now().AddDate(0, 3, 0))
+		want, _ := writePair(t, dir, "example.com", time.Now().AddDate(0, 3, 0))
+
+		got, _, ok := Paths("example.com")
+		if !ok || got != want {
+			t.Fatalf("Paths = %q (ok=%v), want the panel's own pair %q", got, ok, want)
+		}
+	})
+}
+
+// The self-signed placeholder keeps the core's configuration renderable, but it is not
+// a certificate a client accepts: a URL must not promise https because of one.
+func TestUsableRejectsTheSelfSignedPlaceholder(t *testing.T) {
+	dir := tempDir(t)
+	if err := os.MkdirAll(filepath.Join(dir, "example.com"), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := GenerateSelfSigned(filepath.Join(dir, "example.com", fullchainName), filepath.Join(dir, "example.com", keyName), "example.com"); err != nil {
+		t.Fatalf("GenerateSelfSigned: %v", err)
+	}
+	if _, _, ok := Paths("example.com"); !ok {
+		t.Fatal("the placeholder pair should resolve: the core needs something to serve")
+	}
+	if Usable("example.com") {
+		t.Fatal("a self-signed placeholder must not count as a usable certificate")
+	}
+
+	// The same path with a CA-issued pair is usable, so the check is about the
+	// certificate and not about the file being there.
+	writePair(t, dir, "example.com", time.Now().AddDate(0, 3, 0))
+	if !Usable("example.com") {
+		t.Fatal("an issued pair should count as usable")
 	}
 }
 
 func TestPathsAndDomains(t *testing.T) {
-	dir := acmeHome(t)
-	write(t, filepath.Join(dir, "example.com_ecc", "fullchain.cer"), "x", 0o600)
-	write(t, filepath.Join(dir, "example.com_ecc", "example.com.key"), "x", 0o600)
+	dir := tempDir(t)
+	writePair(t, dir, "example.com", time.Now().AddDate(0, 0, 60))
 
 	fullchain, key, ok := Paths("example.com")
 	if !ok {
-		t.Fatal("expected cert paths for example.com")
+		t.Fatal("expected a certificate pair for example.com")
 	}
-	if filepath.Base(fullchain) != "fullchain.cer" || filepath.Base(key) != "example.com.key" {
+	if filepath.Base(fullchain) != fullchainName || filepath.Base(key) != keyName {
 		t.Fatalf("unexpected paths: %s %s", fullchain, key)
 	}
-
+	if !Usable("example.com") {
+		t.Fatal("an installed pair is usable")
+	}
 	if _, _, ok := Paths("missing.com"); ok {
-		t.Fatal("unexpected cert for missing.com")
+		t.Fatal("unexpected certificate for missing.com")
+	}
+	if Usable("missing.com") {
+		t.Fatal("a domain without a pair is not usable")
 	}
 
 	domains := Domains()
 	if len(domains) != 1 || domains[0] != "example.com" {
-		t.Fatalf("domains = %v", domains)
+		t.Fatalf("domains = %v, want [example.com]", domains)
 	}
 }
 
-// TestDomainsListsOncePerDomain guards the switch menu: acme.sh keeps an RSA and
-// an EC certificate in separate directories, and both would be offered as the
-// same domain.
-func TestDomainsListsOncePerDomain(t *testing.T) {
-	dir := acmeHome(t)
-	for _, name := range []string{"example.com", "example.com_ecc"} {
-		write(t, filepath.Join(dir, name, "fullchain.cer"), "x", 0o600)
-		write(t, filepath.Join(dir, name, "example.com.key"), "x", 0o600)
-	}
-	write(t, filepath.Join(dir, "other.com_ecc", "fullchain.cer"), "x", 0o600)
-
-	domains := Domains()
-	if len(domains) != 2 {
-		t.Fatalf("domains = %v, want one entry per domain", domains)
-	}
-	seen := map[string]bool{}
-	for _, d := range domains {
-		if seen[d] {
-			t.Fatalf("domain %q listed twice", d)
+// TestPathsStaysInsideTheStateDirectory guards the one path that is built from a
+// value the operator (or an entry in the state directory) supplies: a domain that
+// carries a separator or a parent reference must not resolve to a file outside
+// Dir(), whichever end of the state directory it comes from.
+func TestPathsStaysInsideTheStateDirectory(t *testing.T) {
+	dir := tempDir(t)
+	for _, domain := range []string{"", " ", ".", "..", "../../etc/passwd", `..\..\windows`, "a/b"} {
+		if _, _, ok := Paths(domain); ok {
+			t.Errorf("Paths(%q) resolved a pair", domain)
 		}
-		seen[d] = true
+		if _, ok := domainDir(domain); ok {
+			t.Errorf("domainDir(%q) accepted the name", domain)
+		}
 	}
+	// A name that merely contains dots is still a domain.
+	if _, ok := domainDir("dev.example.com"); !ok {
+		t.Error("a normal domain was refused")
+	}
+	if _, _, ok := Paths("dev.example.com"); ok {
+		t.Error("no pair was written for dev.example.com")
+	}
+	_ = dir
 }
 
-func TestACMEInstalled(t *testing.T) {
-	dir := acmeHome(t)
-	if ACMEInstalled() {
-		t.Fatal("expected acme.sh to be missing")
-	}
-	write(t, filepath.Join(dir, "acme.sh"), "#!/bin/sh\n", 0o755)
-	if !ACMEInstalled() {
-		t.Fatal("expected acme.sh to be detected")
-	}
-
-	// A file that is not executable is not an installation.
-	if err := os.Chmod(filepath.Join(dir, "acme.sh"), 0o644); err != nil {
+// TestDomainsIgnoresWhatIsNotAPair covers the two ways a directory ends up in the
+// state directory without being a certificate: the account files beside it, and
+// the leftovers of an interrupted write.
+func TestDomainsIgnoresWhatIsNotAPair(t *testing.T) {
+	dir := tempDir(t)
+	writePair(t, dir, "example.com", time.Now().AddDate(0, 0, 60))
+	if err := os.WriteFile(filepath.Join(dir, accountKeyName), []byte("key"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if runtime.GOOS != "windows" && ACMEInstalled() {
-		t.Fatal("a non-executable acme.sh should not count")
+	if err := os.MkdirAll(filepath.Join(dir, "half.com"), 0o700); err != nil {
+		t.Fatal(err)
 	}
-}
-
-// TestACMEDirPrefersAnExistingInstallation covers the reason this lookup exists:
-// the panel is started from the install script, from sudo and from a systemd unit,
-// and only some of those hand it HOME=/root. The check is that a real installation
-// under the home directory is found, whichever HOME that is.
-func TestACMEDirPrefersAnExistingInstallation(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-	t.Setenv(ACMEHomeEnv, "")
-
-	write(t, filepath.Join(home, ".acme.sh", "acme.sh"), "#!/bin/sh\n", 0o755)
-	if got, want := ACMEDir(), filepath.Join(home, ".acme.sh"); got != want {
-		t.Fatalf("ACMEDir() = %q, want %q", got, want)
+	if err := os.WriteFile(filepath.Join(dir, "half.com", fullchainName), []byte("only the cert"), 0o644); err != nil {
+		t.Fatal(err)
 	}
 
-	// An explicit override wins over everything.
-	custom := t.TempDir()
-	t.Setenv(ACMEHomeEnv, custom)
-	if got := ACMEDir(); got != custom {
-		t.Fatalf("ACMEDir() = %q, want the override %q", got, custom)
-	}
-}
-
-// TestLooksLikeACMEHome decides when the /root fallback is worth taking: a
-// directory qualifies when it holds the script or certificates, not merely because
-// it exists.
-func TestLooksLikeACMEHome(t *testing.T) {
-	empty := t.TempDir()
-	if looksLikeACMEHome(empty) {
-		t.Fatal("an empty directory is not an acme.sh home")
-	}
-	if looksLikeACMEHome(filepath.Join(empty, "missing")) {
-		t.Fatal("a missing directory is not an acme.sh home")
-	}
-
-	script := t.TempDir()
-	write(t, filepath.Join(script, "acme.sh"), "#!/bin/sh\n", 0o755)
-	if !looksLikeACMEHome(script) {
-		t.Fatal("a directory holding acme.sh is a home")
-	}
-
-	// An installation whose script was removed but that still holds issued
-	// certificates is worth pointing at too.
-	issued := t.TempDir()
-	write(t, filepath.Join(issued, "example.com_ecc", "fullchain.cer"), "x", 0o600)
-	if !looksLikeACMEHome(issued) {
-		t.Fatal("a directory holding certificates is a home")
+	domains := Domains()
+	if len(domains) != 1 || domains[0] != "example.com" {
+		t.Fatalf("domains = %v, want only example.com", domains)
 	}
 }
 
 func TestGenerateSelfSigned(t *testing.T) {
-	if _, err := exec.LookPath("openssl"); err != nil {
-		t.Skip("openssl not available")
-	}
 	dir := t.TempDir()
-	certPath := filepath.Join(dir, "fullchain.cer")
-	keyPath := filepath.Join(dir, "private.key")
+	certPath := filepath.Join(dir, "cert", fullchainName)
+	keyPath := filepath.Join(dir, "cert", keyName)
 
 	if err := GenerateSelfSigned(certPath, keyPath, "easysb.local"); err != nil {
 		t.Fatalf("GenerateSelfSigned: %v", err)
 	}
-	for _, p := range []string{certPath, keyPath} {
-		info, err := os.Stat(p)
+
+	// The placeholder is handed to sing-box and to a TLS listener, so the pair has
+	// to load and the name has to be in a SAN: a client ignores the CN.
+	pair, err := tls.LoadX509KeyPair(certPath, keyPath)
+	if err != nil {
+		t.Fatalf("the generated pair does not load: %v", err)
+	}
+	leaf, err := x509.ParseCertificate(pair.Certificate[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if leaf.Subject.CommonName != "easysb.local" {
+		t.Errorf("common name = %q, want easysb.local", leaf.Subject.CommonName)
+	}
+	if len(leaf.DNSNames) != 1 || leaf.DNSNames[0] != "easysb.local" {
+		t.Errorf("DNS names = %v, want [easysb.local]", leaf.DNSNames)
+	}
+	if leaf.IsCA {
+		t.Error("the placeholder is a leaf, not a CA")
+	}
+	if leaf.NotAfter.Before(time.Now().AddDate(9, 0, 0)) {
+		t.Errorf("the placeholder expires %s, too soon", leaf.NotAfter)
+	}
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(keyPath)
 		if err != nil {
-			t.Fatalf("missing %s: %v", p, err)
+			t.Fatal(err)
 		}
-		if info.Size() == 0 {
-			t.Fatalf("empty file %s", p)
+		if info.Mode().Perm() != 0o600 {
+			t.Errorf("key mode = %v, want 0600", info.Mode().Perm())
 		}
 	}
 }
 
-// acmeCrontabOutput is the real acme.sh output that a minimal image without cron
-// produces, kept verbatim because the point of errorDetail is what it makes of it:
-// the last line is a wiki link, and the reason is four lines above it.
-const acmeCrontabOutput = `
-It is recommended to install crontab first. Try to install 'cron', 'crontab', 'crontabs' or 'vixie-cron'.
-We need to set a cron job to renew the certs automatically.
-Otherwise, your certs will not be able to be renewed automatically.
-Please add '--force' and try install again to go without crontab.
-[Thu Sep 24 08:16:28 UTC 2026] ./acme.sh --install --force
-[Thu Sep 24 08:16:28 UTC 2026] Pre-check failed, cannot install.
-Install error
-中国大陆用户请参考:
-https://github.com/acmesh-official/acme.sh/wiki/Install-in-China
-`
-
-func TestErrorDetailKeepsTheReason(t *testing.T) {
-	got := errorDetail(acmeCrontabOutput)
-	if strings.Contains(got, "github.com/acmesh-official") {
-		t.Fatalf("errorDetail kept the wiki link instead of the reason: %q", got)
+func TestGenerateSelfSignedForAnAddress(t *testing.T) {
+	dir := t.TempDir()
+	certPath := filepath.Join(dir, fullchainName)
+	keyPath := filepath.Join(dir, keyName)
+	if err := GenerateSelfSigned(certPath, keyPath, "127.0.0.1"); err != nil {
+		t.Fatalf("GenerateSelfSigned: %v", err)
 	}
-	if !strings.Contains(got, "Pre-check failed") && !strings.Contains(got, "crontab") {
-		t.Fatalf("errorDetail lost the reason: %q", got)
+	pair, err := tls.LoadX509KeyPair(certPath, keyPath)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if strings.Contains(got, "[Thu Sep 24") {
-		t.Fatalf("errorDetail kept the acme.sh timestamps: %q", got)
+	leaf, err := x509.ParseCertificate(pair.Certificate[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(leaf.IPAddresses) != 1 || leaf.IPAddresses[0].String() != "127.0.0.1" {
+		t.Errorf("IP SANs = %v, want [127.0.0.1]", leaf.IPAddresses)
+	}
+	if len(leaf.DNSNames) != 0 {
+		t.Errorf("an address is not a DNS name, got %v", leaf.DNSNames)
 	}
 }
 
-func TestErrorDetailFallsBackToTheTail(t *testing.T) {
-	// A failure with no marked line still has to say something.
-	got := errorDetail("line one\nline two\nline three")
-	if !strings.Contains(got, "line three") {
-		t.Fatalf("errorDetail = %q, want the last lines", got)
+func TestResolveActiveUsesTheIssuedPair(t *testing.T) {
+	dir := tempDir(t)
+	fullchain, key := writePair(t, dir, "example.com", time.Now().AddDate(0, 0, 60))
+
+	resolved, err := ResolveActive("example.com")
+	if err != nil {
+		t.Fatalf("ResolveActive: %v", err)
+	}
+	if resolved.Fullchain != fullchain || resolved.Key != key {
+		t.Fatalf("ResolveActive = %+v, want the issued pair", resolved)
+	}
+	if resolved.SelfSigned {
+		t.Error("an issued pair is not self-signed")
 	}
 }
 
-func TestRenewedDomainsReadsCronOutput(t *testing.T) {
-	out := `[Thu Sep 24 03:00:00 UTC 2026] Renew: 'a.example.com'
-[Thu Sep 24 03:00:02 UTC 2026] Renew success: 'a.example.com'
-[Thu Sep 24 03:00:03 UTC 2026] Renew: 'b.example.com'
-[Thu Sep 24 03:00:04 UTC 2026] Skip, next renewal time is: Fri Oct 24 02:00:00 UTC 2026`
-	got := renewedDomains(out)
-	if len(got) != 1 || got[0] != "a.example.com" {
-		t.Fatalf("renewedDomains = %v, want only the renewed domain", got)
+func TestRemoveTakesOneDomainOnly(t *testing.T) {
+	dir := tempDir(t)
+	writePair(t, dir, "a.example.com", time.Now().AddDate(0, 0, 60))
+	writePair(t, dir, "b.example.com", time.Now().AddDate(0, 0, 60))
+
+	if err := Remove(context.Background(), "a.example.com"); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	if _, _, ok := Paths("a.example.com"); ok {
+		t.Error("the removed pair is still there")
+	}
+	if _, _, ok := Paths("b.example.com"); !ok {
+		t.Error("the other domain lost its pair")
+	}
+	// Removing what is not there is not an error: the menu can be used twice.
+	if err := Remove(context.Background(), "a.example.com"); err != nil {
+		t.Errorf("Remove of a missing domain: %v", err)
+	}
+	if err := Remove(context.Background(), "../etc"); err == nil {
+		t.Error("Remove of a domain that escapes the state directory should fail")
+	}
+}
+
+func TestDueForRenewal(t *testing.T) {
+	dir := tempDir(t)
+	now := time.Now()
+
+	// Nothing installed yet: the first issuance takes this path.
+	if due, _, err := dueForRenewal("example.com", now); err != nil || !due {
+		t.Fatalf("dueForRenewal without a pair = %v, %v, want due", due, err)
+	}
+
+	writePair(t, dir, "fresh.example.com", now.AddDate(0, 0, 80))
+	if due, expiry, err := dueForRenewal("fresh.example.com", now); err != nil || due || expiry.IsZero() {
+		t.Fatalf("a certificate with 80 days left = %v, %v, %v, want not due", due, expiry, err)
+	}
+
+	writePair(t, dir, "old.example.com", now.AddDate(0, 0, 10))
+	if due, _, err := dueForRenewal("old.example.com", now); err != nil || !due {
+		t.Fatalf("a certificate with 10 days left = %v, %v, want due", due, err)
+	}
+
+	// The window is RenewBefore wide, which is the promise the daily timer relies
+	// on: a certificate with more than that left is left alone.
+	writePair(t, dir, "edge.example.com", now.Add(RenewBefore+time.Hour))
+	if due, _, err := dueForRenewal("edge.example.com", now); err != nil || due {
+		t.Fatalf("a certificate just outside the window = %v, %v, want not due", due, err)
+	}
+
+	// An unreadable pair is reported rather than silently replaced.
+	if err := os.MkdirAll(filepath.Join(dir, "broken.example.com"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "broken.example.com", fullchainName), []byte("not a certificate"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "broken.example.com", keyName), []byte("not a key"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := dueForRenewal("broken.example.com", now); err == nil {
+		t.Fatal("a pair that cannot be parsed should be reported")
+	}
+}
+
+func TestExpiryOfReadsTheLeaf(t *testing.T) {
+	dir := tempDir(t)
+	want := time.Now().AddDate(0, 0, 42).Truncate(time.Second)
+	writePair(t, dir, "example.com", want)
+
+	got, err := expiryOf("example.com")
+	if err != nil {
+		t.Fatalf("expiryOf: %v", err)
+	}
+	if !got.Equal(want) {
+		t.Fatalf("expiryOf = %s, want %s", got, want)
+	}
+	if _, err := expiryOf("missing.com"); err == nil {
+		t.Fatal("expiryOf without a pair should fail")
+	}
+}
+
+// TestDirectoryPinsLetsEncrypt keeps the CA a decision of this package rather than
+// of whatever tool is installed: the staging switch has to name the same CA as
+// production, and the two must not be the same endpoint.
+func TestDirectoryPinsLetsEncrypt(t *testing.T) {
+	if got := letsEncryptDirectory(false); got != lego.DirectoryURLLetsEncrypt {
+		t.Errorf("production directory = %q, want %q", got, lego.DirectoryURLLetsEncrypt)
+	}
+	staging := letsEncryptDirectory(true)
+	if staging != lego.DirectoryURLLetsEncryptStaging {
+		t.Errorf("staging directory = %q, want %q", staging, lego.DirectoryURLLetsEncryptStaging)
+	}
+	if staging == lego.DirectoryURLLetsEncrypt {
+		t.Error("staging and production must not share an endpoint")
+	}
+}
+
+// TestStandaloneChallengeListensOnPort80 is the contract the CA relies on: the
+// HTTP-01 challenge is only ever fetched from http://<domain>/, so the listener
+// has to be on 80, not on a port of our choosing.
+func TestStandaloneChallengeListensOnPort80(t *testing.T) {
+	provider, ok := standaloneChallenge().(*http01.ProviderServer)
+	if !ok {
+		t.Fatalf("the default provider is %T, want an HTTP-01 provider server", standaloneChallenge())
+	}
+	if got := provider.GetAddress(); got != ":80" {
+		t.Errorf("challenge address = %q, want :80", got)
+	}
+}
+
+func TestStaging(t *testing.T) {
+	t.Setenv(StagingEnv, "")
+	if Staging() {
+		t.Fatal("staging should be off by default")
+	}
+	for _, on := range []string{"1", "true", "yes", "on", "TRUE"} {
+		t.Setenv(StagingEnv, on)
+		if !Staging() {
+			t.Fatalf("%q should enable staging", on)
+		}
+	}
+	for _, off := range []string{"0", "false", "no", "off", ""} {
+		t.Setenv(StagingEnv, off)
+		if Staging() {
+			t.Fatalf("%q should not enable staging", off)
+		}
 	}
 }
 
@@ -240,22 +483,65 @@ func TestReportMismatch(t *testing.T) {
 	}
 }
 
+// TestReportListener pins the answer the issue flow branches on: the challenge
+// listener is part of this binary now, so the only thing left to check is the
+// port, which the flow asks about separately once the core is stopped.
 func TestReportListener(t *testing.T) {
-	if (Report{}).Listener() {
-		t.Fatal("no socat and no python is not a listener")
-	}
-	if !(Report{Socat: "/usr/bin/socat"}).Listener() {
-		t.Fatal("socat is a listener")
-	}
-	if !(Report{Python: "/usr/bin/python3"}).Listener() {
-		t.Fatal("python is a listener")
+	if !(Report{}).Listener() {
+		t.Fatal("the in-process challenge listener is always available")
 	}
 }
 
-// TestDownloadFileRejectsShortBodies keeps a captive portal or a truncated
-// transfer from being installed as acme.sh and failing later with a syntax error.
+// TestOthersAndStrayAddress cover the failure this panel hit in practice: a domain
+// with one correct A record and one stale one. Let's Encrypt validates every
+// address, so the stale record fails the order, and the error names that address.
+func TestOthersAndStrayAddress(t *testing.T) {
+	rep := Report{PublicIP: "154.201.92.132", Resolved: []string{"154.201.92.132", "103.185.248.26"}}
+	if got := rep.Others(); len(got) != 1 || got[0] != "103.185.248.26" {
+		t.Fatalf("Others() = %v, want [103.185.248.26]", got)
+	}
+	if rep.Mismatch() {
+		t.Fatal("one matching address means this host is among them, not a mismatch")
+	}
+	if got := (Report{PublicIP: "1.2.3.4", Resolved: []string{"1.2.3.4"}}).Others(); len(got) != 0 {
+		t.Fatalf("Others() = %v, want none", got)
+	}
+	// Without a known public address there is nothing to compare against.
+	if got := (Report{Resolved: []string{"1.2.3.4"}}).Others(); len(got) != 0 {
+		t.Fatalf("Others() without a public address = %v, want none", got)
+	}
+
+	// The CA's own wording, as it survives into the error lego returns.
+	real := errors.New(`issue: dev.example.com: Invalid status. Verification error details: During secondary validation: 103.185.248.26: Fetching http://dev.example.com/.well-known/acme-challenge/abc: Connection refused`)
+	if got := StrayAddress(real); got != "103.185.248.26" {
+		t.Fatalf("StrayAddress = %q, want 103.185.248.26", got)
+	}
+	if got := StrayAddress(errors.New("issue: something else went wrong")); got != "" {
+		t.Fatalf("StrayAddress of an unrelated error = %q, want empty", got)
+	}
+	if got := StrayAddress(nil); got != "" {
+		t.Fatalf("StrayAddress(nil) = %q, want empty", got)
+	}
+	// An IPv6 address arrives in brackets.
+	ipv6 := errors.New(`During secondary validation: [2001:db8::1]: Fetching http://dev.example.com/: Connection refused`)
+	if got := StrayAddress(ipv6); got != "2001:db8::1" {
+		t.Fatalf("StrayAddress = %q, want 2001:db8::1", got)
+	}
+}
+
+// timerListed is real `systemctl list-timers easysb-acme.timer --no-pager` output
+// taken from a Debian 13 host with the timer running, kept verbatim: the columns
+// are fixed width and measured against the header, LAST and PASSED are dashes when
+// empty, and NEXT is a five-field timestamp faster than the LEFT column is wide.
+const timerListed = "NEXT                        LEFT LAST PASSED UNIT              ACTIVATES\n" +
+	"Fri 2026-09-25 01:31:33 UTC  17h -         - easysb-acme.timer easysb-acme.service\n" +
+	"\n1 timers listed.\n"
+
+// timerNone is the same command with no timer installed.
+const timerNone = "NEXT LEFT PASSED UNIT ACTIVATES\n\n0 timers listed.\n"
+
 // TestRenewalUnitContract locks the unit text that renewal depends on. The panel
-// installs acme.sh with --nocron, so these files are the only thing that renews a
+// never installs a crontab, so these files are the only thing that renews a
 // certificate: a typo in a section or a missing --renew-certs would be silent
 // until a certificate expires.
 func TestRenewalUnitContract(t *testing.T) {
@@ -283,88 +569,6 @@ func TestRenewalUnitContract(t *testing.T) {
 	}
 }
 
-// TestRenewWithoutAnythingToDo is the gate that keeps the nightly timer from
-// restarting a running core: no acme.sh or no certificate has to mean "nothing
-// renewed", not "renewed everything".
-func TestRenewWithoutAnythingToDo(t *testing.T) {
-	acmeHome(t)
-	if _, err := Renew(context.Background(), func(string) {}); err == nil {
-		t.Fatal("Renew without acme.sh should fail")
-	}
-
-	dir := acmeHome(t)
-	write(t, filepath.Join(dir, "acme.sh"), "#!/bin/sh\n", 0o755)
-	renewed, err := Renew(context.Background(), func(string) {})
-	if err != nil {
-		t.Fatalf("Renew with no certificates: %v", err)
-	}
-	if len(renewed) != 0 {
-		t.Fatalf("renewed = %v, want none", renewed)
-	}
-}
-
-func TestDownloadFileRejectsShortBodies(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte("<html>portal</html>"))
-	}))
-	defer srv.Close()
-
-	err := downloadFile(context.Background(), srv.URL+"/acme.sh", filepath.Join(t.TempDir(), "acme.sh"))
-	if err == nil {
-		t.Fatal("a short response should be refused")
-	}
-}
-
-func TestDownloadFileKeepsTheScript(t *testing.T) {
-	body := strings.Repeat("# acme.sh\n", 200)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(body))
-	}))
-	defer srv.Close()
-
-	dest := filepath.Join(t.TempDir(), "acme.sh")
-	if err := downloadFile(context.Background(), srv.URL+"/acme.sh", dest); err != nil {
-		t.Fatalf("downloadFile: %v", err)
-	}
-	got, err := os.ReadFile(dest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != body {
-		t.Fatalf("downloaded %d bytes, want %d", len(got), len(body))
-	}
-}
-
-func TestStaging(t *testing.T) {
-	t.Setenv(ACMEStagingEnv, "")
-	if Staging() {
-		t.Fatal("staging should be off by default")
-	}
-	for _, on := range []string{"1", "true", "yes", "on", "TRUE"} {
-		t.Setenv(ACMEStagingEnv, on)
-		if !Staging() {
-			t.Fatalf("%q should enable staging", on)
-		}
-	}
-	for _, off := range []string{"0", "false", "no", "off", ""} {
-		t.Setenv(ACMEStagingEnv, off)
-		if Staging() {
-			t.Fatalf("%q should not enable staging", off)
-		}
-	}
-}
-
-// timerListed is real `systemctl list-timers easysb-acme.timer --no-pager` output
-// taken from a Debian 13 host with the timer running, kept verbatim: the columns
-// are fixed width and measured against the header, LAST and PASSED are dashes when
-// empty, and NEXT is a five-field timestamp faster than the LEFT column is wide.
-const timerListed = "NEXT                        LEFT LAST PASSED UNIT              ACTIVATES\n" +
-	"Fri 2026-09-25 01:31:33 UTC  17h -         - easysb-acme.timer easysb-acme.service\n" +
-	"\n1 timers listed.\n"
-
-// timerNone is the same command with no timer installed.
-const timerNone = "NEXT LEFT PASSED UNIT ACTIVATES\n\n0 timers listed.\n"
-
 func TestParseTimerStatus(t *testing.T) {
 	if got, want := parseTimerStatus(timerListed), "Fri 2026-09-25 01:31:33 UTC (17h)"; got != want {
 		t.Fatalf("parseTimerStatus = %q, want %q", got, want)
@@ -387,78 +591,5 @@ func TestParseTimerStatusWithoutLeft(t *testing.T) {
 		"Fri 2026-09-25 01:31:33 UTC     -         - easysb-acme.timer easysb-acme.service\n"
 	if got, want := parseTimerStatus(out), "Fri 2026-09-25 01:31:33 UTC"; got != want {
 		t.Fatalf("parseTimerStatus = %q, want %q", got, want)
-	}
-}
-
-// TestOthersAndStrayAddress cover the failure this panel hit in practice: a domain
-// with one correct A record and one stale one. Let's Encrypt validates every
-// address, so the stale record fails the order, and the error names that address.
-func TestOthersAndStrayAddress(t *testing.T) {
-	rep := Report{PublicIP: "154.201.92.132", Resolved: []string{"154.201.92.132", "103.185.248.26"}}
-	if got := rep.Others(); len(got) != 1 || got[0] != "103.185.248.26" {
-		t.Fatalf("Others() = %v, want [103.185.248.26]", got)
-	}
-	if rep.Mismatch() {
-		t.Fatal("one matching address means this host is among them, not a mismatch")
-	}
-	if got := (Report{PublicIP: "1.2.3.4", Resolved: []string{"1.2.3.4"}}).Others(); len(got) != 0 {
-		t.Fatalf("Others() = %v, want none", got)
-	}
-	// Without a known public address there is nothing to compare against.
-	if got := (Report{Resolved: []string{"1.2.3.4"}}).Others(); len(got) != 0 {
-		t.Fatalf("Others() without a public address = %v, want none", got)
-	}
-
-	// The text is acme.sh's, with the address and reason in the middle.
-	real := errors.New(`issue: dev.example.com: Invalid status. Verification error details: During secondary validation: 103.185.248.26: Fetching http://dev.example.com/.well-known/acme-challenge/abc: Connection refused`)
-	if got := StrayAddress(real); got != "103.185.248.26" {
-		t.Fatalf("StrayAddress = %q, want 103.185.248.26", got)
-	}
-	if got := StrayAddress(errors.New("issue: something else went wrong")); got != "" {
-		t.Fatalf("StrayAddress of an unrelated error = %q, want empty", got)
-	}
-	if got := StrayAddress(nil); got != "" {
-		t.Fatalf("StrayAddress(nil) = %q, want empty", got)
-	}
-}
-
-// TestIssueArgs pins the CA. acme.sh's default CA moved from Let's Encrypt to
-// ZeroSSL, so relying on it would make the signed certificate depend on the
-// installed acme.sh version, and it would not match the staging endpoint.
-func TestIssueArgs(t *testing.T) {
-	args := issueArgs("dev.example.com", "me@example.com", false)
-	joined := strings.Join(args, " ")
-	for _, want := range []string{"--issue", "--standalone", "-d dev.example.com", "--keylength ec-256", "--accountemail me@example.com", "--server letsencrypt"} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("issue args %q missing %q", joined, want)
-		}
-	}
-	if strings.Contains(joined, "letsencrypt_test") {
-		t.Errorf("production args must not use the test endpoint: %q", joined)
-	}
-
-	staged := strings.Join(issueArgs("dev.example.com", "me@example.com", true), " ")
-	if !strings.Contains(staged, "--server letsencrypt_test") {
-		t.Errorf("staging args %q must use the test endpoint", staged)
-	}
-	// A missing email drops the flag instead of passing an empty one.
-	if bare := strings.Join(issueArgs("dev.example.com", "  ", false), " "); strings.Contains(bare, "--accountemail") {
-		t.Errorf("empty email should not be passed: %q", bare)
-	}
-}
-
-// TestRenewalLine covers the sentence acme.sh prints when it declines to reissue a
-// certificate that is still valid. That case exits non-zero, so the panel has to
-// recognise it instead of reporting a failure for a perfectly good certificate.
-func TestRenewalLine(t *testing.T) {
-	// Real output from acme.sh 3.x on an existing certificate.
-	skipped := "[Thu Sep 24 08:46:48 UTC 2026] Domains not changed.\n" +
-		"[Thu Sep 24 08:46:48 UTC 2026] Skipping. Next renewal time is: 2026-12-09T08:46:48Z\n" +
-		"[Thu Sep 24 08:46:48 UTC 2026] Add '--force' to force renewal.\n"
-	if got, want := renewalLine(skipped), "Next renewal time is: 2026-12-09T08:46:48Z"; got != want {
-		t.Fatalf("renewalLine = %q, want %q", got, want)
-	}
-	if got := renewalLine("nothing to see"); got != "" {
-		t.Fatalf("renewalLine = %q, want empty", got)
 	}
 }

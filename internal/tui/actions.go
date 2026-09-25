@@ -11,11 +11,11 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/MinimaxFlora/EasySB/internal/config"
-	"github.com/MinimaxFlora/EasySB/internal/core"
 	"github.com/MinimaxFlora/EasySB/internal/deploy"
 	"github.com/MinimaxFlora/EasySB/internal/firewall"
 	"github.com/MinimaxFlora/EasySB/internal/i18n"
 	"github.com/MinimaxFlora/EasySB/internal/netutil"
+	"github.com/MinimaxFlora/EasySB/internal/sbcore"
 	"github.com/MinimaxFlora/EasySB/internal/secret"
 	"github.com/MinimaxFlora/EasySB/internal/service"
 	"github.com/MinimaxFlora/EasySB/internal/state"
@@ -51,173 +51,11 @@ func serviceAction(verb string) actionFunc {
 	}
 }
 
-// kernelAction installs, switches or updates the sing-box core.
-//
-//	mode = "install-stable" | "install-alpha": install that channel
-//	mode = "switch":                          toggle stable <-> alpha
-//	mode = "update":                          update the installed channel
-// kernelInstall installs one combination of channel and source. The source is part of the
-// request rather than a hidden default: the two differ in what the core can express, so the
-// menu offers the four combinations as four explicit choices.
-func kernelInstall(source, channel string) actionFunc {
-	return func(a *App) tea.Cmd {
-		lang := a.lang
-		return a.startTask(lang.T("kernel_installing"), func(ctx context.Context, r *taskReporter) error {
-			cfg := state.Load()
-			installed := core.Installed()
-			// Comparing the source too is what makes the menu reversible: after taking
-			// the official core, asking for the author's build is a real change.
-			installedSource := coreSourceFrom(cfg.CoreSource, core.SupportsV2RayStats(ctx))
-			if sameInstall(installed, core.InstalledChannel(cfg.CoreChannel), installedSource, channel, source) {
-				r.Log(lang.T("kernel_already") + ": " + lang.T(kernelCombinationKey(channel, source)))
-				return nil
-			}
-			return installCore(ctx, r, lang, cfg, installed, channel, source, "kernel_installed")
-		})
-	}
-}
-
-// kernelUpdate refreshes the version of what is installed, keeping both the channel and the
-// source: an operator who chose the official core is not silently moved off it.
-func kernelUpdate() actionFunc {
-	return func(a *App) tea.Cmd {
-		lang := a.lang
-		return a.startTask(lang.T("kernel_installing"), func(ctx context.Context, r *taskReporter) error {
-			cfg := state.Load()
-			if !core.Installed() {
-				return errors.New(lang.T("kernel_need_install"))
-			}
-			channel := core.InstalledChannel(cfg.CoreChannel)
-			source := coreSourceFrom(cfg.CoreSource, core.SupportsV2RayStats(ctx))
-			return installCore(ctx, r, lang, cfg, true, channel, source, "kernel_updated")
-		})
-	}
-}
-
-// installCore is the one install path: fetch the wanted combination, stop the core, install
-// it, record where it came from, and leave the node up — regenerating the config when the new
-// core can express something different from the old one. doneKey picks the closing line.
-func installCore(ctx context.Context, r *taskReporter, lang i18n.Lang, cfg state.Config, installed bool, channel, source, doneKey string) error {
-	rels, err := core.FetchPreferred(ctx)
-	if source == core.SourceUpstream {
-		rels, err = core.FetchReleases(ctx)
-	}
-	if err != nil {
-		r.Log(lang.T("ver_offline"))
-	}
-	rel := rels.Stable
-	if channel == "alpha" {
-		rel = rels.Alpha
-	}
-	if rel.Version == "" {
-		return errors.New(lang.T("kernel_no_version"))
-	}
-	// Where the core comes from decides whether the node can account usage, so it is said
-	// out loud on every install rather than left in the code.
-	if rel.Source == core.SourceBuild {
-		r.Log(lang.T("kernel_source_build"))
-	} else {
-		r.Log(lang.T("kernel_source_upstream"))
-		r.Log(lang.T("kernel_source_official_warn"))
-	}
-
-	if installed {
-		r.Log("$ systemctl stop " + sysinfo.ServiceName)
-		runCmd(ctx, "systemctl", "stop", sysinfo.ServiceName)
-	}
-
-	r.Log(lang.T("kernel_downloading") + ": " + lang.T(kernelCombinationKey(channel, rel.Source)) + " " + rel.Version)
-	version, err := core.Install(ctx, rel, r.Log, r.Progress)
-	if err != nil {
-		return err
-	}
-
-	// Where the core came from is recorded, because the panel shows it and because the
-	// source is what decides whether usage can be counted.
-	cfg.CoreSource = rel.Source
-	cfg.StatsAPI = state.StatsAPINone
-	if core.SupportsV2RayStats(ctx) {
-		cfg.StatsAPI = ""
-	}
-	cfg.CoreChannel = channel
-	if err := cfg.Save(); err != nil {
-		return err
-	}
-
-	if hasServerConfig() {
-		if configMatchesCore(ctx, cfg.V2RayStats()) {
-			r.Log("$ systemctl start " + sysinfo.ServiceName)
-			runCmd(ctx, "systemctl", "start", sysinfo.ServiceName)
-		} else {
-			// The core just changed what it can express, so the deployed config no longer
-			// matches it: regenerating through the deploy path is what keeps the node up
-			// (and the counters working) either way.
-			r.Log(lang.T("kernel_redeploy_needed"))
-			if err := runDeploy(ctx, r, lang); err != nil {
-				r.Log(lang.T("kernel_redeploy_failed") + ": " + err.Error())
-			}
-		}
-	}
-	r.Log(lang.T(doneKey) + ": " + lang.T(kernelCombinationKey(channel, rel.Source)) + " " + version)
-	return nil
-}
-
-// coreSourceFrom reports which source an installed core came from: the recorded one when the
-// panel performed the install, and otherwise what the binary's own build tags say (the
-// `with_v2ray_api` tag is the only way to tell the two apart from the outside). One function
-// answers this for the 看板, the version line and the install guard, so what the operator
-// reads and what the panel decides cannot drift apart.
-func coreSourceFrom(recorded string, statsCapable bool) string {
-	if recorded != "" {
-		if recorded == core.SourceBuild {
-			return core.SourceBuild
-		}
-		return core.SourceUpstream
-	}
-	if statsCapable {
-		return core.SourceBuild
-	}
-	return core.SourceUpstream
-}
-
-// sameInstall reports whether the wanted combination of channel and source is the one already
-// installed, which is the only case an install request has nothing to do.
-func sameInstall(installed bool, installedChannel, installedSource, wantChannel, wantSource string) bool {
-	return installed && installedChannel == wantChannel && installedSource == wantSource
-}
-
-// kernelCombinationKey names one of the four channel/source combinations in the interface.
-func kernelCombinationKey(channel, source string) string {
-	if source == core.SourceBuild {
-		if channel == "alpha" {
-			return "kernel_alpha_author"
-		}
-		return "kernel_stable_author"
-	}
-	if channel == "alpha" {
-		return "kernel_alpha_official"
-	}
-	return "kernel_stable_official"
-}
-
+// hasServerConfig reports whether a rendered node configuration is on disk, which is
+// what makes a re-render worth announcing.
 func hasServerConfig() bool {
 	info, err := os.Stat(sysinfo.ConfigJSON)
 	return err == nil && info.Size() > 0
-}
-
-// configMatchesCore reports whether the deployed config was rendered for the counters the
-// installed core offers. Both directions of a mismatch matter: a config naming an API the
-// binary was not built with is rejected whole and the node never starts, while a config
-// that omits the API the binary does carry would count nothing at all.
-func configMatchesCore(ctx context.Context, capable bool) bool {
-	body, err := os.ReadFile(sysinfo.ConfigJSON)
-	if err != nil {
-		return false
-	}
-	if strings.Contains(string(body), "v2ray_api") != capable {
-		return false
-	}
-	return core.ConfigCheck(ctx, sysinfo.ConfigJSON)
 }
 
 // deployNode generates config.json, installs the service unit and starts the
@@ -232,14 +70,8 @@ func deployNode() actionFunc {
 }
 
 // runDeploy is the one deploy path: it renders the config for the accounts in use,
-// starts the service and refreshes everything derived from it. The node menu runs it
-// directly, and a core install runs it too when the newly installed core can no longer
-// express what the deployed config names — sing-box rejects such a config whole, so the
-// alternative would be a node that does not start.
+// starts the service and refreshes everything derived from it.
 func runDeploy(ctx context.Context, r *taskReporter, lang i18n.Lang) error {
-	if !core.Installed() {
-		return errors.New(lang.T("node_need_core"))
-	}
 	cfg := state.Load()
 	if !cfg.AnyEnabled() {
 		return errors.New(lang.T("node_all_disabled"))
@@ -260,9 +92,9 @@ func runDeploy(ctx context.Context, r *taskReporter, lang i18n.Lang) error {
 	// handshake.
 	if cfg.Enabled[state.ProtoVLESSReality] {
 		if cfg.RealityPriv == "" || cfg.RealityPub == "" {
-			priv, pub, err := core.RealityKeypair(ctx)
-			if err != nil {
-				return err
+			priv, pub := secret.RealityKeypair()
+			if priv == "" || pub == "" {
+				return errors.New(lang.T("param_key_fail"))
 			}
 			cfg.RealityPriv, cfg.RealityPub = priv, pub
 			r.Log(lang.T("param_key_gen"))
@@ -287,14 +119,12 @@ func runDeploy(ctx context.Context, r *taskReporter, lang i18n.Lang) error {
 		}
 	}
 
-	// The counter source is a property of the installed core, so it is
-	// read here instead of assumed: the official builds carry no V2Ray
-	// API, and a config naming one is rejected whole. A core without it
-	// still deploys a working node, only the byte counters are absent.
-	cfg.StatsAPI = state.StatsAPINone
-	if core.SupportsV2RayStats(ctx) {
-		cfg.StatsAPI = ""
-	} else {
+	// Whether the node can count usage is a property of this build, so it is read
+	// instead of assumed: a panel compiled without the with_v2ray_api tag carries
+	// no counters and must leave the block out, because the core it carries
+	// rejects a configuration naming an API it does not have. Such a build still
+	// deploys a working node, only the byte columns stay empty.
+	if !sbcore.StatsCapable() {
 		r.Log(lang.T("node_stats_unavailable"))
 	}
 
@@ -306,7 +136,8 @@ func runDeploy(ctx context.Context, r *taskReporter, lang i18n.Lang) error {
 	}
 	r.Log("write " + sysinfo.ConfigJSON)
 
-	if !core.ConfigCheck(ctx, sysinfo.ConfigJSON) {
+	if err := sbcore.Check(ctx, sysinfo.ConfigJSON); err != nil {
+		r.Log(err.Error())
 		return errors.New(lang.T("node_config_fail"))
 	}
 	r.Log(lang.T("node_config_ok"))

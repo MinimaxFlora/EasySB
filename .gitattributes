@@ -1,0 +1,8 @@
+# Shell entry points are written to be executed on Linux, and install.sh is downloaded
+# and run as-is: a carriage return in its hashbang or inside a heredoc breaks it, which is
+# exactly what happens to a Windows checkout with core.autocrlf=true. Keep them LF.
+*.sh text eol=lf
+
+# The build tag list is read by install.sh and by the release workflow; a trailing CR
+# would land inside the -tags value and the build would fail with an unknown tag.
+release/TAGS text eol=lf

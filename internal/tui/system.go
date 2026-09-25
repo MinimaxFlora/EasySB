@@ -283,16 +283,9 @@ func (m *systemModel) hostCard(a *App, w int) []string {
 // the service is up.
 func (m *systemModel) buildCard(a *App, w int) []string {
 	s := a.style()
-	st := a.status
 	svcText, svcKind := a.serviceState()
 	nodeText, nodeKind := a.nodeState()
-	coreText, coreKind := a.lang.T("ver_not_installed"), ui.KindPlain
-	if st.CoreVersion != "" {
-		coreText, coreKind = st.CoreVersion+" ["+a.lang.T(channelTagKey(st.CoreChannel))+"]", ui.KindOK
-		if st.CoreChannel == "alpha" {
-			coreKind = ui.KindWarn
-		}
-	}
+	coreText, coreKind := a.coreSummary()
 	left := [][2]string{
 		a.kv("ver_script", a.scriptVersion, ui.KindOK),
 		a.kv("ver_core", coreText, coreKind),

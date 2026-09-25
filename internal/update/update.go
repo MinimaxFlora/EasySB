@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MinimaxFlora/EasySB/internal/core"
+	"github.com/MinimaxFlora/EasySB/internal/download"
 )
 
 // Repo is the EasySB repository that publishes the binaries.
@@ -65,7 +65,7 @@ func RemoteVersion(ctx context.Context) (string, error) {
 	tmp.Close()
 	defer os.Remove(path)
 
-	if err := core.Download(ctx, versionURL, path); err != nil {
+	if err := download.Download(ctx, versionURL, path); err != nil {
 		return "", err
 	}
 	data, err := os.ReadFile(path)
@@ -79,7 +79,7 @@ func RemoteVersion(ctx context.Context) (string, error) {
 // executable. It returns false when the installed binary already matches the
 // remote build. current is the running EasySB version string. The binary download
 // reports itself to progress, which the panel turns into a bar.
-func Apply(ctx context.Context, current string, log func(string), progress core.Progress) (bool, string, error) {
+func Apply(ctx context.Context, current string, log func(string), progress download.Progress) (bool, string, error) {
 	remote, err := RemoteVersion(ctx)
 	if err != nil {
 		log("cannot read remote version: " + err.Error())
@@ -109,7 +109,7 @@ func Apply(ctx context.Context, current string, log func(string), progress core.
 	tmp := exe + ".new"
 
 	log("GET " + url)
-	if err := core.DownloadWithProgress(ctx, url, tmp, 5*time.Minute, progress); err != nil {
+	if err := download.DownloadWithProgress(ctx, url, tmp, 5*time.Minute, progress); err != nil {
 		return false, remote, err
 	}
 	if err := os.Chmod(tmp, 0o755); err != nil {

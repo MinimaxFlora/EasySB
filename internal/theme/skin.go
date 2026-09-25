@@ -191,7 +191,7 @@ func jadeSkin() Skin {
 			Groups: []NavGroup{
 				{TitleKey: "nav_group_serve", IDs: []string{"node", "domain"}},
 				{TitleKey: "nav_group_client", IDs: []string{"users", "subscribe"}},
-				{TitleKey: "nav_group_system", IDs: []string{"system", "kernel", "service", "bbr"}},
+				{TitleKey: "nav_group_system", IDs: []string{"system", "unlock", "service", "bbr"}},
 				{TitleKey: "nav_group_maint", IDs: []string{"script-update", "uninstall"}},
 			},
 		},
@@ -253,7 +253,7 @@ func auroraSkin() Skin {
 			Groups: []NavGroup{
 				{TitleKey: "nav_group_serve", IDs: []string{"node", "domain"}},
 				{TitleKey: "nav_group_client", IDs: []string{"users", "subscribe"}},
-				{TitleKey: "nav_group_system", IDs: []string{"system", "kernel", "service", "bbr"}},
+				{TitleKey: "nav_group_system", IDs: []string{"system", "unlock", "service", "bbr"}},
 				{TitleKey: "nav_group_maint", IDs: []string{"script-update", "uninstall"}},
 			},
 		},
@@ -314,7 +314,7 @@ func emberSkin() Skin {
 			NavWidth:   28,
 			Groups: []NavGroup{
 				{TitleKey: "nav_group_server", IDs: []string{"node", "domain"}},
-				{TitleKey: "nav_group_kernel", IDs: []string{"kernel"}},
+				{TitleKey: "nav_group_check", IDs: []string{"unlock"}},
 				{TitleKey: "nav_group_client", IDs: []string{"users", "subscribe"}},
 				{TitleKey: "nav_group_sysinfo", IDs: []string{"system", "service", "bbr"}},
 				{TitleKey: "nav_group_maint", IDs: []string{"script-update", "uninstall"}},
@@ -378,7 +378,7 @@ func graphiteSkin() Skin {
 			Compact:    true,
 			Groups: []NavGroup{
 				{TitleKey: "nav_group_run", IDs: []string{"node", "subscribe"}},
-				{TitleKey: "nav_group_config", IDs: []string{"kernel", "domain"}},
+				{TitleKey: "nav_group_config", IDs: []string{"unlock", "domain"}},
 				{TitleKey: "nav_group_client", IDs: []string{"users"}},
 				{TitleKey: "nav_group_system", IDs: []string{"system", "service", "bbr"}},
 				{TitleKey: "nav_group_maint", IDs: []string{"script-update", "uninstall"}},

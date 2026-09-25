@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/MinimaxFlora/EasySB/internal/sbcore"
 	"github.com/MinimaxFlora/EasySB/internal/state"
 	"github.com/MinimaxFlora/EasySB/internal/user"
 )
@@ -28,6 +29,12 @@ type Options struct {
 	Apply func(ctx context.Context, cfg state.Config, users []user.User) error
 	// Interval overrides the node's sync interval when non-zero.
 	Interval time.Duration
+	// StatsCapable reports whether this build carries the V2Ray API the counters
+	// are read over. Nil asks internal/sbcore, which is the compile-time answer:
+	// the panel is built with with_v2ray_api (release/TAGS), and a build without
+	// it has no counters to read at all. Tests set it explicitly, so the policy
+	// stays testable in a build that cannot count.
+	StatsCapable func() bool
 	// Now overrides the clock in tests.
 	Now func() time.Time
 	// Log receives one line per notable event.
@@ -54,6 +61,15 @@ func New(opts Options) *Loop {
 	return &Loop{opts: opts}
 }
 
+// statsCapable answers whether this loop has counters to read: the injected
+// answer when a caller gave one, and otherwise what the compiled build carries.
+func (l *Loop) statsCapable() bool {
+	if l.opts.StatsCapable != nil {
+		return l.opts.StatsCapable()
+	}
+	return sbcore.StatsCapable()
+}
+
 // Run samples until ctx is cancelled. It ticks once immediately, because the
 // service may have been started precisely to apply a policy change.
 func (l *Loop) Run(ctx context.Context) error {
@@ -73,13 +89,13 @@ func (l *Loop) Run(ctx context.Context) error {
 // Tick runs one accounting cycle.
 func (l *Loop) Tick(ctx context.Context) error {
 	now := l.now()
-	// A core built without the V2Ray API has nothing to read: the deployed config
+	// A build without the V2Ray API has nothing to read: the deployed config
 	// carries no stats block, so the cycle would only fail on a dead socket every
-	// interval. The node is announced once, when the deployment says so.
-	if l.opts.Node != nil && !l.opts.Node().V2RayStats() {
+	// interval. The node is announced once, when the build says so.
+	if !l.statsCapable() {
 		if !l.announcedNoStats {
 			l.announcedNoStats = true
-			l.log("accounting off: the installed core has no v2ray api")
+			l.log("accounting off: this build carries no v2ray api")
 		}
 		return nil
 	}
