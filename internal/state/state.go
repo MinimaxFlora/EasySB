@@ -61,6 +61,9 @@ const (
 	// MinSubSyncSeconds bounds the accounting interval. A shorter interval only
 	// adds gRPC round trips and config rewrites.
 	MinSubSyncSeconds = 30
+	// DefaultFrontPort is where the camouflage site listens: the whole point of
+	// it is that the domain looks like an ordinary HTTPS site.
+	DefaultFrontPort = 443
 )
 
 // Config is the persisted node configuration.
@@ -83,7 +86,7 @@ type Config struct {
 	// experimental.v2ray_api block, because sing-box refuses a config that
 	// names an API it was not built with. Empty means the historical value
 	// ("v2ray"), so an existing deployment keeps its counters.
-	StatsAPI     string
+	StatsAPI string
 	// CoreSource records where the installed core came from ("build" for this
 	// repository's builds, "upstream" for the official releases), so the panel can
 	// say which source is installed. Empty on an install made before the record.
@@ -91,7 +94,19 @@ type Config struct {
 	SubServePort int
 	SubSyncSecs  int
 	ServerIP     string
-	raw          map[string]string
+	// FrontEnabled turns the camouflage site on: the domain is then served by
+	// this panel's own HTTPS front, which routes /sub/ to the subscription
+	// service and everything else to the application picked in FrontApp.
+	FrontEnabled bool
+	// FrontApp is the application ID the front serves, empty when none is picked.
+	FrontApp string
+	// FrontPort is the port the front listens on; 443 unless the operator moved
+	// it, which is only useful when something else already owns 443.
+	FrontPort int
+	// AppPorts records the port each installed application listens on, keyed by
+	// application ID. An application with no record uses its own default.
+	AppPorts map[string]string
+	raw      map[string]string
 }
 
 // StatsAPINone is the StatsAPI value for a core without the V2Ray API.
@@ -100,6 +115,34 @@ const StatsAPINone = "none"
 // V2RayStats reports whether the core being configured offers the V2Ray stats
 // API, which is where the per-account byte counters come from.
 func (c Config) V2RayStats() bool { return !strings.EqualFold(c.StatsAPI, StatsAPINone) }
+
+// AppPort is the port an installed application was configured with, 0 when the
+// state file has no record (the caller then uses the catalogue default).
+func (c Config) AppPort(id string) int {
+	if n, err := strconv.Atoi(c.AppPorts[id]); err == nil && n > 0 && n < 65536 {
+		return n
+	}
+	return 0
+}
+
+// SetAppPort records the port an application listens on.
+func (c *Config) SetAppPort(id string, port int) {
+	if c.AppPorts == nil {
+		c.AppPorts = map[string]string{}
+	}
+	c.AppPorts[id] = strconv.Itoa(port)
+}
+
+// FrontListen is the address the camouflage front binds, empty when it is off.
+func (c Config) FrontListen() string {
+	if !c.FrontEnabled {
+		return ""
+	}
+	if c.FrontPort <= 0 {
+		return fmt.Sprintf(":%d", DefaultFrontPort)
+	}
+	return fmt.Sprintf(":%d", c.FrontPort)
+}
 
 // Default returns a Config populated with built-in defaults.
 func Default() Config {
@@ -112,6 +155,8 @@ func Default() Config {
 		SubServePort: DefaultSubServePort,
 		SubSyncSecs:  DefaultSubSyncSeconds,
 		NodeDeployed: false,
+		FrontPort:    DefaultFrontPort,
+		AppPorts:     map[string]string{},
 		raw:          map[string]string{},
 	}
 	for _, k := range Keys {
@@ -190,6 +235,27 @@ func (c *Config) applyRaw() {
 	set(&c.CoreSource, "CORE_SOURCE")
 	if n, err := strconv.Atoi(c.raw["SUB_SERVE_PORT"]); err == nil && n > 0 && n < 65536 {
 		c.SubServePort = n
+	}
+	if v, ok := c.raw["FRONT_ENABLED"]; ok {
+		c.FrontEnabled = strings.EqualFold(v, "yes")
+	}
+	c.FrontApp = c.raw["FRONT_APP"]
+	if n, err := strconv.Atoi(c.raw["FRONT_PORT"]); err == nil && n > 0 && n < 65536 {
+		c.FrontPort = n
+	}
+	// Application ports are recorded as APP_<ID>_PORT, so adding an application
+	// to the catalogue needs no change here.
+	for key, val := range c.raw {
+		if !strings.HasPrefix(key, "APP_") || !strings.HasSuffix(key, "_PORT") {
+			continue
+		}
+		id := strings.ToLower(strings.TrimSuffix(strings.TrimPrefix(key, "APP_"), "_PORT"))
+		if id == "" {
+			continue
+		}
+		if n, err := strconv.Atoi(val); err == nil && n > 0 && n < 65536 {
+			c.AppPorts[id] = val
+		}
 	}
 	if n, err := strconv.Atoi(c.raw["SUB_SYNC_SECONDS"]); err == nil && n > 0 {
 		c.SubSyncSecs = n
@@ -283,11 +349,28 @@ func (c Config) Save() error {
 		{"STATS_API", c.StatsAPI},
 		{"CORE_SOURCE", c.CoreSource},
 		{"SUB_SERVE_PORT", strconv.Itoa(c.SubServePort)},
+		{"FRONT_ENABLED", yesNo(c.FrontEnabled)},
+		{"FRONT_APP", c.FrontApp},
+		{"FRONT_PORT", strconv.Itoa(c.FrontPort)},
 		{"SUB_SYNC_SECONDS", strconv.Itoa(c.SubSyncSecs)},
 		{"SERVER_IP", c.ServerIP},
 	}
 	for _, p := range pairs {
 		lines = append(lines, fmt.Sprintf("%s=%q", p[0], p[1]))
+	}
+
+	// Application ports are written from the map, so an application added to the
+	// catalogue is remembered without touching this function.
+	ids := make([]string, 0, len(c.AppPorts))
+	for id := range c.AppPorts {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		if c.AppPorts[id] == "" {
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("APP_%s_PORT=%q", strings.ToUpper(id), c.AppPorts[id]))
 	}
 
 	// Preserve any unrecognised keys from the previous file.
@@ -311,12 +394,17 @@ func (c Config) extraKeys() []string {
 		"HY2_HOP_RANGE": true, "REALITY_SNI": true, "REALITY_PRIVATE": true,
 		"REALITY_PUBLIC": true, "REALITY_SHORT_ID": true, "DOMAIN": true,
 		"CERT_DOMAIN": true, "ACME_EMAIL": true, "CORE_CHANNEL": true, "NODE_DEPLOYED": true,
-		"STATS_API": true,
-		"CORE_SOURCE": true,
+		"STATS_API":      true,
+		"CORE_SOURCE":    true,
 		"SUB_SERVE_PORT": true, "SUB_SYNC_SECONDS": true, "SERVER_IP": true,
+		"FRONT_ENABLED": true, "FRONT_APP": true, "FRONT_PORT": true,
 	}
 	var out []string
 	for k := range c.raw {
+		// Application ports are written from AppPorts, never from raw.
+		if strings.HasPrefix(k, "APP_") && strings.HasSuffix(k, "_PORT") {
+			continue
+		}
 		if !known[k] {
 			out = append(out, k)
 		}
@@ -330,4 +418,12 @@ func boolStr(b bool) string {
 		return "true"
 	}
 	return "false"
+}
+
+// yesNo spells a flag the way the state file stores the panel's own switches.
+func yesNo(b bool) string {
+	if b {
+		return "yes"
+	}
+	return "no"
 }

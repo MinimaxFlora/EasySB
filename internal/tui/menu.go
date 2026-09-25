@@ -44,9 +44,9 @@ func buildRoot() *menu {
 		id:    "root",
 		title: tk("menu_main"),
 		nodes: []*node{
-			{id: "kernel", label: tk("kernel_title"), desc: tk("menu_kernel"), icon: func(s icons.Set) string { return s.Core }, sub: buildKernel()},
 			{id: "node", label: tk("node_title"), desc: tk("menu_node"), icon: func(s icons.Set) string { return s.Rocket }, sub: buildNode()},
 			{id: "domain", label: tk("domain_title"), desc: tk("menu_domain"), icon: func(s icons.Set) string { return s.Globe }, sub: buildDomain()},
+			{id: "site", label: tk("site_title"), desc: tk("menu_site"), icon: func(s icons.Set) string { return s.Globe }, action: enterSite()},
 			{id: "subscribe", label: tk("sub_title"), desc: tk("menu_subscribe"), icon: func(s icons.Set) string { return s.Subscribe }, sub: buildSubscribe()},
 			{id: "users", label: tk("users_title"), desc: tk("menu_users"), icon: func(s icons.Set) string { return s.Account }, action: enterUsers()},
 			{id: "service", label: tk("svc_title"), desc: tk("menu_service"), icon: func(s icons.Set) string { return s.Service }, sub: buildService()},
@@ -58,16 +58,6 @@ func buildRoot() *menu {
 			{id: "script-update", label: tk("menu_script_update"), desc: tk("menu_script_update_desc"), icon: func(s icons.Set) string { return s.Refresh }, sub: buildUpdatePage()},
 			{id: "uninstall", label: tk("menu_uninstall"), desc: tk("menu_uninstall_desc"), icon: func(s icons.Set) string { return s.Trash }, sub: buildSelfPage()},
 		},
-	}
-}
-
-func buildKernel() *menu {
-	return &menu{
-		id:    "kernel",
-		title: tk("kernel_title"),
-		// The core is part of this binary, so there is nothing to install, switch or
-		// update: the page is the reading (which sing-box the panel carries, and
-		// whether the node unit runs it) plus the way back.
 	}
 }
 

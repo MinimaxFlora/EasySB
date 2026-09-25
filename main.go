@@ -19,6 +19,7 @@ import (
 	"github.com/MinimaxFlora/EasySB/internal/config"
 	"github.com/MinimaxFlora/EasySB/internal/deploy"
 	"github.com/MinimaxFlora/EasySB/internal/firewall"
+	"github.com/MinimaxFlora/EasySB/internal/front"
 	"github.com/MinimaxFlora/EasySB/internal/i18n"
 	"github.com/MinimaxFlora/EasySB/internal/prefs"
 	"github.com/MinimaxFlora/EasySB/internal/sbcore"
@@ -53,6 +54,12 @@ func main() {
 		runCoreCommand(os.Args[2:])
 		return
 	}
+	// The camouflage applications have a command line too: the panel drives the
+	// same code from its screens, and this is how a deployment is scripted.
+	if len(os.Args) > 1 && os.Args[1] == "app" {
+		runAppCommand(os.Args[2:])
+		return
+	}
 
 	langFlag := flag.String("language", "", "界面语言 / UI language: C (中文) or E (English)")
 	iconsFlag := flag.String("icons", "", "图标方案 / icon set: symbols, ascii (or on, off)")
@@ -60,7 +67,7 @@ func main() {
 	skinFlag := flag.String("skin", "", "界面皮肤 / UI skin: jade, aurora, ember, graphite (or a-d)")
 	showVersion := flag.Bool("version", false, "显示版本 / show version")
 	render := flag.Bool("render", false, "渲染一次仪表盘后退出 / render once and exit")
-	screen := flag.String("screen", "", "配合 --render 渲染指定界面，用栏目 id（kernel/node/domain/bbr…）、system、task 或 bbr-versions / with --render, draw this screen by section id, or system, task, bbr-qdisc, bbr-versions, kernel-switch")
+	screen := flag.String("screen", "", "配合 --render 渲染指定界面，用栏目 id（site/node/domain/bbr…）、system、task 或 bbr-versions / with --render, draw this screen by section id, or system, task, bbr-qdisc, bbr-versions")
 	applyFirewall := flag.Bool("apply-firewall", false, "应用端口跳跃防火墙规则 / apply port-hopping firewall rules")
 	renewCerts := flag.Bool("renew-certs", false, "续期证书并重载服务（供定时器调用）/ renew certificates and reload the services")
 	installTimer := flag.Bool("install-renew-timer", false, "安装证书续期定时器 / install the certificate renewal timer")
@@ -138,6 +145,23 @@ func runSubscribeService() {
 		},
 		Log: logf,
 	}
+	// The camouflage site runs in this process: it serves the subscription handler
+	// under /sub/ and the chosen application everywhere else, on the domain's
+	// certificate. It stays off unless the operator turned it on and the domain
+	// has a certificate to serve — a site with a self-signed certificate would be
+	// worse than no site at all.
+	cfg := state.Load()
+	if site, ok := frontOptions(cfg, options.Handler()); ok {
+		site.Log = logf
+		go func() {
+			if err := front.Run(ctx, site); err != nil {
+				logf("front: " + err.Error())
+			}
+		}()
+	} else if cfg.FrontEnabled {
+		logf("front: enabled but not served — check the domain certificate and the chosen application")
+	}
+
 	if err := options.Run(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

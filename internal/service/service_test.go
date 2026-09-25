@@ -65,3 +65,16 @@ func TestUnitIdentityIsUnchanged(t *testing.T) {
 		t.Errorf("systemd unit lost its description:\n%s", unit)
 	}
 }
+
+// The camouflage site is served by the subscription service unit, so a restart aimed
+// at the site must name that unit: restarting the node's unit instead would leave the
+// site off while looking like it worked.
+func TestRestartTargetsTheNamedUnit(t *testing.T) {
+	got := CommandFor(sysinfo.SubServiceName, "restart")
+	if !strings.Contains(got, sysinfo.SubServiceName) {
+		t.Errorf("CommandFor(%q, restart) = %q, want it to name that unit", sysinfo.SubServiceName, got)
+	}
+	if node := Command("restart"); strings.Contains(node, sysinfo.SubServiceName) {
+		t.Errorf("Command(restart) = %q, want the node unit", node)
+	}
+}

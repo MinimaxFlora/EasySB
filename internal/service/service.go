@@ -142,35 +142,50 @@ func DaemonReload() error {
 // Command is the command line Do runs for an action, so a log line naming the
 // command cannot disagree with what was run — on OpenRC the command is
 // rc-service, not systemctl.
-func Command(action string) string {
-	name, args := command(action)
-	return name + " " + strings.Join(args, " ")
+func Command(action string) string { return CommandFor(sysinfo.ServiceName, action) }
+
+// CommandFor is Command for a named unit: the panel runs two of them, the node and
+// the subscription service that also serves the camouflage site.
+func CommandFor(name, action string) string {
+	cmd, args := commandFor(name, action)
+	return cmd + " " + strings.Join(args, " ")
 }
 
 // command maps an action onto the tool of the init system in use.
-func command(action string) (string, []string) {
+func command(action string) (string, []string) { return commandFor(sysinfo.ServiceName, action) }
+
+// commandFor maps an action on a named unit onto the tool of the init system in use.
+func commandFor(name, action string) (string, []string) {
 	if Detect() == OpenRC {
-		name := "rc-service"
-		args := []string{sysinfo.ServiceName, action}
+		cmd := "rc-service"
+		args := []string{name, action}
 		if action == "enable" {
-			name, args = "rc-update", []string{"add", sysinfo.ServiceName, "default"}
+			cmd, args = "rc-update", []string{"add", name, "default"}
 		} else if action == "disable" {
-			name, args = "rc-update", []string{"del", sysinfo.ServiceName, "default"}
+			cmd, args = "rc-update", []string{"del", name, "default"}
 		}
-		return name, args
+		return cmd, args
 	}
-	return "systemctl", []string{action, sysinfo.ServiceName}
+	return "systemctl", []string{action, name}
 }
 
-// Do performs a lifecycle action: start, stop, restart, enable or disable.
+// Do performs a lifecycle action on the node service: start, stop, restart, enable
+// or disable.
 func Do(ctx context.Context, action string) error {
-	name, args := command(action)
+	return DoFor(ctx, sysinfo.ServiceName, action)
+}
 
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Env = append(os.Environ(), "LC_ALL=C")
-	out, err := cmd.CombinedOutput()
+// DoFor performs a lifecycle action on a named unit. The camouflage site lives in
+// the subscription service unit rather than the node's, so the panel has to be able
+// to name which one it means.
+func DoFor(ctx context.Context, name, action string) error {
+	cmd, args := commandFor(name, action)
+
+	execCmd := exec.CommandContext(ctx, cmd, args...)
+	execCmd.Env = append(os.Environ(), "LC_ALL=C")
+	out, err := execCmd.CombinedOutput()
 	if err != nil {
-		return wrap(action, out, err)
+		return wrapFor(name, action, out, err)
 	}
 	return nil
 }
@@ -186,9 +201,15 @@ func Active(ctx context.Context) bool {
 }
 
 func wrap(action string, out []byte, err error) error {
+	return wrapFor(sysinfo.ServiceName, action, out, err)
+}
+
+// wrapFor builds the error a failed lifecycle action reports, naming the unit it
+// acted on.
+func wrapFor(name, action string, out []byte, err error) error {
 	msg := strings.TrimSpace(string(out))
 	if msg == "" {
 		msg = err.Error()
 	}
-	return errors.New(action + " " + sysinfo.ServiceName + ": " + msg)
+	return errors.New(action + " " + name + ": " + msg)
 }

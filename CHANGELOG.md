@@ -8,6 +8,12 @@
 
 ### 新增
 
+- **伪装站点：用真实应用撑起域名的门面**：新增主菜单「伪装站点」，面板可以直接安装并托管**真实应用**（OpenList 网盘、Memos 备忘、哪吒 dashboard、Komari 探针），由面板自己的 HTTPS 服务把它们挂在域名下——**探测域名看到的是一个能用的站点，而不是一个代理端口**。四个应用全部来自各自官方 GitHub releases（OpenList 校 md5、Memos 校 sha256、哪吒上游没发校验文件、Komari 直接发布可执行文件），装到 `/opt/easysb/apps/<应用>/`、写成 `easysb-<应用>.service`、数据放在应用自己的目录里；面板里能装、能更新、能启停、能改端口、能看日志（OpenList 首次登录的密码就在日志里），卸载前会先列出将删除的确切路径并要求确认。
+- **面板内置反代，不装 nginx**：`internal/front` 在 **443** 上用域名证书提供服务，同域名按路径分流——`/sub/*` 交给订阅服务本体，其余全部反代给选中的伪装应用。**不再有任何明文 HTTP 入口**：没有域名证书时伪装站点拒绝启用（自签证书的站点比没有站点更糟），80 端口只在申请/续期证书时被 acme.sh 临时借用。反代支持 WebSocket，应用只监听 `127.0.0.1`（OpenList 与哪吒把监听地址写在配置文件里，安装时会改成回环再重启；Memos 与 Komari 直接用命令行参数），因此应用的端口不需要对外暴露。证书续期后新的证书下一个握手就生效，不需要重启面板。
+- **访问日志**：每次请求记一行（时间、来源 IP、Host、方法、路径、状态码、UA）到 `/etc/sing-box/easysb-front.log`，超过 512KB 自动压到最近 200 行；面板「伪装站点 → 访问日志」里直接翻看，用于分辨正常访客与扫描器。
+- **`easysb app` 子命令**：`app list`、`app install|update|uninstall|start|stop|restart|status|logs|port <应用>`、`app site <应用>|off`——面板界面与命令行走同一套代码，部署可以脚本化。
+- **状态文件新增**：`FRONT_ENABLED`、`FRONT_APP`、`FRONT_PORT`、`APP_<应用>_PORT`；旧版本不认识它们时会原样保留。
+
 - **内核编进面板，节点就是面板自己**：`go.mod` 直接依赖 `github.com/sagernet/sing-box`（当前 `v1.14.2`），发布工作流用 `with_quic,with_grpc,with_utls,with_v2ray_api` 构建并把它注入 `constant.Version`，`internal/sbcore` 是这层宿主（`Check` 建实例即校验、`Run` 起节点、`RealityKeypair` 进程内生成与客户端同编码的密钥对）。于是**安装只剩一个二进制，任何环节都不再下载内核**：`sb` 第一次打开就是「可直接部署节点」的状态。代价是体积（linux/amd64 约 60MB，strip 后 40MB 出头）与耦合：**sing-box 版本随面板版本**，升内核 = 改 `go.mod` 的依赖版本 + 发一版面板。
 - **`easysb core` 子命令**：`core run -c <配置>` 是节点本体（sing-box 服务单元执行的就是它），`core check -c <配置>` 与面板部署前的校验走同一条库路径（等价 `sing-box check`，但不再是子进程），`core version` 打印内核版本、运行环境与构建标签。Reality 密钥对与 UUID 也改成进程内生成，不再 fork 内核。
 - **内核页变成信息页**：主菜单「内核管理」改为「内核信息」，只读——面板内置的 sing-box 版本、是否带流量统计、服务与节点状态；版本行与看板显示「1.14.2 [正式版] · 面板内置」。
@@ -15,6 +21,7 @@
 
 ### 变更
 
+- **主菜单去掉「内核信息」，让位给「伪装站点」**：内核编译进面板之后没有可换、可装、可切的东西，这一页只剩读数，已并入顶部状态条与「版本更新」页；主菜单现在是 10 项：节点管理 / 域名管理 / 伪装站点 / 订阅管理 / 账号管理 / 服务管理 / 系统信息 / BBR 管理 / 版本更新 / 卸载脚本。相应的 i18n 键、看板函数与皮肤导航分组一并清理。
 - **内核管理整体移除**：没有可换的内核二进制了，「切换内核 / 更新内核」、通道 × 来源的四个组合、`internal/kernel` 与 `internal/core` 的发行版探测 / 下载 / 落地、以及 `--install-core` 系列参数全部删除；`install.sh` 不再有内核安装步骤（`--no-core` 也一并去掉）。
 - **服务单元指向面板**：`ExecStart` 由 `/etc/sing-box/sing-box run -c …` 改为 `/usr/local/bin/easysb core run -c …`（OpenRC 的 `command_args` 同步）；判定面板路径与订阅服务共用同一条规则（`sysinfo.PreferredExecutable`，原先在 `internal/subd` 里）。
 - **状态键收敛**：`CORE_SOURCE` / `CORE_CHANNEL` 不再写入，`STATS_API` 恒为可用；旧机器上残留的值会被忽略，`/etc/sing-box/sing-box` 若还在也只是历史文件（卸载脚本照旧清掉 `/etc/sing-box`）。

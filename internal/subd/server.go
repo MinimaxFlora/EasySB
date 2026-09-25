@@ -120,6 +120,11 @@ func (o Options) transport(cfg state.Config) (addr, certFile, keyFile string) {
 	return addr, fullchain, key
 }
 
+// Handler exposes the subscription routes to another listener. The camouflage
+// front serves them under the operator's domain without a second process, and
+// without a hop through the loopback interface.
+func (o Options) Handler() http.Handler { return o.handler() }
+
 func (o Options) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc(SubPath, o.handleSubscription)

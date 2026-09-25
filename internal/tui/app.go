@@ -54,6 +54,10 @@ type App struct {
 	// accounts is the snapshot the account menus render from; it is refreshed
 	// when the section is entered and after every task.
 	accounts []user.User
+	// appStatus and appVersion are the camouflage applications' snapshot, for the
+	// same reason: the section renders from a reading taken when it was entered.
+	appStatus  map[string]string
+	appVersion map[string]string
 	// bbrVersions is the published kernel list the BBR section renders from, with
 	// bbrStatus as the local half of the reading: fetched when the list is opened.
 	bbrVersions        []bbr.Release

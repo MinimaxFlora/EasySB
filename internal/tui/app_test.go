@@ -13,6 +13,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/MinimaxFlora/EasySB/internal/apps"
 	"github.com/MinimaxFlora/EasySB/internal/bbr"
 	"github.com/MinimaxFlora/EasySB/internal/i18n"
 	"github.com/MinimaxFlora/EasySB/internal/prefs"
@@ -105,13 +106,13 @@ func TestDashboardRendersStatus(t *testing.T) {
 func TestRecursiveNavigation(t *testing.T) {
 	a := newTestApp(t)
 
-	m, _ := a.Update(press(tea.KeyDown))
-	a = m.(*App)
+	// The main menu opens on the node section: it is the first entry, because the
+	// core is part of this binary and has no page of its own.
 	if got := a.selected().id; got != "node" {
 		t.Fatalf("expected node selected, got %s", got)
 	}
 
-	m, _ = a.Update(press(tea.KeyEnter))
+	m, _ := a.Update(press(tea.KeyEnter))
 	a = m.(*App)
 	if a.current().id != "node" {
 		t.Fatalf("expected node menu, got %s", a.current().id)
@@ -150,9 +151,7 @@ func TestRecursiveNavigation(t *testing.T) {
 
 func TestNavRowReturnsToParent(t *testing.T) {
 	a := newTestApp(t)
-	m, _ := a.Update(press(tea.KeyDown))
-	a = m.(*App)
-	m, _ = a.Update(press(tea.KeyEnter))
+	m, _ := a.Update(press(tea.KeyEnter))
 	a = m.(*App)
 	if a.current().id != "node" {
 		t.Fatalf("expected node menu, got %s", a.current().id)
@@ -197,7 +196,7 @@ func TestRootMenuHasNoNav(t *testing.T) {
 	// The root entries are the panel's map: every screen has to be reachable from
 	// here, and from the navigation grouping as well, or it is hidden behind a
 	// scroll nobody knows about.
-	want := []string{"kernel", "node", "domain", "subscribe", "users", "service", "system", "bbr", "script-update", "uninstall"}
+	want := []string{"node", "domain", "site", "subscribe", "users", "service", "system", "bbr", "script-update", "uninstall"}
 	got := map[string]bool{}
 	for _, n := range a.current().nodes {
 		got[n.id] = true
@@ -250,21 +249,22 @@ func TestRootMenuHasNoNav(t *testing.T) {
 	}
 }
 
-func TestKernelMenuEntries(t *testing.T) {
+func TestSiteMenuEntries(t *testing.T) {
 	a := newTestApp(t)
-	a.push(buildKernel())
-	// The core is part of the panel, so the page carries no actions: it is the reading
-	// plus the navigation row.
-	if got := len(a.current().nodes); got != 0 {
-		t.Fatalf("kernel menu has %d entries, want none", got)
+	a.push(a.siteMenu())
+	// The section carries the state line, the facade picker, one entry per
+	// catalogue application and the access log, plus the navigation row.
+	want := len(apps.Catalog()) + 3
+	if got := len(a.current().nodes); got != want {
+		t.Fatalf("site menu has %d entries, want %d", got, want)
 	}
 	if !a.hasNavRow() {
-		t.Fatalf("kernel menu should show a navigation row")
+		t.Fatalf("site menu should show a navigation row")
 	}
 	view := a.View().Content
-	for _, label := range []string{i18n.Chinese.T("kernel_title"), i18n.Chinese.T("nav_back")} {
+	for _, label := range []string{i18n.Chinese.T("site_title"), i18n.Chinese.T("nav_back")} {
 		if !strings.Contains(view, label) {
-			t.Fatalf("kernel menu view missing %q: %s", label, view)
+			t.Fatalf("site menu view missing %q: %s", label, view)
 		}
 	}
 	m, _ := a.Update(press('0'))
@@ -272,8 +272,8 @@ func TestKernelMenuEntries(t *testing.T) {
 	if !a.onNavRow() {
 		t.Fatalf("digit 0 should select the navigation row in a submenu")
 	}
-	if a.current().id != "kernel" {
-		t.Fatalf("expected kernel submenu, got %s", a.current().id)
+	if a.current().id != "site" {
+		t.Fatalf("expected site submenu, got %s", a.current().id)
 	}
 }
 
@@ -467,7 +467,7 @@ func TestDashboardShowsLogoAndMenuDescriptions(t *testing.T) {
 // second-level page shows a 看板 of its own in the top box and its entries in the
 // bottom one, so moving between pages swaps those two contents and nothing else.
 func TestEverySectionHasItsOwnPanel(t *testing.T) {
-	ids := []string{"kernel", "node", "domain", "subscribe", "users", "service", "bbr", "script-update", "uninstall"}
+	ids := []string{"site", "node", "domain", "subscribe", "users", "service", "bbr", "script-update", "uninstall"}
 	seen := make(map[string]string, len(ids))
 	for _, id := range ids {
 		a := newTestApp(t)
@@ -554,7 +554,7 @@ func TestBBRMenuShape(t *testing.T) {
 	// Two columns of five fill the card: the second column starts at the entries
 	// after the fifth, and the last entry stays reachable on the same screen.
 	view := a.SnapshotScreen("", 100, 40)
-	for _, want := range []string{i18n.Chinese.T("kernel_title"), i18n.Chinese.T("svc_title"), i18n.Chinese.T("menu_uninstall")} {
+	for _, want := range []string{i18n.Chinese.T("site_title"), i18n.Chinese.T("svc_title"), i18n.Chinese.T("menu_uninstall")} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("main menu missing %q:\n%s", want, view)
 		}
@@ -1110,29 +1110,16 @@ func TestThemeEnvOverrideWins(t *testing.T) {
 // compiled into this binary. Whether it can count traffic is still measured, because the
 // deploy path writes the stats block from it.
 func TestCoreSourceLabel(t *testing.T) {
-	cases := []struct {
-		name    string
-		stats   bool
-		wantRow string
-	}{
-		{"counters present", true, "面板内置 · 带流量统计"},
-		{"binary without counters", false, "面板内置 · 无流量统计"},
+	a := newTestApp(t)
+	// The core is compiled into this binary, so there is one answer and no page
+	// offers to change it.
+	if got := a.coreSourceLabel(); got != "面板内置" {
+		t.Fatalf("coreSourceLabel = %q, want 面板内置", got)
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			a := newTestApp(t)
-			a.status.StatsCapable = tc.stats
-			if got := a.coreSourceLabel(); got != "面板内置" {
-				t.Fatalf("coreSourceLabel = %q, want 面板内置", got)
-			}
-			if got := a.coreSourceText(); got != tc.wantRow {
-				t.Fatalf("coreSourceText = %q, want %q", got, tc.wantRow)
-			}
-			// The version line names the source too, so the answer is on every page.
-			summary, _ := a.coreSummary()
-			if !strings.Contains(summary, "面板内置") {
-				t.Fatalf("coreSummary = %q, want it to name the built-in core", summary)
-			}
-		})
+	a.status.CoreVersion = "1.14.2"
+	a.status.CoreChannel = "stable"
+	summary, _ := a.coreSummary()
+	if !strings.Contains(summary, "面板内置") {
+		t.Fatalf("coreSummary = %q, want it to name the built-in core", summary)
 	}
 }

@@ -5,6 +5,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MinimaxFlora/EasySB/internal/apps"
+	"github.com/MinimaxFlora/EasySB/internal/cert"
 	"github.com/MinimaxFlora/EasySB/internal/state"
 	"github.com/MinimaxFlora/EasySB/internal/theme"
 	"github.com/MinimaxFlora/EasySB/internal/ui"
@@ -168,8 +170,8 @@ func (a *App) sectionMenu(w, h int) []string {
 // its entries, and only those two contents are swapped as the navigation moves.
 func (a *App) sectionPanel(w int) (string, []string) {
 	switch a.sectionID() {
-	case "kernel":
-		return a.lang.T("panel_kernel"), a.kernelBody(w)
+	case "site":
+		return a.lang.T("panel_site"), a.siteBody(w)
 	case "node":
 		return a.lang.T("panel_node"), a.nodeBody(w)
 	case "domain":
@@ -190,22 +192,33 @@ func (a *App) sectionPanel(w int) (string, []string) {
 	return a.lang.T("panel_overview"), a.overviewBody(w)
 }
 
-// kernelBody is the core section's 看板: which sing-box is installed, whether the
-// service runs it, and whether its node is deployed.
-func (a *App) kernelBody(w int) []string {
+// siteBody is the camouflage section's 看板: what the domain serves, on which
+// certificate, and where the applications listen.
+func (a *App) siteBody(w int) []string {
 	s := a.style()
 	inner := ui.InnerWidth(s, w)
-	coreText, coreKind := a.coreSummary()
-	nodeText, nodeKind := a.nodeState()
-	service, svcKind := a.serviceState()
+	cfg := state.Load()
+
+	siteText, siteKind := a.lang.T("site_off"), ui.KindWarn
+	if cfg.FrontEnabled {
+		siteText, siteKind = "https://"+cfg.Domain, ui.KindOK
+	}
+	appText := a.lang.T("site_no_app")
+	if app, ok := apps.Lookup(cfg.FrontApp); ok {
+		appText = app.Name
+	}
+	certText, certKind := a.lang.T("site_need_cert"), ui.KindWarn
+	if _, _, ok := cert.Paths(cfg.Domain); ok {
+		certText, certKind = a.lang.T("site_cert_ok"), ui.KindOK
+	}
+
 	left := [][2]string{
-		a.kv("status_core", coreText, coreKind),
-		a.kv("kernel_source", a.coreSourceText(), ui.KindPlain),
-		a.kv("status_service", service, svcKind),
+		a.kv("site_status_site", siteText, siteKind),
+		a.kv("site_status_app", appText, ui.KindPlain),
 	}
 	right := [][2]string{
-		a.kv("status_node", nodeText, nodeKind),
-		a.kv("status_ports", a.panelValue(enabledPorts(a.status.Ports)), ui.KindPlain),
+		a.kv("site_status_listen", orDash(cfg.FrontListen()), ui.KindPlain),
+		a.kv("site_status_cert", certText, certKind),
 	}
 	return ui.TwoCol(s, left, right, inner)
 }
@@ -529,20 +542,6 @@ func (a *App) coreSummary() (string, ui.Kind) {
 // compiled into this binary — which is also why no page offers to switch it.
 func (a *App) coreSourceLabel() string {
 	return a.lang.T("kernel_source_builtin")
-}
-
-// coreSourceText words the installed core's source together with whether it can count
-// per-account traffic. The counter half is measured from the binary, not remembered, so
-// it cannot drift from what is actually installed.
-func (a *App) coreSourceText() string {
-	if a.status.CoreVersion == "" {
-		return a.lang.T("state_unknown")
-	}
-	stats := a.lang.T("kernel_stats_off")
-	if a.status.StatsCapable {
-		stats = a.lang.T("kernel_stats_on")
-	}
-	return a.coreSourceLabel() + " · " + stats
 }
 
 // overviewBody is the service/node/version card.

@@ -44,6 +44,9 @@ editing.
 | `/etc/sing-box/sing-box` | — | no core binary: the node is the panel, started as `easysb core run -c …`. A file left over from an older install is unused |
 | `/etc/sing-box/config.json` | `internal/config` | rendered server config |
 | `/etc/sing-box/cert/` | `internal/cert` | certificate and key |
+| `/opt/easysb/apps/<app>/` | `internal/apps` | camouflage applications the domain serves: the binary, a `VERSION` stamp and the application's own data directory, one directory per application |
+| `/etc/systemd/system/easysb-<app>.service` or `/etc/init.d/easysb-<app>` | `internal/apps` | one service per installed application, namespaced so it cannot collide with a package's own unit; the application is started with the loopback address so only the front is reachable |
+| `/etc/sing-box/easysb-front.log` | `internal/front` | access log of the camouflage site (time, client, host, method, path, status, UA), compacted to its most recent lines instead of growing without bound |
 | `/etc/sing-box/easysb-users.json` | `internal/user` | accounts: credentials, quotas, expiry and counters (`0600`) |
 | `/etc/systemd/system/easysb.service` or `/etc/init.d/easysb` | `internal/service` | subscription service unit (`easysb --serve`) |
 | `/etc/systemd/system/sing-box.service` or `/etc/init.d/sing-box` | `internal/service` | core service unit |
@@ -66,6 +69,8 @@ editing.
 | `internal/firewall` | Hysteria2 port-hopping DNAT rules and the boot restore unit |
 | `internal/bbr` | BBR: read the running kernel's congestion control state, enable it through sysctl drop-ins (recording what they replaced so clearing can undo them), and install the prebuilt BBRv3 kernels published by Linux-BBR-v3 (release/tag discovery, mirror fallback, dpkg) |
 | `internal/user` | account model and store: per-protocol credentials, quota/expiry evaluation, subscription tokens |
+| `internal/apps` | the camouflage applications: the catalogue (OpenList, Memos, Nezha dashboard, Komari) and the one install path they share — resolve the upstream release, download it, verify the checksum the project publishes, unpack the single binary, write the unit and start it; plus status, update, port rewrite, logs and a confirmed uninstall. Applications that keep their listen address in a config file written on first start (OpenList, Nezha) are patched to loopback and restarted |
+| `internal/front` | the camouflage site's face: one HTTPS listener on the domain that routes `/sub/*` to the subscription handler and reverse-proxies everything else to the chosen application, re-reads a renewed certificate without a restart, and records every request. It refuses to start without a certificate for the domain: a self-signed site is worse than no site |
 | `internal/subd` | subscription HTTP service: TLS, User-Agent negotiation, response headers, accounting loop |
 | `internal/stats` | gRPC client for the core's `StatsService`, usage accounting, quota enforcement |
 | `internal/subscribe` | subscription URLs, per-protocol share links, QR payloads, and the sing-box JSON, mihomo YAML and v2rayN base64 documents for one account |

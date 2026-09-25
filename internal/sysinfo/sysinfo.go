@@ -35,6 +35,8 @@ const (
 	UsersFile = WorkDir + "/easysb-users.json"
 	// SubLogFile collects the subscription service log.
 	SubLogFile = WorkDir + "/easysb-sub.log"
+	// FrontLogFile collects the camouflage site's access log.
+	FrontLogFile = WorkDir + "/easysb-front.log"
 
 	// The subscription service is its own unit so the panel can restart it
 	// without touching the core.
@@ -64,16 +66,16 @@ type Status struct {
 	// CoreSource records where the installed core was installed from: "build" for
 	// this repository's builds, "upstream" for the official releases. Empty when the
 	// install predates the record, in which case the build tags decide.
-	CoreSource string
-	Service    string
-	Autostart  string
-	Domain     string
-	SubPort    int
+	CoreSource  string
+	Service     string
+	Autostart   string
+	Domain      string
+	SubPort     int
 	SubSyncSecs int
-	Hop        string
-	Ports      []PortInfo
-	Deployed   bool
-	StateFound bool
+	Hop         string
+	Ports       []PortInfo
+	Deployed    bool
+	StateFound  bool
 
 	Hostname string
 	OS       string
