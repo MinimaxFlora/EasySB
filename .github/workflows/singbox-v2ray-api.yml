@@ -156,14 +156,14 @@ jobs:
         arch: [amd64, arm64, armv7, armv6, 386, riscv64, s390x]
     steps:
       - name: Check out the upstream tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: ${{ env.UPSTREAM }}
           ref: ${{ matrix.target.tag }}
           fetch-depth: 1
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: false
@@ -259,7 +259,7 @@ jobs:
       matrix:
         channel: [stable, alpha]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Delete cores the channel no longer offers
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
