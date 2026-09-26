@@ -43,6 +43,30 @@ GOARCH_riscv64 := riscv64
 GOARCH_s390x   := s390x
 GOARM_armv7    := 7
 
+# 打包元数据 / package metadata. The Debian architecture names differ from the Go
+# asset names (armv7 ships as armhf, 386 as i386), so both mappings live next to
+# each other and the release files are never re-typed in the workflow.
+PKG_NAME       ?= easysb
+PKG_MAINTAINER ?= MinimaxFlora <zj18139624826@gmail.com>
+PKG_LICENSE    ?= GPL-3.0-or-later
+PKG_URL        ?= https://github.com/MinimaxFlora/EasySB
+PKG_DESC       ?= EasySB: a sing-box panel with the core compiled in
+DEB_EXEC       := /usr/bin/easysb
+DEB_DIR        ?= $(DIST)/deb
+APT_DIR        ?= $(DIST)/apt
+# 签名可选：CI 里存在 GPG_PRIVATE_KEY 密钥时会导入并用它签名 / signing is optional:
+# when CI has imported a GPG key it is passed here, otherwise the index stays unsigned.
+GPG_KEY_ID     ?=
+
+DEBARCH_amd64   := amd64
+DEBARCH_arm64   := arm64
+DEBARCH_armv7   := armhf
+DEBARCH_386     := i386
+DEBARCH_riscv64 := riscv64
+DEBARCH_s390x   := s390x
+
+DEB_ARCHS := $(foreach a,$(ARCHES),$(DEBARCH_$(a)))
+
 comma := ,
 empty :=
 space := $(empty) $(empty)
@@ -51,7 +75,7 @@ space := $(empty) $(empty)
 
 .PHONY: build build-plain run test test-plain test-race vet fmt fmt-check \
         lint check render screens dist dist-asset release-matrix install tidy \
-        version help clean
+        version deb deb-asset apt-index help clean
 
 # --- 构建 / Build -------------------------------------------------------------
 
@@ -122,6 +146,69 @@ dist-asset: ## 交叉编译单个发布架构（ASSET=amd64 / arm64 / armv7 / 38
 
 release-matrix: ## 打印发布架构矩阵 JSON（发布工作流用来生成动态矩阵）
 	@printf '%s\n' '$(ARCHES)' | sed 's/ /","/g; s/^/["/; s/$$/"]/'
+
+# --- 打包 / Packaging ---------------------------------------------------------
+
+deb: build ## 打包全部发布架构的 .deb 到 dist/
+	@set -e; for asset in $(ARCHES); do \
+		$(MAKE) --no-print-directory deb-asset ASSET=$$asset NO_BUILD=1; \
+	done
+
+deb-asset: ## 打包单个架构的 .deb（ASSET=amd64 / arm64 / armv7 / 386 / riscv64 / s390x）
+	@test -n "$(ASSET)" || { echo "ASSET 未设置 / ASSET required, one of: $(ARCHES)"; exit 1; }
+	@test -n "$(DEBARCH_$(ASSET))" || { echo "未知架构 / unknown asset: $(ASSET), one of: $(ARCHES)"; exit 1; }
+	@command -v fpm >/dev/null 2>&1 || { echo "fpm 未安装 / fpm missing: sudo gem install --no-document fpm"; exit 1; }
+	@if [ -z "$(NO_BUILD)" ]; then $(MAKE) --no-print-directory build; fi
+	@if [ -z "$(REUSE_DIST)" ]; then $(MAKE) --no-print-directory dist-asset ASSET=$(ASSET); fi
+	@test -s "$(DIST)/easysb-linux-$(ASSET)" || { echo "$(DIST)/easysb-linux-$(ASSET) 缺失 / missing (or pass REUSE_DIST=1 after a build)"; exit 1; }
+	@set -e; \
+	stage="$(DEB_DIR)/$(ASSET)"; \
+	rm -rf "$$stage"; \
+	mkdir -p "$$stage/usr/bin" \
+	         "$$stage/usr/lib/systemd/system" \
+	         "$$stage/usr/share/doc/$(PKG_NAME)" \
+	         "$$stage/usr/share/licenses/$(PKG_NAME)"; \
+	install -m 0755 "$(DIST)/easysb-linux-$(ASSET)" "$$stage$(DEB_EXEC)"; \
+	ln -sf $(PKG_NAME) "$$stage/usr/bin/sb"; \
+	./$(BINARY) --print-unit node --unit-exec $(DEB_EXEC) > "$$stage/usr/lib/systemd/system/sing-box.service"; \
+	./$(BINARY) --print-unit sub  --unit-exec $(DEB_EXEC) > "$$stage/usr/lib/systemd/system/easysb.service"; \
+	install -m 0644 LICENSE "$$stage/usr/share/licenses/$(PKG_NAME)/LICENSE"; \
+	install -m 0644 LICENSE "$$stage/usr/share/doc/$(PKG_NAME)/copyright"; \
+	fpm -s dir -t deb \
+		--force \
+		-n $(PKG_NAME) -v $(VERSION) -a $(DEBARCH_$(ASSET)) \
+		--category net --license "$(PKG_LICENSE)" --description "$(PKG_DESC)" \
+		--url "$(PKG_URL)" --maintainer "$(PKG_MAINTAINER)" \
+		--deb-priority optional --depends ca-certificates \
+		--deb-field "Bugs: $(PKG_URL)/issues" \
+		--no-deb-generate-changes \
+		--after-install packaging/deb/postinst \
+		--after-remove packaging/deb/postrm \
+		--package "$(DIST)/$(PKG_NAME)_$(VERSION)_$(DEBARCH_$(ASSET)).deb" \
+		-C "$$stage" .; \
+	ls -lh "$(DIST)/$(PKG_NAME)_$(VERSION)_$(DEBARCH_$(ASSET)).deb"
+
+apt-index: ## 生成 apt 源索引到 dist/apt（设置 GPG_KEY_ID 时签名）
+	@command -v apt-ftparchive >/dev/null 2>&1 || { echo "apt-ftparchive 未安装 / missing: apt-get install -y apt-utils"; exit 1; }
+	@set -e; rm -rf "$(APT_DIR)"; mkdir -p "$(APT_DIR)"; \
+	cp -f $(DIST)/*.deb "$(APT_DIR)/"; \
+	cd "$(APT_DIR)"; \
+	apt-ftparchive packages . | sed 's|^Filename: \./|Filename: |' > Packages; \
+	gzip -9 -c Packages > Packages.gz; \
+	apt-ftparchive \
+		-o APT::FTPArchive::Release::Origin="$(PKG_NAME)" \
+		-o APT::FTPArchive::Release::Label="$(PKG_NAME)" \
+		-o APT::FTPArchive::Release::Suite=stable \
+		-o APT::FTPArchive::Release::Codename=stable \
+		-o APT::FTPArchive::Release::Architectures="$(DEB_ARCHS)" \
+		-o APT::FTPArchive::Release::Description="$(PKG_DESC)" \
+		release . > Release; \
+	if [ -n "$(GPG_KEY_ID)" ]; then \
+		gpg --batch --yes --armor --detach-sign -u "$(GPG_KEY_ID)" -o Release.gpg Release; \
+		gpg --batch --yes --clearsign -u "$(GPG_KEY_ID)" -o InRelease Release; \
+		gpg --batch --yes --armor --export "$(GPG_KEY_ID)" > $(PKG_NAME).gpg; \
+	fi; \
+	ls -lh .
 
 install: build ## 用刚构建的二进制执行安装（需要 root）
 	./install.sh --binary ./$(BINARY)

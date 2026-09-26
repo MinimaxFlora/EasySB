@@ -126,18 +126,20 @@ func WriteUnit() error {
 // writeNodeUnit renders the node unit for one executable and writes it.
 func writeNodeUnit(path, exe string, manager Manager) error {
 	if manager == OpenRC {
-		return os.WriteFile(path, []byte(nodeUnitBody(exe, manager)), 0o755)
+		return os.WriteFile(path, []byte(UnitBody(exe, manager)), 0o755)
 	}
-	if err := os.WriteFile(path, []byte(nodeUnitBody(exe, manager)), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(UnitBody(exe, manager)), 0o644); err != nil {
 		return err
 	}
 	return DaemonReload()
 }
 
-// nodeUnitBody is the node unit text: this panel, in core mode, on the node's config.
-// Keeping the text on its own lets a test read what the unit will run without writing to
-// a real unit directory.
-func nodeUnitBody(exe string, manager Manager) string {
+// UnitBody is the node unit text: this panel, in core mode, on the node's config. It is
+// exported because the packaging targets write the very same text into the .deb, so the
+// unit has one definition instead of a package copy that drifts from the runtime one.
+// Keeping the text on its own also lets a test read what the unit will run without
+// writing to a real unit directory.
+func UnitBody(exe string, manager Manager) string {
 	if manager == OpenRC {
 		return fmt.Sprintf(`#!/sbin/openrc-run
 name="sing-box"

@@ -15,7 +15,7 @@ import (
 func TestNodeUnitRunsThePanelAsTheNode(t *testing.T) {
 	for _, manager := range []Manager{Systemd, OpenRC} {
 		t.Run(string(manager), func(t *testing.T) {
-			text := nodeUnitBody("/usr/local/bin/easysb", manager)
+			text := UnitBody("/usr/local/bin/easysb", manager)
 			if !strings.Contains(text, "/usr/local/bin/easysb") {
 				t.Fatalf("the unit does not name the panel:\n%s", text)
 			}

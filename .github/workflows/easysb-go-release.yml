@@ -16,6 +16,7 @@ on:
       - 'VERSION'
       - 'release/TAGS'
       - 'Makefile'
+      - 'packaging/**'
       - 'install.sh'
       - '.github/workflows/easysb-go-release.yml'
   workflow_dispatch:
@@ -122,7 +123,109 @@ jobs:
 
             安装 / Install:
 
-            ```bash
+             ```bash
             bash <(curl -fsSL https://raw.githubusercontent.com/MinimaxFlora/EasySB/master/install.sh)
             ```
+
+            Debian / Ubuntu 也可以用 .deb 或 apt 源安装，见 README。
+            Debian and Ubuntu can also install the .deb or add the apt repository; see the README.
           files: dist/easysb-linux-*
+
+  # .deb 由 fpm 打包，包里的 systemd 单元由二进制自己打印（--print-unit），所以
+  # 安装进系统的单元与面板运行时写下的完全一致，不存在第二处定义。
+  # The .deb is assembled with fpm; the unit files come from the binary itself
+  # (--print-unit), so the packaged unit is the same text the panel writes at runtime.
+  deb:
+    needs: [prepare, build]
+    runs-on: ubuntu-26.04
+    strategy:
+      fail-fast: false
+      matrix:
+        asset: ${{ fromJSON(needs.prepare.outputs.assets) }}
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v7
+
+      - name: 下载该架构的二进制
+        uses: actions/download-artifact@v8
+        with:
+          name: easysb-linux-${{ matrix.asset }}
+          path: dist
+
+      - name: 安装 Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: 安装 fpm
+        run: sudo gem install --no-document fpm
+
+      - name: 打包 .deb
+        run: make deb-asset ASSET=${{ matrix.asset }} REUSE_DIST=1 COMMIT=${GITHUB_SHA}
+
+      - name: 上传 .deb
+        uses: actions/upload-artifact@v7
+        with:
+          name: easysb-deb-${{ matrix.asset }}
+          path: dist/*.deb
+          if-no-files-found: error
+
+  # apt 源放在固定标签 `debian` 上：URIs 必须稳定，所以索引和 .deb 都发布到该
+  # 标签，而不是每个版本一个标签。索引每次重建，只列出本次发布的版本。
+  # The apt repository lives on the fixed `debian` tag: apt needs a stable URI, so the
+  # index and the .deb files publish there. The index is rebuilt every run and lists
+  # only the version this run produced.
+  repo:
+    needs: deb
+    runs-on: ubuntu-26.04
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v7
+
+      - name: 下载全部 .deb
+        uses: actions/download-artifact@v8
+        with:
+          pattern: easysb-deb-*
+          path: dist
+          merge-multiple: true
+
+      - name: 安装 apt 索引工具
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq apt-utils
+
+      # 没有配置 GPG_PRIVATE_KEY 时索引保持未签名，README 里给出对应的 trusted=yes
+      # 源写法；配置后自动签名，可用 Signed-By 的写法。
+      # Without GPG_PRIVATE_KEY the index stays unsigned and the README documents the
+      # trusted=yes form; with it the index is signed and the Signed-By form works.
+      - name: 导入签名密钥（可选）
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          if [ -n "$GPG_PRIVATE_KEY" ]; then
+            printf '%s' "$GPG_PRIVATE_KEY" | gpg --batch --import
+            fingerprint="$(gpg --list-secret-keys --with-colons | awk -F: '/^fpr:/{print $10; exit}')"
+            echo "GPG_KEY_ID=$fingerprint" >> "$GITHUB_ENV"
+          fi
+
+      - name: 生成 apt 源索引
+        run: make apt-index GPG_KEY_ID="${GPG_KEY_ID:-}"
+
+      - name: 发布到 debian 源
+        uses: softprops/action-gh-release@v3
+        with:
+          token: ${{ github.token }}
+          tag_name: debian
+          name: EasySB apt repository
+          make_latest: false
+          overwrite_files: true
+          body: |
+            > EasySB apt 源 / apt repository
+
+            添加软件源后即可 `apt install easysb`，写法见项目 README。
+            Add the sources entry from the README, then `apt install easysb`.
+
+            该标签只承载 apt 索引与 .deb，不带版本历史；二进制仍在 `v<VERSION>` 标签。
+            This tag only carries the apt index and .deb files; binaries stay on `v<VERSION>`.
+          files: dist/apt/*

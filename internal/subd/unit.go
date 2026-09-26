@@ -51,7 +51,17 @@ error_log="%s"
 `, sysinfo.SubServiceName, exe, sysinfo.SubLogFile, sysinfo.SubLogFile)
 		return os.WriteFile(path, []byte(unit), 0o755)
 	}
-	unit := fmt.Sprintf(`[Unit]
+	if err := os.WriteFile(path, []byte(UnitBody(exe)), 0o644); err != nil {
+		return err
+	}
+	return daemonReload()
+}
+
+// UnitBody is the subscription unit text for one executable. It is exported because the
+// packaging targets write the very same text into the .deb, so the unit has one
+// definition instead of a package copy that drifts from the runtime one.
+func UnitBody(exe string) string {
+	return fmt.Sprintf(`[Unit]
 Description=EasySB subscription service
 Documentation=%s
 After=network.target nss-lookup.target
@@ -67,10 +77,6 @@ LimitNOFILE=infinity
 [Install]
 WantedBy=multi-user.target
 `, service.ProjectHome, exe)
-	if err := os.WriteFile(path, []byte(unit), 0o644); err != nil {
-		return err
-	}
-	return daemonReload()
 }
 
 // RemoveUnit deletes the unit and forgets the service.

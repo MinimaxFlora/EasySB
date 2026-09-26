@@ -23,6 +23,8 @@ Read `docs/` first, then the package you need:
 make            # build ./easysb with the tags from release/TAGS
 make check      # gofmt -l + go vet + go test, the pre-commit gate
 make dist       # cross-compile every release architecture into dist/
+make deb        # package the dist/ binaries into .deb files with fpm
+make apt-index  # turn those .deb files into the apt repository index
 ```
 
 `make help` lists every target. The bare Go commands still work; `make build` only
@@ -41,6 +43,11 @@ make screens    # render every screen and assert the layout (python3)
   second place. `install.sh`, the workflow, and `internal/update` share it.
   `VERSION` is embedded into the binary with `go:embed`; do not reintroduce a
   `main.version` default or a version constant in `install.sh`.
+- The `.deb` and the apt repository share the release's single sources: the arch
+  names come from the Makefile (`ARCHES` plus the `DEBARCH_*` mapping, because
+  Debian spells armv7 `armhf` and 386 `i386`), and the packaged systemd units are
+  printed by the binary (`easysb --print-unit node|sub`) rather than copied into
+  `packaging/`. A hand-written unit or a second arch list in the workflow drifts.
 - Keep `/etc/sing-box/easysb.conf` compatible with the legacy shell tool. Add
   keys, do not rename or repurpose them. The one exception is a key that
   described a component which no longer exists (v4 dropped `SUB_PORT` and

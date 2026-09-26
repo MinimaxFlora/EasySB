@@ -10,6 +10,8 @@
 
 - **Makefile**：常用命令从零散的 `go build` / `go test` / `gofmt` 收进一套目标——`make` 构建（读 `release/TAGS`、盖上提交短哈希）、`make check` 是提交前关卡（`gofmt -l` + `go vet` + 带标签测试）、`make dist` 交叉编译全部发布架构、`make render` / `make screens` 渲染并校验版式，另有 `run` / `test-plain` / `test-race` / `fmt` / `lint` / `install` / `tidy` / `version` / `clean`。`make help` 列出全部目标。标签与版本仍各读 `release/TAGS` / `VERSION`，Makefile 不另抄一份。
 - **发布工作流改为走 Makefile**：架构清单、构建标签、链接参数不再在工作流里另写一份——`make release-matrix` 输出架构矩阵 JSON 供动态矩阵使用，`make dist-asset` 按单一映射（armv7 = `GOARCH=arm` + `GOARM=7`）逐架构交叉编译，`make test` 跑带标签测试。测试从「每个架构各跑一遍」收敛为 `prepare` 作业里跑一次，构建矩阵随后基于同一份清单展开。
+- **`.deb` 安装包**：`make deb` 用 fpm 把 `dist/` 里的二进制打成 `easysb_<版本>_<架构>.deb`，可直接 `dpkg -i`；包内含 `/usr/bin/easysb`（内核已编入）、快捷指令 `/usr/bin/sb`、`sing-box.service`、`easysb.service` 与许可证。单元文本由二进制自己打印（`sb --print-unit node|sub`），与面板运行时写下的是同一段代码，包内不再存第二份。Debian 架构名在 Makefile 里集中定义（armv7 → `armhf`、386 → `i386`）。安装时不自动 enable / start：新机器还没有节点配置，由面板在配置完成后启用。
+- **apt 软件源**：`make apt-index` 用 `apt-ftparchive` 把同一批 `.deb` 生成 `Packages` / `Release`，发布工作流将它们发布到固定标签 `debian`。未配置 `GPG_PRIVATE_KEY` 时索引保持未签名（源中写 `Trusted: yes`），配置后自动签名并一并发布公钥 `easysb.gpg`，源中可写 `Signed-By`。
 
 ### 修复
 
