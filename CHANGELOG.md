@@ -20,7 +20,15 @@
 
 ### 变更
 
-- `install.sh` 的源码构建兜底 `DEFAULT_TAGS` 与 `release/TAGS` 对齐为 `with_quic,with_utls,with_v2ray_api`；`main.go` 的默认版本号由过期的 `4.2.2` 改为与 `VERSION` 一致的 `5.0.0`。
+- **版本号收敛到唯一来源**：`VERSION` 是唯一写下版本号的地方，现在用 `go:embed`
+  在编译期读进二进制。删除 `main.go` 的 `version = "5.0.0"` 默认值，以及发布工作流
+  与 `install.sh` 源码构建里的 `-ldflags -X main.version`：裸 `go build` 与发布版报告
+  同一个号，不再有第二个常量可以漂移。
+- **`install.sh` 不再写死版本号**：源码树内读根目录 `VERSION`，独立运行
+  （`curl | bash`）时从默认分支读取同一个文件（与 `internal/update` 同址，避开 GitHub
+  匿名 API 的限流），`--binary` 则读二进制自己报告的 `--version`；`RELEASE_TAG` 一律由
+  解析出的版本派生。
+- `install.sh` 的源码构建兜底 `DEFAULT_TAGS` 与 `release/TAGS` 对齐为 `with_quic,with_utls,with_v2ray_api`（离开源码树、读不到 `release/TAGS` 时的唯一兜底）。
 - 清理死代码：TUI 不可达的 `q` 分支、未使用的 `menuDescColumn` / `menuRowParts`、`progressModel.afterLinks` 字段，以及主题里已随左侧导航移除的 `Metrics.Gutter` / `Metrics.NavWidth`。
 
 ## [5.0.0] - 2026-09-26

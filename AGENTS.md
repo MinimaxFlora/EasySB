@@ -36,6 +36,8 @@ Render one TUI frame without a TTY (good for layout checks):
 
 - The release tag is always `v<VERSION>`. Derive it; never hardcode it in a
   second place. `install.sh`, the workflow, and `internal/update` share it.
+  `VERSION` is embedded into the binary with `go:embed`; do not reintroduce a
+  `main.version` default or a version constant in `install.sh`.
 - Keep `/etc/sing-box/easysb.conf` compatible with the legacy shell tool. Add
   keys, do not rename or repurpose them. The one exception is a key that
   described a component which no longer exists (v4 dropped `SUB_PORT` and
