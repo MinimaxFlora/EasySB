@@ -95,6 +95,10 @@ func (a *App) adoptTaskResult() {
 	a.toolResults[outcome.id] = outcome
 	a.report = &outcome
 	a.saveBoard()
+	// The result replaces the running screen as soon as the run ends: the task screen has
+	// said everything it has to say by then, and making the operator press a key to see a
+	// measurement they asked for is a step with nothing in it.
+	a.task = nil
 }
 
 // rerunReport starts the reported tool again, which is the one thing an operator wants
@@ -248,7 +252,7 @@ func (a *App) toolboxBody(w int) []string {
 				pending++
 				continue
 			}
-			value, kind := outcome.line(lang)
+			value, kind := a.outcomeLine(outcome)
 			ran = append(ran, a.kv("toolbox_"+tool.ID, value, kind))
 		}
 	}
@@ -266,18 +270,20 @@ func (a *App) toolboxBody(w int) []string {
 	return out
 }
 
-// line is the board's rendering of an outcome: its summary and how long ago it ran, or the
-// word for a run that failed. The time comes from the run, not from the moment it is read,
-// because a board loaded from disk is showing a measurement taken earlier.
-func (o toolOutcome) line(lang i18n.Lang) (string, ui.Kind) {
+// outcomeLine is the board's rendering of an outcome: its summary and how long ago it ran,
+// or the word for a run that failed. The time comes from the run, not from the moment it is
+// read, because a board loaded from disk is showing a measurement taken earlier. The summary
+// goes through the same wording as the report, so the board never shows a raw `unlocked 8 ·
+// blocked 1 (9)` next to a table that says 解锁.
+func (a *App) outcomeLine(o toolOutcome) (string, ui.Kind) {
 	if o.err != nil {
-		return lang.T("toolbox_failed") + " · " + sinceText(lang, o.when), ui.KindErr
+		return a.lang.T("toolbox_failed") + " · " + sinceText(a.lang, o.when), ui.KindErr
 	}
-	summary := o.result.Summary
+	summary := a.localizeText(o.result.Summary)
 	if summary == "" {
-		summary = lang.Format("toolbox_rows", len(o.result.Rows))
+		summary = a.lang.Format("toolbox_rows", len(o.result.Rows))
 	}
-	return summary + " · " + sinceText(lang, o.when), ui.KindOK
+	return summary + " · " + sinceText(a.lang, o.when), ui.KindOK
 }
 
 // sinceText words how long ago a run happened, in the coarse units a board needs.

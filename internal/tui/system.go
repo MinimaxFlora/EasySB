@@ -38,7 +38,9 @@ func newSystemModel(a *App) *systemModel {
 func (m *systemModel) handleKey(msg tea.KeyMsg, a *App) (tea.Cmd, bool) {
 	key := msg.String()
 	switch key {
-	case "esc", "q", "backspace":
+	case "esc", "backspace":
+		// q is deliberately absent: it quits the panel from every page, so it must
+		// reach the global shortcut below rather than closing this screen.
 		a.closeSystem()
 		return nil, true
 	case "up", "k":

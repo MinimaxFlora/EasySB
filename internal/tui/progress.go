@@ -258,7 +258,9 @@ func (p *progressModel) handleKey(msg tea.KeyPressMsg, lang i18n.Lang) (tea.Cmd,
 	key := strings.ToLower(msg.String())
 	if p.done {
 		switch key {
-		case "enter", "esc", "q", "backspace":
+		case "enter", "esc", "backspace":
+			// q is deliberately absent: it quits the panel from every page, so it
+			// reaches the global shortcut instead of dismissing this screen.
 			return nil, true
 		case "c":
 			if p.noCopy {

@@ -334,8 +334,15 @@ func TestToolboxReportAndBoard(t *testing.T) {
 	}
 	board := a.toolboxBody(88)
 	joined := strings.Join(board, "\n")
-	if !strings.Contains(joined, i18n.Chinese.T("toolbox_unlock-ai")) || !strings.Contains(joined, "unknown 1") {
+	if !strings.Contains(joined, i18n.Chinese.T("toolbox_unlock-ai")) || !strings.Contains(joined, "未知 1") {
 		t.Fatalf("board does not report the last run:\n%s", joined)
+	}
+	// The board words the verdicts like the report does: a summary that stayed in tokens
+	// would put `unknown 1` next to a table that says 未知.
+	for _, token := range []string{"unlocked", "blocked", "unknown"} {
+		if strings.Contains(joined, token) {
+			t.Errorf("the board leaked the raw token %q:\n%s", token, joined)
+		}
 	}
 	if !strings.Contains(joined, i18n.Chinese.Format("toolbox_board_pending", len(tools.All())-1)) {
 		t.Fatalf("board does not count what has not run:\n%s", joined)
@@ -674,8 +681,10 @@ func TestToolboxBoardSurvivesARestart(t *testing.T) {
 		t.Fatal("the toolbox section should be reachable")
 	}
 	view := ansiSGR.ReplaceAllString(restarted.View().Content, "")
-	if !strings.Contains(view, outcome.result.Summary) {
-		t.Fatalf("the board should show the stored summary:\n%s", view)
+	// The board words the summary like the report does, so a stored English token must not
+	// come back as one.
+	if !strings.Contains(view, "解锁 6 · 不解锁 1 (7)") {
+		t.Fatalf("the board should show the stored summary in words:\n%s", view)
 	}
 
 	// A file that cannot be parsed is an empty board, never a panel that will not start.
@@ -818,7 +827,9 @@ func TestNoScreenCapturesTheMouse(t *testing.T) {
 	}
 }
 
-func TestUpperQQuitsFromSubscreens(t *testing.T) {
+// Q quits the panel from every page, upper or lower case. There is one key for leaving, and
+// it is not the key that walks back: Esc is the way back, on every page that has one.
+func TestQQuitsFromEveryScreen(t *testing.T) {
 	a := newTestApp(t)
 	a.links = newLinksModel("t", sampleLinks())
 	if _, cmd := a.Update(press('Q')); cmd == nil {
@@ -832,15 +843,27 @@ func TestUpperQQuitsFromSubscreens(t *testing.T) {
 		t.Fatal("upper-case Q should quit from the task panel")
 	}
 
-	// Lower-case q on a subpage still steps back instead of quitting.
+	// Lower-case q quits too, on any page and at any depth.
 	a.task = nil
 	a.links = newLinksModel("t", sampleLinks())
-	m, cmd := a.Update(press('q'))
+	if _, cmd := a.Update(press('q')); cmd == nil {
+		t.Fatal("lower-case q should quit from the link panel")
+	}
+	a.links = nil
+	a.push(buildToolGroup(tools.GroupUnlock))
+	a.push(buildToolGroup(tools.GroupUnlock))
+	if _, cmd := a.Update(press('q')); cmd == nil {
+		t.Fatal("lower-case q should quit from a third-level page")
+	}
+
+	// Esc is what closes a subpage, and it does not quit the panel.
+	a.links = newLinksModel("t", sampleLinks())
+	m, cmd := a.Update(press(tea.KeyEsc))
 	if cmd != nil {
-		t.Fatal("lower-case q should not quit the link panel")
+		t.Fatal("esc should not quit the panel")
 	}
 	if m.(*App).links != nil {
-		t.Fatal("lower-case q should close the link panel")
+		t.Fatal("esc should close the link panel")
 	}
 }
 

@@ -659,9 +659,10 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	raw := msg.String()
 	key := strings.ToLower(raw)
 
-	// Upper-case Q quits the whole program from any screen that is not a text
-	// field; lower-case q and Esc step back to the parent menu.
-	if raw == "Q" || key == "ctrl+c" {
+	// One key leaves the panel, from every page and at every depth: q (either case) and
+	// ctrl+c. It is checked before any screen gets the key, so no page can interpret it as
+	// "go back" — Esc is the way back, and the hints say so on every page that has one.
+	if raw == "Q" || key == "q" || key == "ctrl+c" {
 		return a, quit()
 	}
 
@@ -685,7 +686,9 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// back. Nothing else it could do would be clearer than that.
 	if a.report != nil {
 		switch key {
-		case "esc", "enter", "backspace":
+		case "esc", "backspace":
+			// Esc is the way back; Enter is not, because Enter means "enter or
+			// confirm" everywhere else and a report has nothing to enter.
 			a.report = nil
 		case "r":
 			return a, a.rerunReport()
