@@ -29,8 +29,9 @@ type Params struct {
 	RealitySID    string
 	CertFullchain string
 	CertKey       string
-	// Stats asks for the experimental.v2ray_api block, which only a core built
-	// with -tags with_v2ray_api accepts.
+	// Stats asks for the experimental.v2ray_api block. It is not a host fact: it
+	// is whether this panel was built with the with_v2ray_api tag (see
+	// internal/sbcore), and a build without it rejects a config naming the API.
 	Stats bool
 }
 
@@ -43,7 +44,6 @@ func ParamsFromState(c state.Config) Params {
 		RealitySNI:  c.RealitySNI,
 		RealityPriv: c.RealityPriv,
 		RealitySID:  c.RealitySID,
-		Stats:       c.V2RayStats(),
 	}
 }
 

@@ -18,3 +18,29 @@ updates:
       github-actions:
         patterns:
           - "*"
+
+  # 维护 Go 依赖版本（sing-box、lego、speedtest-go 等）
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - dependencies
+    groups:
+      # 补丁与小版本合成一个 PR：这类升级通常不动接口，合并一次就够。
+      go-minor-patch:
+        applies-to: version-updates
+        update-types:
+          - minor
+          - patch
+      # 大版本单独开 PR：sing-box、lego 的主版本升级要人看一眼再合。
+      go-major:
+        applies-to: version-updates
+        update-types:
+          - major

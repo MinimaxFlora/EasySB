@@ -124,13 +124,15 @@ ports, hop range, Reality parameters and `NODE_DEPLOYED` keep their meaning.
 - Every enabled inbound receives a `users` entry for each user that selected
   that protocol, is enabled, is not expired and is not over quota. The same
   name in several inbounds aggregates into one counter set.
-- `experimental.v2ray_api` is added automatically when the installed core was
-  built with `with_v2ray_api` (`sing-box version` lists the build tags). The
-  official upstream builds are not, and sing-box rejects the whole config for an
-  API it was not built with, so a deployment on one carries no stats block and
-  says so in its log: the node and its accounts work, usage is just not counted.
-  The state key `STATS_API=none` records that choice, and the accounting loop
-  skips its sampling instead of failing on a socket nothing listens on:
+- `experimental.v2ray_api` is added automatically when **this build** carries
+  `with_v2ray_api` (`release/TAGS`; `easysb core version` prints what the binary
+  has). The capability is a build tag rather than something on the host, so the
+  deploy path asks `sbcore.StatsCapable()`, and a build without the tag must leave
+  the block out — sing-box rejects the whole config for an API it was not built
+  with. Such a deployment carries no stats block and says so in its log: the node
+  and its accounts work, usage is just not counted. The accounting loop asks the
+  same question and skips its sampling instead of failing on a socket nothing
+  listens on:
 
   ```json
   {
@@ -192,7 +194,7 @@ the `filename*=UTF-8''EasySB` they look at first survives intact.
 `expire` is omitted entirely when the account never expires, because a client
 reads `expire=0` as "already expired".
 
-TLS: when `cert.Usable(DOMAIN)` finds a real acme.sh pair, the service listens
+TLS: when `cert.Usable(DOMAIN)` finds a certificate the panel issued, the service listens
 with that certificate; otherwise it serves plaintext HTTP and the panel warns,
 because a plaintext document carries the user's credentials. `cert.Usable` is the
 single predicate behind both the URL the panel prints and the certificate the

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/viewport"
@@ -22,11 +23,14 @@ import (
 type taskFunc func(ctx context.Context, r *taskReporter) error
 
 // taskReporter is a running task's link back to the screen that started it: Log for a
-// line of output, Progress for a download that is still arriving. A task never touches
-// the interface directly, so every screen sees its output in the order it was produced.
+// line of output, Progress for a download that is still arriving, SetResult for what
+// the screen should keep once the task is done. A task never touches the interface
+// directly, so every screen sees its output in the order it was produced.
 type taskReporter struct {
-	log  func(string)
-	prog func(label string, done, total int64)
+	log    func(string)
+	prog   func(label string, done, total int64)
+	steps  func(done, total int, label string)
+	result func(any)
 }
 
 // Log appends one line to the task's output.
@@ -44,6 +48,25 @@ func (r *taskReporter) Progress(label string, done, total int64) {
 	}
 }
 
+// Steps reports one finished step of a run that can count its work, which the task screen
+// draws as a bar with the count and the name of the step. A run that cannot count its steps
+// reports nothing, and the screen shows how long it has been going instead.
+func (r *taskReporter) Steps(done, total int, label string) {
+	if r.steps != nil {
+		r.steps(done, total, label)
+	}
+}
+
+// SetResult hands a value back to the model once the task is over, for the screens
+// whose 看板 shows what the task found: a subscription link grid or an unlock report
+// is worth more than the last run's log. Values are read back after taskDoneMsg, on
+// the render goroutine, so the model guards the handover.
+func (r *taskReporter) SetResult(value any) {
+	if r.result != nil {
+		r.result(value)
+	}
+}
+
 // progressScrollStep is how many lines one arrow key scrolls the finished log.
 // Three matches the feel of a browser wheel.
 const progressScrollStep = 3
@@ -58,6 +81,17 @@ type downloadReading struct {
 	label string
 	done  int64
 	total int64
+	live  bool
+}
+
+// stepReading is how far a counted run has got: the task goroutine writes it and the render
+// goroutine reads it, exactly like the download reading above. live is false for a run that
+// cannot count its work, which is what keeps the screen from drawing a bar that would be a
+// guess.
+type stepReading struct {
+	done  int
+	total int
+	label string
 	live  bool
 }
 
@@ -80,19 +114,26 @@ type progressModel struct {
 	noCopy bool
 	width  int
 	height int
-	// mu guards dl, which the task goroutine writes while the screen is drawn.
-	mu sync.Mutex
-	dl downloadReading
+	// mu guards dl, which the task goroutine writes while the screen is drawn, and
+	// res, which the same goroutine hands over for the section that started it.
+	mu    sync.Mutex
+	dl    downloadReading
+	steps stepReading
+	res   any
+	// started is when the task began, used to show how long a run that cannot count its
+	// steps has been going.
+	started time.Time
 }
 
 // newProgress builds the model for one task. It returns a pointer because the task
 // goroutine records its download readings on the same value the screen draws.
 func newProgress(title string, fn taskFunc) *progressModel {
 	p := &progressModel{
-		title: title,
-		fn:    fn,
-		ch:    make(chan string, 256),
-		errCh: make(chan error, 1),
+		title:   title,
+		fn:      fn,
+		started: time.Now(),
+		ch:      make(chan string, 256),
+		errCh:   make(chan error, 1),
 	}
 	p.spin = spinner.New(spinner.WithSpinner(spinner.Line))
 	p.vp = viewport.New()
@@ -108,14 +149,32 @@ func (p *progressModel) Init() tea.Cmd {
 	errCh := p.errCh
 	go func() {
 		r := &taskReporter{
-			log:  func(s string) { ch <- s },
-			prog: p.setDownload,
+			log:    func(s string) { ch <- s },
+			prog:   p.setDownload,
+			steps:  p.setSteps,
+			result: p.setResult,
 		}
 		err := fn(ctx, r)
 		errCh <- err
 		close(ch)
 	}()
 	return tea.Batch(p.tickCmd(), waitLog(ch))
+}
+
+// setResult records the value the task wants the model to keep. It is called from the
+// task goroutine, so it takes the same lock the download reading uses.
+func (p *progressModel) setResult(value any) {
+	p.mu.Lock()
+	p.res = value
+	p.mu.Unlock()
+}
+
+// taskResult is what the finished task handed over, or nil. It is read on the render
+// goroutine once the task is done.
+func (p *progressModel) taskResult() any {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.res
 }
 
 // setDownload records one reading of a download. It is called from the task
@@ -181,6 +240,87 @@ func downloadBar(style theme.Style, ic icons.Set, dl downloadReading, w int) str
 	return theme.Pad(theme.Truncate(line, w), w)
 }
 
+// setSteps records one finished step of a counted run. It is called from the task goroutine,
+// so it takes the same lock the download reading uses.
+func (p *progressModel) setSteps(done, total int, label string) {
+	if total <= 0 {
+		return
+	}
+	if done > total {
+		done = total
+	}
+	p.mu.Lock()
+	p.steps = stepReading{done: done, total: total, label: label, live: true}
+	p.mu.Unlock()
+}
+
+// stepState returns how far the run has got, and whether it can count at all.
+func (p *progressModel) stepState() stepReading {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.steps
+}
+
+// markComplete fills the bar to its end: a run that has finished should look finished for the
+// moment it is still on screen, instead of vanishing at 8/12.
+func (p *progressModel) markComplete() {
+	p.mu.Lock()
+	if p.steps.live && p.steps.total > 0 {
+		p.steps.done = p.steps.total
+	}
+	p.mu.Unlock()
+}
+
+// elapsed is how long the task has been running.
+func (p *progressModel) elapsed() time.Duration {
+	if p.started.IsZero() {
+		return 0
+	}
+	return time.Since(p.started)
+}
+
+// stepBar draws a counted run: a bar that fills, the step count, and what is being worked on
+// right now. An empty string means the run cannot count its steps — a benchmark, a transfer in
+// flight — and that screen keeps the spinner and the elapsed time it already shows.
+func stepBar(style theme.Style, st stepReading, lang i18n.Lang, w int) string {
+	if !st.live || st.total <= 0 || w < 24 {
+		return ""
+	}
+	tail := fmt.Sprintf("%d/%d", st.done, st.total)
+	barW := w / 3
+	if barW < 8 {
+		barW = 8
+	}
+	label := st.label
+	head := " " + lang.T("task_progress") + " "
+	// The count and the bar matter more than the label, so the label gets whatever is
+	// left once they have their room.
+	labelW := w - lipgloss.Width(head) - lipgloss.Width(tail) - barW - 4
+	if labelW < 1 {
+		barW = w - lipgloss.Width(head) - lipgloss.Width(tail) - 5
+		if barW < 4 {
+			return theme.Pad(theme.Truncate(head+tail, w), w)
+		}
+		labelW = 1
+	}
+	label = theme.Truncate(label, labelW)
+	bar := ui.Meter(style, float64(st.done)/float64(st.total), barW)
+	line := style.Faint(head) + bar + "  " + style.Value(tail) + "  " + style.Value(label)
+	return theme.Pad(theme.Truncate(line, w), w)
+}
+
+// elapsedLine is what a run that cannot count its steps shows instead of a bar: how long it
+// has been going and the last thing the tool said. It is a reading, not a progress bar,
+// because a percentage nobody measured would be a made-up number.
+func elapsedLine(style theme.Style, d time.Duration, last string, lang i18n.Lang, w int) string {
+	if w < 24 {
+		return ""
+	}
+	head := " " + lang.T("task_elapsed") + " " + d.Round(time.Second).String() + "  "
+	last = theme.Truncate(strings.TrimSpace(last), maxInt(1, w-lipgloss.Width(head)))
+	return theme.Pad(theme.Truncate(style.Faint(head)+style.Faint(last), w), w)
+}
+
 func (p *progressModel) tickCmd() tea.Cmd {
 	return func() tea.Msg { return p.spin.Tick() }
 }
@@ -227,7 +367,9 @@ func (p *progressModel) handleKey(msg tea.KeyPressMsg, lang i18n.Lang) (tea.Cmd,
 	key := strings.ToLower(msg.String())
 	if p.done {
 		switch key {
-		case "enter", "esc", "q", "backspace":
+		case "enter", "esc", "backspace":
+			// q is deliberately absent: it quits the panel from every page, so it
+			// reaches the global shortcut instead of dismissing this screen.
 			return nil, true
 		case "c":
 			if p.noCopy {
@@ -259,16 +401,16 @@ func (p *progressModel) handleKey(msg tea.KeyPressMsg, lang i18n.Lang) (tea.Cmd,
 	return cmd, false
 }
 
-func (p *progressModel) resize(w, h int) {
+func (p *progressModel) resize(w, h int, span int) {
 	w = panelWidth(w)
 	p.width, p.height = w, h
 	inner := w - 4
 	if inner < 10 {
 		inner = 10
 	}
-	// The log sits in a card under the status strip, so the viewport is what is
-	// left after the strip, the card borders and the hint bar.
-	vh := h - 4 - taskHintRows(h)
+	// The log sits inside the box the task fills, so the viewport is what is left of
+	// that box once its borders and the live reading's row are taken.
+	vh := boxRows(span) - 1
 	if vh < 1 {
 		vh = 1
 	}
@@ -279,15 +421,6 @@ func (p *progressModel) resize(w, h int) {
 
 // taskHintRows is how many rows the hint bar takes, matching the dashboard: a
 // boxed hint on a roomy terminal, one line when there is almost no room.
-func taskHintRows(h int) int {
-	switch {
-	case h >= 22:
-		return 3
-	case h >= 6:
-		return 1
-	}
-	return 0
-}
 
 func (p *progressModel) appendLog(line string) {
 	p.logs = append(p.logs, line)
@@ -306,20 +439,39 @@ func (p *progressModel) refresh() {
 // arriving, then the log. The bar takes the first row and the log gives up its last
 // one, so the frame keeps its size and the screen does not jump when a download starts
 // or finishes.
-func (p *progressModel) body(style theme.Style, ic icons.Set, width int) []string {
+func (p *progressModel) body(style theme.Style, ic icons.Set, lang i18n.Lang, width int, room int) []string {
 	lines := strings.Split(p.vp.View(), "\n")
-	bar := downloadBar(style, ic, p.reading(), ui.InnerWidth(style, width))
-	if bar == "" {
-		return lines
+	inner := ui.InnerWidth(style, width)
+	// A counted run gets its bar first: it is the line the operator watches. One that
+	// cannot count gets the elapsed time and the last thing the tool said.
+	live := stepBar(style, p.stepState(), lang, inner)
+	if live == "" {
+		liveness := downloadBar(style, ic, p.reading(), inner)
+		if liveness == "" && !p.done {
+			liveness = elapsedLine(style, p.elapsed(), p.lastLog(), lang, inner)
+		}
+		live = liveness
+	}
+	if live == "" {
+		return clipLines(style, lines, room)
 	}
 	if len(lines) < 2 {
-		// A one-row card has no room for both, and the live reading is the more
-		// useful half of it.
-		return []string{bar}
+		// A one-row card has no room for both, and the live reading is the more useful
+		// half of it.
+		return []string{live}
 	}
 	body := make([]string, 0, len(lines))
-	body = append(body, bar)
-	return append(body, lines[:len(lines)-1]...)
+	body = append(body, live)
+	return clipLines(style, append(body, lines...), room)
+}
+
+// lastLog is the most recent progress line the tool printed, which is what a run that cannot
+// count its steps is currently doing.
+func (p *progressModel) lastLog() string {
+	if len(p.logs) == 0 {
+		return ""
+	}
+	return p.logs[len(p.logs)-1]
 }
 
 // View draws the task the way the dashboard draws everything else: the live
@@ -327,10 +479,10 @@ func (p *progressModel) body(style theme.Style, ic icons.Set, width int) []strin
 // bottom bar. The task screen is where the subscription service, the kernel
 // install and the deployment all end up, so it is the one screen that has to look
 // like the rest of the panel rather than like a raw console.
-func (p *progressModel) View(w, h int, strip string, style theme.Style, lang i18n.Lang, ic icons.Set) string {
+func (p *progressModel) View(w, h int, strip string, style theme.Style, lang i18n.Lang, ic icons.Set, l layout) string {
 	width := panelWidth(w)
 	if width != p.width || h != p.height {
-		p.resize(width, h)
+		p.resize(width, h, l.span())
 	}
 	pal := style.Palette
 
@@ -343,13 +495,22 @@ func (p *progressModel) View(w, h int, strip string, style theme.Style, lang i18
 		}
 	}
 
-	card := ui.Card(style, p.title, badge, p.body(style, ic, width), width)
+	// A running task fills the space a page's two boxes would have used: one box, the same
+	// rows, in the same place. The log lives inside it, and the keys stay where every other
+	// page puts them.
 	lines := make([]string, 0, h)
 	if strip != "" {
 		lines = append(lines, strip, "")
 	}
-	lines = append(lines, card...)
+	body := p.body(style, ic, lang, ui.InnerWidth(style, width), boxRows(l.span()))
+	lines = append(lines, boxAt(style, p.title, badge, body, width, l.span())...)
+	lines = append(lines, p.hintTail(pal, lang, width, l.tail)...)
+	return ui.Fit(lines, width, h)
+}
 
+// hintTail renders the task's keys in the rows the layout reserves for the tail, so the hint
+// box sits in the same place as it does on a menu page.
+func (p *progressModel) hintTail(pal theme.Palette, lang i18n.Lang, width, rows int) []string {
 	var hint string
 	if p.done {
 		parts := []string{lang.T("task_scroll")}
@@ -361,11 +522,5 @@ func (p *progressModel) View(w, h int, strip string, style theme.Style, lang i18
 	} else {
 		hint = lang.T("hint_back") + "  " + lang.T("cancelled")
 	}
-	switch taskHintRows(h) {
-	case 3:
-		lines = append(lines, hintBoxFor(pal, lang, hint, width)...)
-	case 1:
-		lines = append(lines, hintLineFor(pal, lang, hint, width))
-	}
-	return ui.Fit(lines, width, h)
+	return keyTail(pal, lang, "", hint, width, rows)
 }

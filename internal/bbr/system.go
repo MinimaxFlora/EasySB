@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MinimaxFlora/EasySB/internal/core"
+	"github.com/MinimaxFlora/EasySB/internal/download"
 )
 
 // sysctlGet reads one kernel parameter (empty when it cannot be read).
@@ -419,7 +419,7 @@ func versionFromStamp(ctx context.Context) (string, error) {
 	tmp.Close()
 	defer os.Remove(path)
 
-	if err := download(ctx, versionINIURL, path, nil); err != nil {
+	if err := fetchFile(ctx, versionINIURL, path, nil); err != nil {
 		return "", err
 	}
 	body, err := os.ReadFile(path)
@@ -559,6 +559,8 @@ func httpGet(ctx context.Context, url string) ([]byte, error) {
 // from the release the kernel project published, so the bytes never pass through a
 // third party: what dpkg unpacks is what its build produced. progress, when it is
 // set, is how the panel draws a bar for a package that takes minutes.
-func download(ctx context.Context, url, dest string, progress core.Progress) error {
-	return core.DownloadWithProgress(ctx, url, dest, downloadTimeout, progress)
+// fetchFile streams a URL to disk through the shared downloader, reporting the bytes
+// when the caller wants readings.
+func fetchFile(ctx context.Context, url, dest string, progress download.Progress) error {
+	return download.DownloadWithProgress(ctx, url, dest, downloadTimeout, progress)
 }

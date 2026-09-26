@@ -2,9 +2,11 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
@@ -17,6 +19,8 @@ import (
 	"github.com/MinimaxFlora/EasySB/internal/subscribe"
 	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
 	"github.com/MinimaxFlora/EasySB/internal/theme"
+	"github.com/MinimaxFlora/EasySB/internal/toolbox"
+	"github.com/MinimaxFlora/EasySB/internal/toolbox/tools"
 	"github.com/MinimaxFlora/EasySB/internal/ui"
 	"github.com/MinimaxFlora/EasySB/internal/user"
 )
@@ -38,9 +42,26 @@ type App struct {
 	status        sysinfo.Status
 	ready         bool
 	sized         bool
-	quote         string
-	toast         string
-	toastErr      bool
+	// board is the toolbox 看板's selection: the tool ids whose results the board shows. nil
+	// means the panel has never been asked, so tools.BoardDefault() decides (see board.go).
+	board map[string]bool
+
+	// scroll is the first row a scrollable screen shows, and scrollMax is how far it can go.
+	// The screen measures scrollMax while it draws, because only the drawing knows how many
+	// rows the table came out as; the keys then move within that.
+	scroll    int
+	scrollMax int
+
+	// toolResults is the last outcome of every toolbox entry that has run, keyed by tool
+	// id. A tool leaves the process (a probe run, a traceroute, a benchmark), so the panel
+	// keeps what the run it started found instead of running it again on every visit.
+	toolResults map[string]toolOutcome
+	// report is the outcome the report screen is showing, nil when no report is open. A
+	// finished tool sets it, so a run ends on its table rather than on its log.
+	report   *toolOutcome
+	quote    string
+	toast    string
+	toastErr bool
 	// section is the root entry the panel is standing in, empty on the main
 	// menu. It is set when a root entry is entered and cleared on the way back.
 	section string
@@ -62,6 +83,9 @@ type App struct {
 	// prefsPath is where the interface choices are remembered. It is a field so
 	// the tests can point it at a temporary file instead of /etc/sing-box.
 	prefsPath string
+	// boardPath is where the toolbox 看板 is written down. It is a field for the same
+	// reason, and an empty value keeps the board in memory only.
+	boardPath string
 }
 
 // New builds the application. Interface choices the operator made earlier are
@@ -77,9 +101,58 @@ func New(scriptVersion string, lang i18n.Lang) *App {
 		stack:         []*menu{buildRoot()},
 		quote:         lang.Hitokoto(),
 		prefsPath:     prefs.Path(),
+		board:         boardFromPrefs(prefs.Load(prefs.Path())),
+		boardPath:     boardPath(),
 	}
 	a.setSkin(skin, dark)
+	a.loadBoard()
 	return a
+}
+
+// boardPath is where the toolbox 看板 is written down: the registry owns the path, because
+// `--tool` writes to the same file.
+func boardPath() string {
+	return tools.BoardPath()
+}
+
+// loadBoard reads the stored outcomes so the section's 看板 shows the last run of every tool
+// the panel has already measured, instead of forgetting them when the panel was closed.
+func (a *App) loadBoard() {
+	if a.boardPath == "" {
+		return
+	}
+	stored := toolbox.LoadBoard(a.boardPath)
+	if len(stored) == 0 {
+		return
+	}
+	if a.toolResults == nil {
+		a.toolResults = make(map[string]toolOutcome, len(stored))
+	}
+	for id, record := range stored {
+		outcome := toolOutcome{id: record.ID, when: record.When, result: record.Result}
+		if record.Error != "" {
+			outcome.err = errors.New(record.Error)
+		}
+		a.toolResults[id] = outcome
+	}
+}
+
+// saveBoard writes the outcomes down. A board that cannot be written is a degraded
+// convenience, not a failed run: the table is on screen either way, so the error is dropped
+// rather than turned into an interruption.
+func (a *App) saveBoard() {
+	if a.boardPath == "" {
+		return
+	}
+	board := make(toolbox.Board, len(a.toolResults))
+	for id, outcome := range a.toolResults {
+		record := toolbox.Record{ID: id, When: outcome.when, Result: outcome.result}
+		if outcome.err != nil {
+			record.Error = outcome.err.Error()
+		}
+		board[id] = record
+	}
+	_ = toolbox.SaveBoard(a.boardPath, board)
 }
 
 // remember stores the interface choices so the next run starts where this one
@@ -102,6 +175,7 @@ func (a *App) remember() {
 		Theme: theme,
 		Icons: a.iconSet.ID,
 		Lang:  string(a.lang),
+		Board: a.boardStored(),
 	}.Save(a.prefsPath)
 }
 
@@ -180,7 +254,12 @@ func (a *App) Snapshot(width, height int) string {
 	a.ready = true
 	if a.task != nil {
 		// A task owns the screen while it runs, so a rendered frame is the task's.
-		return a.task.View(a.width, a.height, a.statusStrip(a.frameWidth()), a.style(), a.lang, a.iconSet)
+		return a.task.View(a.width, a.height, a.statusStrip(a.frameWidth()), a.style(), a.lang, a.iconSet, a.bodyLayout())
+	}
+	if a.report != nil {
+		// A report owns the screen once a tool has finished, so a rendered frame
+		// is the report's, exactly as in the running panel.
+		return a.reportScreen()
 	}
 	return a.dashboard()
 }
@@ -201,9 +280,6 @@ func (a *App) SnapshotScreen(screen string, width, height int) string {
 	switch screen {
 	case "system":
 		a.openSystem()
-	case "kernel-switch":
-		a.enterSection("kernel")
-		a.push(buildKernelSwitch())
 	case "bbr-qdisc":
 		a.push(buildBBR())
 		a.section = "bbr"
@@ -221,13 +297,22 @@ func (a *App) SnapshotScreen(screen string, width, height int) string {
 		// The task screen is where every action lands, and its download bar only
 		// exists while a download is in flight, so a rendered frame takes a sample
 		// reading rather than an idle one.
-		p := newProgress(a.lang.T("kernel_installing"), func(context.Context, *taskReporter) error { return nil })
+		p := newProgress(a.lang.T("task_running"), func(context.Context, *taskReporter) error { return nil })
 		for _, line := range previewTaskLog() {
 			p.appendLog(line)
 		}
 		p.setDownload(previewDownload())
-		p.resize(a.width, a.height)
+		p.resize(a.width, a.height, a.bodyLayout().span())
 		a.task = p
+	case "toolbox-report":
+		// The report screen is the one a finished tool leaves behind: entering the
+		// section and a group stands the panel where the run was started from, and
+		// the sample run is recorded so the board behind it has a line too.
+		a.enterSection("toolbox")
+		a.push(buildToolGroup(tools.GroupUnlock))
+		outcome := previewToolOutcome()
+		a.toolResults = map[string]toolOutcome{outcome.id: outcome}
+		a.report = &outcome
 	}
 	return a.Snapshot(width, height)
 }
@@ -235,16 +320,42 @@ func (a *App) SnapshotScreen(screen string, width, height int) string {
 // previewTaskLog is the sample output of a rendered task screen.
 func previewTaskLog() []string {
 	return []string{
-		"$ systemctl stop " + sysinfo.ServiceName,
-		"GET https://github.com/SagerNet/sing-box/releases/download/v1.14.1/sing-box-1.14.1-linux-amd64.tar.gz",
-		"extract -> " + sysinfo.CoreBin,
-		"内核已切换：稳定版 1.14.1",
+		"$ systemctl restart " + sysinfo.ServiceName,
+		"write " + sysinfo.ConfigJSON,
+		"config ok: " + sysinfo.ConfigJSON,
+		"节点已部署：账号与流量、订阅地址已就绪",
 	}
 }
 
 // previewDownload is the sample download reading of a rendered task screen.
 func previewDownload() (string, int64, int64) {
-	return "sing-box-1.14.1-linux-amd64.tar.gz", 12 << 20, 29 << 20
+	return "easysb-linux-amd64", 12 << 20, 29 << 20
+}
+
+// previewToolOutcome is the sample a rendered report screen shows. A report exists only
+// after a tool has run, and a rendered frame has no event loop to run one, so the screen is
+// drawn from a table of the shape the unlock entries produce.
+func previewToolOutcome() toolOutcome {
+	return toolOutcome{
+		id:   "unlock-media",
+		when: time.Date(2026, 9, 26, 7, 42, 11, 0, time.UTC),
+		result: toolbox.Result{
+			Headers: []string{"service", "status", "region"},
+			Rows: [][]string{
+				{"Netflix", "unlocked", "US"},
+				{"Disney+", "unlocked", "US"},
+				{"YouTube Premium", "unlocked", "US"},
+				{"Amazon Prime Video", "unlocked", "US"},
+				{"DAZN", "unlocked", "SC"},
+				{"Spotify", "blocked", "—"},
+				{"TikTok", "unlocked", "SC"},
+			},
+			Notes: []string{
+				"Spotify: Spotify refuses registration from this IP (status 320): You seem to be using a proxy service.",
+			},
+			Summary: "unlocked 6 · blocked 1 (7)",
+		},
+	}
 }
 
 // enterSection pushes the submenu of a root entry by id, so a page can be rendered by
@@ -425,7 +536,7 @@ func (a *App) enter() tea.Cmd {
 
 func (a *App) startTask(title string, fn taskFunc) tea.Cmd {
 	p := newProgress(title, fn)
-	p.resize(a.width, a.height)
+	p.resize(a.width, a.height, a.bodyLayout().span())
 	a.task = p
 	return p.Init()
 }
@@ -435,7 +546,7 @@ func (a *App) startTask(title string, fn taskFunc) tea.Cmd {
 func (a *App) startTaskQR(title string, fn taskFunc) tea.Cmd {
 	p := newProgress(title, fn)
 	p.noCopy = true
-	p.resize(a.width, a.height)
+	p.resize(a.width, a.height, a.bodyLayout().span())
 	a.task = p
 	return p.Init()
 }
@@ -502,7 +613,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.width, a.height = msg.Width, msg.Height
 		a.sized = true
 		if a.task != nil {
-			a.task.resize(msg.Width, msg.Height)
+			a.task.resize(msg.Width, msg.Height, a.bodyLayout().span())
 		}
 		if a.form != nil {
 			a.form.resize(msg.Width)
@@ -547,6 +658,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// 看板 reads the machine (BBR) takes its reading again too, or the
 				// page would keep showing what it said before the task ran.
 				a.loadAccounts()
+				a.adoptTaskResult()
 				return a, tea.Batch(cmd, collectStatus(a.scriptVersion), a.sectionRefresh())
 			}
 			return a, tea.Batch(cmd, collectStatus(a.scriptVersion))
@@ -559,9 +671,10 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	raw := msg.String()
 	key := strings.ToLower(raw)
 
-	// Upper-case Q quits the whole program from any screen that is not a text
-	// field; lower-case q and Esc step back to the parent menu.
-	if raw == "Q" || key == "ctrl+c" {
+	// One key leaves the panel, from every page and at every depth: q (either case) and
+	// ctrl+c. It is checked before any screen gets the key, so no page can interpret it as
+	// "go back" — Esc is the way back, and the hints say so on every page that has one.
+	if raw == "Q" || key == "q" || key == "ctrl+c" {
 		return a, quit()
 	}
 
@@ -579,6 +692,33 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			a.links = nil
 		}
 		return a, cmd
+	}
+
+	// The report screen is a dead end with one way forward: read it, run it again, or go
+	// back. Nothing else it could do would be clearer than that.
+	if a.report != nil {
+		switch key {
+		case "esc", "backspace":
+			// Esc is the way back; Enter is not, because Enter means "enter or
+			// confirm" everywhere else and a report has nothing to enter.
+			a.report = nil
+			a.scroll, a.scrollMax = 0, 0
+		case "r":
+			return a, a.rerunReport()
+		case "up", "k":
+			a.scrollBy(-1)
+		case "down", "j":
+			a.scrollBy(1)
+		case "pgup":
+			a.scrollBy(-a.screenRows())
+		case "pgdown", " ", "right":
+			a.scrollBy(a.screenRows())
+		case "home":
+			a.scroll = 0
+		case "end":
+			a.scroll = a.scrollMax
+		}
+		return a, nil
 	}
 
 	// The system screen owns a few keys of its own and lets the rest fall through
@@ -654,9 +794,11 @@ func (a *App) View() tea.View {
 	case a.form != nil:
 		content = a.formScreen()
 	case a.task != nil:
-		content = a.task.View(a.width, a.height, a.statusStrip(a.frameWidth()), a.style(), a.lang, a.iconSet)
+		content = a.task.View(a.width, a.height, a.statusStrip(a.frameWidth()), a.style(), a.lang, a.iconSet, a.bodyLayout())
 	case a.links != nil:
 		content = a.links.View(a.width, a.height, a.palette, a.lang, a.iconSet)
+	case a.report != nil:
+		content = a.reportScreen()
 	default:
 		content = a.dashboard()
 	}
@@ -730,35 +872,6 @@ func (a *App) menuDescColumn(inner, labelCol int) int {
 
 // menuViewport renders at most limit menu rows, keeping the cursor visible, and
 // reports how many items are currently out of view.
-func (a *App) menuViewport(limit, inner, descCol, cursorWidth int) ([]string, int) {
-	nodes := a.current().nodes
-	n := len(nodes)
-	if n == 0 {
-		return nil, 0
-	}
-	top := 0
-	if n > limit {
-		top = a.index - limit/2
-		if a.onNavRow() {
-			top = n - limit
-		}
-		if top < 0 {
-			top = 0
-		}
-		if top > n-limit {
-			top = n - limit
-		}
-	}
-	end := top + limit
-	if end > n {
-		end = n
-	}
-	rows := make([]string, 0, end-top)
-	for i := top; i < end; i++ {
-		rows = append(rows, a.menuRow(i == a.index, i, nodes[i], inner, descCol, cursorWidth))
-	}
-	return rows, n - len(rows)
-}
 
 // menuRowParts lays out one entry's static text: the label padded out to the
 // description column (or truncated on compact submenu rows) and the description
@@ -766,7 +879,8 @@ func (a *App) menuViewport(limit, inner, descCol, cursorWidth int) ([]string, in
 func (a *App) menuRowParts(i int, n *node, inner, descCol int) (string, string) {
 	label := a.numberedLabel(i, n)
 	desc := ""
-	if n.desc != nil {
+	// A nil node is the row that leads back out: it has a label but no description.
+	if n != nil && n.desc != nil {
 		desc = n.desc(a.lang)
 	}
 	if desc != "" {
@@ -780,32 +894,6 @@ func (a *App) menuRowParts(i int, n *node, inner, descCol int) (string, string) 
 		}
 	}
 	return theme.Truncate(label, inner-3), ""
-}
-
-// menuCursorWidth returns the length every selection bar is padded to. The bar
-// spans the full inner width so the cursor keeps one size while moving.
-func (a *App) menuCursorWidth(inner int) int {
-	return inner
-}
-
-// menuRow renders one menu entry. The main menu pads its labels into a column
-// and follows them with a short one-line description; submenus stay compact.
-func (a *App) menuRow(selected bool, i int, n *node, inner, descCol, cursorWidth int) string {
-	marker := "  "
-	if selected {
-		marker = "▌ "
-	}
-	head, desc := a.menuRowParts(i, n, inner, descCol)
-	line := " " + marker + head
-	if selected {
-		// The bar spans the whole row and is padded to the longest entry, so the
-		// cursor does not change length as it moves through the menu.
-		return a.palette.SelectedRow(theme.Pad(line+desc, cursorWidth))
-	}
-	if desc == "" {
-		return a.palette.Bold(a.palette.Text, line)
-	}
-	return a.palette.Bold(a.palette.Text, line) + a.palette.Dim(desc)
 }
 
 // numberTag is the bracket in front of every menu entry: entries are picked by
@@ -823,28 +911,6 @@ func (a *App) numberedLabel(i int, n *node) string {
 		name = n.label(a.lang)
 	}
 	return a.numberTag(i) + name
-}
-
-// nodeLabel prefixes a menu entry with its icon, falling back to a bullet for
-// entries that have no dedicated glyph. The navigation column uses it; the menus
-// themselves are numbered.
-func (a *App) nodeLabel(n *node) string {
-	if n.icon != nil {
-		return n.icon(a.iconSet) + " " + n.label(a.lang)
-	}
-	return a.iconSet.Bullet + " " + n.label(a.lang)
-}
-
-func (a *App) rowLine(selected bool, label string, inner, cursorWidth int) string {
-	marker := "  "
-	if selected {
-		marker = "▌ "
-	}
-	line := " " + marker + theme.Truncate(label, inner-3)
-	if selected {
-		return a.palette.SelectedRow(theme.Pad(line, cursorWidth))
-	}
-	return a.palette.Value(line)
 }
 
 func (a *App) renderToast(w int) string {
@@ -877,4 +943,41 @@ func (a *App) dashboardHint() string {
 		a.lang.T("hint_lang"),
 		a.lang.T("hint_quit"),
 	), "  ")
+}
+
+// scrollBy moves a scrollable screen, staying inside the rows it drew. A table taller than its
+// box is read with the arrow keys instead of being cut off with a count of what was left out.
+func (a *App) scrollBy(delta int) {
+	a.scroll += delta
+	if a.scroll < 0 {
+		a.scroll = 0
+	}
+	if a.scroll > a.scrollMax {
+		a.scroll = a.scrollMax
+	}
+}
+
+// screenRows is one page of a scrollable screen: the rows its box shows, which is how far
+// PageUp and PageDown move.
+func (a *App) screenRows() int {
+	rows := boxRows(a.bodyLayout().span())
+	if rows < 1 {
+		rows = 1
+	}
+	return rows
+}
+
+// windowRows is the slice of rows a scrollable screen shows from an offset. It never grows the
+// box: what is past the last row is reached with the arrow keys, and the hint bar says so.
+func windowRows(rows []string, offset, n int) []string {
+	if n <= 0 || len(rows) <= n {
+		return rows
+	}
+	if offset > len(rows)-n {
+		offset = len(rows) - n
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	return rows[offset : offset+n]
 }

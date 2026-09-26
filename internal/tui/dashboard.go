@@ -5,8 +5,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MinimaxFlora/EasySB/internal/core"
+	"charm.land/lipgloss/v2"
 	"github.com/MinimaxFlora/EasySB/internal/state"
+
 	"github.com/MinimaxFlora/EasySB/internal/theme"
 	"github.com/MinimaxFlora/EasySB/internal/ui"
 )
@@ -22,6 +23,21 @@ import (
 // than two blocks with a gap between them.
 
 // dashboard renders the current screen.
+// bodyLayout is the fixed layout of the body area: the rows under the status strip and the
+// blank line below it. Every screen that draws a box takes its slots from here, which is what
+// keeps the boxes in the same rows on every page.
+func (a *App) bodyLayout() layout {
+	h := a.height
+	if h <= 0 {
+		h = 24
+	}
+	bodyH := h - 2
+	if bodyH < 1 {
+		bodyH = 1
+	}
+	return a.layoutFor(a.frameWidth(), bodyH)
+}
+
 func (a *App) dashboard() string {
 	w := a.frameWidth()
 	h := a.height
@@ -41,23 +57,29 @@ func (a *App) dashboard() string {
 	return ui.Fit(lines, w, h)
 }
 
-// contextLine is the explanation of the highlighted entry, and the font note on the
-// system screen where there is no cursor to explain.
+// contextLine is what the row above the key hints says. That row belongs to the main menu,
+// whose entries carry only their number and name: it is where the hovered entry can be
+// explained in full. Every page under it puts the description in the row itself, so the line
+// is left empty there — the row is still reserved, so the hints do not move between pages.
+// The system screen has its own note: it has no cursor to explain, and the note is about the
+// screen rather than about an entry.
 func (a *App) contextLine(w int) string {
 	if a.system != nil {
 		return a.style().Faint("· " + theme.Truncate(a.lang.T("font_check_hint"), maxInt(0, w-2)))
 	}
+	if a.sectionID() != "" {
+		return ""
+	}
 	return a.itemDescription(w)
 }
 
-// tailLines is what follows the content on every screen: the explanation of the
-// highlighted entry, then the key hints.
+// tailLines is what follows the content on every screen: the line above the hints, then the
+// key hints themselves. The first row is always there, even when it is blank.
 func (a *App) tailLines(w, h int) []string {
-	out := []string{}
-	if line := a.contextLine(w); line != "" && h >= 3 {
-		out = append(out, line)
+	if h < 3 {
+		return nil
 	}
-	return append(out, a.dashboardHintLines(w, hintHeight(h-len(out)))...)
+	return append([]string{a.contextLine(w)}, a.dashboardHintLines(w, hintHeight(h-1))...)
 }
 
 // hintHeight is how many lines the hints need: their own box when the screen has
@@ -89,10 +111,13 @@ func (a *App) itemDescription(w int) string {
 	return a.style().Faint("· " + theme.Truncate(desc, maxInt(0, w-2)))
 }
 
-// dashboardBody fills the body of the frame below the status strip. Both kinds of
-// page take the whole width: the main menu draws its own 看板 and its two-column
-// entry list, a section draws that section's 看板 and its page's entries. The
-// system screen is a destination rather than a menu, so it takes the body too.
+// dashboardBody fills the body of the frame below the status strip. Every page renders into
+// the same slots: the section's 看板 in the top box, the entries of the page the operator
+// stands in in the bottom one, and the same description line and key hints underneath. Only
+// the contents change as the operator moves; the frame does not.
+//
+// Two screens are destinations rather than menus — the system screen and the panels that take
+// over the body — and they keep the whole body, because their content is the page.
 func (a *App) dashboardBody(w, h int) []string {
 	if h <= 0 {
 		return nil
@@ -101,76 +126,50 @@ func (a *App) dashboardBody(w, h int) []string {
 		tail := a.tailLines(w, h)
 		return padLines(append(a.system.body(a, w, h-len(tail)), tail...), w, h)
 	}
+	l := a.layoutFor(w, h)
+	tail := a.tailLinesPadded(w, h, l.tail)
 	if a.sectionID() == "" {
-		tail := a.tailLines(w, h)
-		return padLines(append(a.rootCards(w, h-len(tail)), tail...), w, h)
+		return padLines(append(a.rootSlots(w, l), tail...), w, h)
 	}
-	return padLines(a.sectionContent(w, h), w, h)
+	return padLines(append(a.sectionSlots(w, l), tail...), w, h)
 }
 
-// sectionContent renders one section in the frame every page of the panel shares: the
-// section's own 看板 in the top box and the entries of the page the operator stands in
-// in the bottom one, titled with that page's name. Only their contents change as the
-// operator moves between pages, the frame itself does not.
-func (a *App) sectionContent(w, h int) []string {
+// rootSlots is the main page in the panel's fixed layout: the welcome board on top, the root
+// entries below, both in the rows every other page uses.
+func (a *App) rootSlots(w int, l layout) []string {
 	s := a.style()
-	tail := a.tailLines(w, h)
-	space := h - len(tail)
-	out := []string{}
-	if title, rows := a.sectionPanel(w); title != "" && len(rows) > 0 {
-		box := ui.Card(s, title, "", rows, w)
-		// The 看板 keeps its slot only while the entries still fit under it.
-		if len(box)+1+sectionMenuRows <= space {
-			out = append(out, box...)
-			if !s.Met.Compact {
-				out = append(out, "")
-			}
-		}
+	if !a.ready {
+		return append(a.boxAt(a.lang.T("card_welcome"), []string{s.Faint(a.lang.T("loading") + "…")}, w, l.span()), blankRows(l.tail)...)
 	}
-	out = append(out, a.sectionMenu(w, space-len(out))...)
-	return append(out, tail...)
-}
-
-// sectionMenuRows is the height the entries box is never squeezed below: three
-// entries and the row that leads back out of the section.
-const sectionMenuRows = 5
-
-// sectionMenu is the bottom box of a section: its numbered entries and the row that
-// returns to the parent menu. It carries the name of the page it lists, the way the
-// main menu's box carries "主菜单".
-func (a *App) sectionMenu(w, h int) []string {
-	s := a.style()
+	out := a.boxAt(a.lang.T("card_welcome"), a.rootCardBody(w, a.heroLevelFor(w, boxRows(l.board))), w, l.board)
+	out = append(out, blankRows(l.gap)...)
 	inner := ui.InnerWidth(s, w)
-	title := a.current().title(a.lang)
-	limit := h - 2
-	if a.hasNavRow() {
-		limit--
-	}
-	if limit < 1 {
-		limit = 1
-	}
-	descCol := a.menuDescColumn(inner, a.menuLabelColumn())
-	cursorWidth := a.menuCursorWidth(inner)
-	items, hidden := a.menuViewport(limit, inner, descCol, cursorWidth)
-	body := make([]string, 0, len(items)+2)
-	body = append(body, items...)
-	if hidden > 0 {
-		body = append(body, s.Faint(fmt.Sprintf("  +%d", hidden)))
-	}
-	if a.hasNavRow() {
-		body = append(body, a.rowLine(a.onNavRow(), a.numberedLabel(len(a.current().nodes), nil), inner, cursorWidth))
-	}
-	return ui.Card(s, title, "", body, w)
+	root := a.stack[0]
+	out = append(out, a.boxAt(root.title(a.lang), a.menuCells(root.nodes, a.index, inner), w, l.menu)...)
+	return out
 }
 
-// sectionPanel is the 看板 of the page: its title, and the rows drawn in the top box.
-// Every section has one, which is what keeps the frame identical everywhere — the top
-// box is always the 看板 of the page the operator stands in, the bottom box is always
-// its entries, and only those two contents are swapped as the navigation moves.
-func (a *App) sectionPanel(w int) (string, []string) {
+// sectionSlots is any page inside a section, in the same two slots: that section's 看板 above
+// the entries of the page the operator is standing in. The 看板 keeps its rows even when a
+// page has nothing to put in it, which is what stops the pages from moving under the cursor.
+func (a *App) sectionSlots(w int, l layout) []string {
+	out := make([]string, 0, l.span())
+	title, rows := a.sectionPanel(w, boxRows(l.board))
+	if title != "" {
+		out = append(out, a.boxAt(title, rows, w, l.board)...)
+		out = append(out, blankRows(l.gap)...)
+	}
+	menuTitle, menuRows := a.menuContentRows(w, l.menu)
+	return append(out, a.boxAt(menuTitle, menuRows, w, l.menu)...)
+}
+
+// sectionPanel is the 看板 of the section the operator is inside: a section's own summary on
+// the pages under it. limit is the rows it has to live in, which only the toolbox board uses —
+// it is the one board whose content is a list of results rather than a few vitals.
+func (a *App) sectionPanel(w int, limit int) (string, []string) {
 	switch a.sectionID() {
-	case "kernel":
-		return a.lang.T("panel_kernel"), a.kernelBody(w)
+	case "toolbox":
+		return a.lang.T("panel_toolbox"), a.toolboxBody(w, limit)
 	case "node":
 		return a.lang.T("panel_node"), a.nodeBody(w)
 	case "domain":
@@ -191,25 +190,75 @@ func (a *App) sectionPanel(w int) (string, []string) {
 	return a.lang.T("panel_overview"), a.overviewBody(w)
 }
 
-// kernelBody is the core section's 看板: which sing-box is installed, whether the
-// service runs it, and whether its node is deployed.
-func (a *App) kernelBody(w int) []string {
+// menuContentRows is the bottom box's content for the page the operator stands in: its entries
+// laid out in the panel's columns, with the row that leads back out laid out as one more
+// entry. Every menu is drawn the same way — the main menu and the pages under it — which is
+// what makes the box the same size on every page.
+func (a *App) menuContentRows(w int, height int) (string, []string) {
 	s := a.style()
 	inner := ui.InnerWidth(s, w)
-	coreText, coreKind := a.coreSummary()
-	nodeText, nodeKind := a.nodeState()
-	service, svcKind := a.serviceState()
-	left := [][2]string{
-		a.kv("status_core", coreText, coreKind),
-		a.kv("kernel_source", a.coreSourceText(), ui.KindPlain),
-		a.kv("status_service", service, svcKind),
+	cur := a.current()
+	if cur.id == "root" {
+		// The main menu is the box every page is measured against, and it keeps the
+		// two-column layout it has always had.
+		return cur.title(a.lang), a.menuCells(cur.nodes, a.index, inner)
 	}
-	right := [][2]string{
-		a.kv("status_node", nodeText, nodeKind),
-		a.kv("status_ports", a.panelValue(enabledPorts(a.status.Ports)), ui.KindPlain),
-	}
-	return ui.TwoCol(s, left, right, inner)
+	return cur.title(a.lang), a.entryRows(cur, inner, boxRows(height))
 }
+
+// entryRows lists a page's entries one per line, with the description beside the label, and
+// keeps the cursor in view. When a page has more entries than the box holds it says "+N" in the
+// last row instead of growing: the box is the size of the main menu's, and the entries left out
+// stay reachable by their number.
+func (a *App) entryRows(m *menu, inner, limit int) []string {
+	if limit < 1 {
+		limit = 1
+	}
+	total := len(m.nodes)
+	nav := a.hasNavRow()
+	if nav {
+		total++
+	}
+	if total > limit {
+		// More entries than the box holds one per line. They fall back to the panel's
+		// columns — the layout the main menu already uses — rather than disappearing behind
+		// the "+N" row: an entry nobody can see is an entry nobody can reach.
+		cells := make([]*node, 0, total)
+		cells = append(cells, m.nodes...)
+		if nav {
+			// A nil node is the row that leads back out.
+			cells = append(cells, nil)
+		}
+		return a.menuCells(cells, a.index, inner)
+	}
+	labelCol := a.menuLabelColumn()
+	rows := make([]string, 0, total)
+	for i, n := range m.nodes {
+		rows = append(rows, a.menuRow(i == a.index, i, n, inner, labelCol))
+	}
+	if nav {
+		// The row that leads back out of the page, numbered like the rest.
+		rows = append(rows, a.navRow(a.onNavRow(), total-1, inner))
+	}
+	return rows
+}
+
+// navRow renders the entry that leaves the page: the same numbering, the navigation label, and
+// the selection bar when the cursor is on it.
+func (a *App) navRow(selected bool, i int, inner int) string {
+	marker := "  "
+	if selected {
+		marker = "▌ "
+	}
+	line := " " + marker + theme.Truncate(a.numberedLabel(i, nil), maxInt(0, inner-3))
+	if selected {
+		return a.palette.SelectedRow(theme.Pad(line, inner))
+	}
+	return a.palette.Value(line)
+}
+
+// sectionMenuRows is the height the entries box is never squeezed below: three
+// entries and the row that leads back out of the section.
 
 // domainBody is the domain section's 看板: the name in use and what is deployed
 // behind it, which is what its certificate actions act on.
@@ -357,31 +406,6 @@ func (a *App) nodeBody(w int) []string {
 	return ui.TwoCol(s, left, right, inner)
 }
 
-// rootCards stacks the two boxes of the main menu in the same frame as every other
-// page: the panel's own 看板 on top — the wordmark and the vitals — and the entries
-// below it. It is not padded to its height, so the explanation and the hints stay
-// right under the entries, and the entries are never traded away: on a terminal too
-// short for both boxes the 看板 gives up its slot, so every entry stays reachable.
-func (a *App) rootCards(w, h int) []string {
-	s := a.style()
-	if !a.ready {
-		return ui.Card(s, a.lang.T("card_welcome"), "", []string{s.Faint(a.lang.T("loading") + "…")}, w)
-	}
-	menu := a.rootMenuLines(w)
-	panel := a.rootCard(w, heroLevels)
-	for level := heroLevels; level > 0 && len(panel)+1+len(menu) > h; level-- {
-		panel = a.rootCard(w, level-1)
-	}
-	out := []string{}
-	if len(panel)+1+len(menu) <= h {
-		out = append(out, panel...)
-		if !s.Met.Compact {
-			out = append(out, "")
-		}
-	}
-	return append(out, menu...)
-}
-
 // heroLevels is how many shapes the wordmark block has, from the full wordmark,
 // tagline and quote down to nothing at all.
 const heroLevels = 3
@@ -390,28 +414,32 @@ const heroLevels = 3
 // then the service, node and version rows.
 func (a *App) rootCard(w, level int) []string {
 	s := a.style()
+	return ui.Card(s, a.lang.T("card_welcome"), "", a.rootCardBody(w, level), w)
+}
+
+// rootCardBody is the welcome board's content without its frame. The layout measures this to
+// learn how many rows the top box has, and the main page draws the very same rows in the slot
+// that measurement came from.
+func (a *App) rootCardBody(w, level int) []string {
+	s := a.style()
 	body := []string{}
 	if level > 0 && w >= 46 && !s.Met.Compact {
 		body = append(body, a.heroBody(w, level)...)
 		body = append(body, ui.Rule(s, ui.InnerWidth(s, w)))
 	}
 	body = append(body, a.overviewBody(w)...)
-	return ui.Card(s, a.lang.T("card_welcome"), "", body, w)
-}
-
-// rootMenuLines renders the main menu on its own, for terminals too short to hold
-// the panel's vitals above it.
-func (a *App) rootMenuLines(w int) []string {
-	s := a.style()
-	inner := ui.InnerWidth(s, w)
-	return ui.Card(s, a.current().title(a.lang), "", a.menuCellRows(inner), w)
+	return body
 }
 
 // menuCellRows lays the main menu's entries out in two columns; the left column
 // takes the extra row when the count is odd. Below two usable columns the entries
 // fall back to one per row, so no entry can be cut in half.
-func (a *App) menuCellRows(inner int) []string {
-	nodes := a.current().nodes
+
+// menuCells lays the entries of any menu into the panel's columns: two of them once the frame
+// is wide enough for the descriptions to survive, one otherwise. It takes the nodes and the
+// cursor rather than reading the current page, because the layout measures the main menu's box
+// while the operator may be standing on another page.
+func (a *App) menuCells(nodes []*node, cursor int, inner int) []string {
 	n := len(nodes)
 	if n == 0 {
 		return nil
@@ -420,16 +448,16 @@ func (a *App) menuCellRows(inner int) []string {
 	if colW < 16 {
 		rows := make([]string, 0, n)
 		for i, nd := range nodes {
-			rows = append(rows, a.menuCell(i == a.index, i, nd, inner))
+			rows = append(rows, a.menuCell(i == cursor, i, nd, inner))
 		}
 		return rows
 	}
 	half := (n + 1) / 2
 	rows := make([]string, 0, half)
 	for i := 0; i < half; i++ {
-		row := a.menuCell(i == a.index, i, nodes[i], colW)
+		row := a.menuCell(i == cursor, i, nodes[i], colW)
 		if j := i + half; j < n {
-			row += " " + a.menuCell(j == a.index, j, nodes[j], inner-colW-1)
+			row += " " + a.menuCell(j == cursor, j, nodes[j], inner-colW-1)
 		} else {
 			row += strings.Repeat(" ", inner-colW)
 		}
@@ -438,8 +466,10 @@ func (a *App) menuCellRows(inner int) []string {
 	return rows
 }
 
-// menuCell renders one entry of the two-column menu: its number and label, filled
-// out to the column so the selection bar keeps one size while the cursor moves.
+// menuCell renders one entry inside a column: its number and its name, nothing else. The main
+// menu has always been drawn this way, and it is the box every other page is sized from, so the
+// descriptions stay off these rows and the selected entry's description appears under the box
+// where it has always been (see the tail in layout.go).
 func (a *App) menuCell(selected bool, i int, n *node, cellW int) string {
 	marker := "  "
 	if selected {
@@ -450,6 +480,56 @@ func (a *App) menuCell(selected bool, i int, n *node, cellW int) string {
 		return a.palette.SelectedRow(line)
 	}
 	return a.palette.Bold(a.palette.Text, line)
+}
+
+// menuRow renders one entry of a page inside a section: the number and the name, then the
+// description beside them, truncated to whatever the row has left. These pages list one entry
+// per line, so the description has room that a column of the main menu does not.
+func (a *App) menuRow(selected bool, i int, n *node, inner int, labelCol int) string {
+	marker := "  "
+	if selected {
+		marker = "▌ "
+	}
+	line := " " + marker + theme.Truncate(a.numberedLabel(i, n), maxInt(0, inner-3))
+	desc := a.nodeDesc(n)
+	if desc != "" {
+		gap := labelCol - 3 - lipgloss.Width(a.numberedLabel(i, n))
+		if gap < 2 {
+			gap = 2
+		}
+		if room := inner - 3 - lipgloss.Width(a.numberedLabel(i, n)) - gap; room >= 4 {
+			line += strings.Repeat(" ", gap) + theme.Truncate(desc, room)
+		}
+	}
+	if selected {
+		// The bar spans the whole row so the cursor does not change length as it moves.
+		return a.palette.SelectedRow(theme.Pad(line, inner))
+	}
+	if desc == "" {
+		return a.palette.Bold(a.palette.Text, line)
+	}
+	return a.palette.Bold(a.palette.Text, " "+marker+theme.Truncate(a.numberedLabel(i, n), maxInt(0, inner-3))) +
+		a.palette.Dim(line[len(" "+marker+theme.Truncate(a.numberedLabel(i, n), maxInt(0, inner-3))):])
+}
+
+// nodeDesc is one entry's description in the current language, empty when it has none.
+func (a *App) nodeDesc(n *node) string {
+	if n == nil || n.desc == nil {
+		return ""
+	}
+	return n.desc(a.lang)
+}
+
+// heroLevelFor is the largest wordmark level whose card fits the rows the board slot has. The
+// slot is fixed now, so the welcome card adapts to it instead of the card deciding the slot:
+// on a short terminal the panel drops the quote, then the tagline, and keeps the live vitals.
+func (a *App) heroLevelFor(w, rows int) int {
+	for level := heroLevels; level > 0; level-- {
+		if len(a.rootCardBody(w, level)) <= rows {
+			return level
+		}
+	}
+	return 0
 }
 
 // heroBody is the wordmark block shown at the top of a tall main menu: the block
@@ -485,13 +565,9 @@ func (a *App) statusStrip(w int) string {
 		ui.StripItem{Icon: a.iconSet.Rocket, Label: a.lang.T("status_node"), Value: nodeText, Kind: nodeKind},
 	)
 	if st.CoreVersion == "" {
-		items = append(items, ui.StripItem{Icon: a.iconSet.Core, Label: a.lang.T("status_core"), Value: a.lang.T("ver_not_installed")})
+		items = append(items, ui.StripItem{Icon: a.iconSet.Core, Label: a.lang.T("status_core"), Value: a.lang.T("state_unknown")})
 	} else {
-		kind := ui.KindOK
-		if st.CoreChannel == "alpha" {
-			kind = ui.KindWarn
-		}
-		items = append(items, ui.StripItem{Icon: a.iconSet.Core, Label: a.lang.T("status_core"), Value: st.CoreVersion, Kind: kind})
+		items = append(items, ui.StripItem{Icon: a.iconSet.Core, Label: a.lang.T("status_core"), Value: st.CoreVersion, Kind: ui.KindOK})
 	}
 	if st.MemTotal > 0 {
 		used := st.MemTotal - minU64(st.MemAvail, st.MemTotal)
@@ -510,45 +586,24 @@ func (a *App) statusStrip(w int) string {
 	return ui.Strip(s, items, w)
 }
 
-// coreSummary words the installed core as "version [channel]", with a marker when the
-// binary can count traffic, or says it is not installed. The wordmark card, the core
-// section's 看板 and the version section's all show it, so it is worded once here.
+// coreSummary words the core the panel carries as "version · counters", where the
+// counters half says whether per-account traffic can be measured at all. It is the same
+// answer in the wordmark card, the 看板 and the system card, so it is worded once here.
 func (a *App) coreSummary() (string, ui.Kind) {
 	if a.status.CoreVersion == "" {
-		return a.lang.T("ver_not_installed"), ui.KindPlain
+		return a.lang.T("state_unknown"), ui.KindPlain
 	}
-	kind := ui.KindOK
-	if a.status.CoreChannel == "alpha" {
-		kind = ui.KindWarn
-	}
-	text := a.status.CoreVersion + " [" + a.lang.T(channelTagKey(a.status.CoreChannel)) + "]"
-	text += " · " + a.coreSourceLabel()
-	return text, kind
+	return a.status.CoreVersion + " · " + a.coreStatsLabel(), ui.KindOK
 }
 
-// coreSourceLabel names where the installed core came from: this repository's builds (the
-// default, and the only ones that can count traffic) or the official SagerNet releases.
-// The source recorded at install time is used when there is one; otherwise it is read off
-// the binary's build tags, which also covers a core installed before the record existed.
-func (a *App) coreSourceLabel() string {
-	if coreSourceFrom(a.status.CoreSource, a.status.StatsCapable) == core.SourceBuild {
-		return a.lang.T("kernel_source_author")
-	}
-	return a.lang.T("kernel_source_official")
-}
-
-// coreSourceText words the installed core's source together with whether it can count
-// per-account traffic. The counter half is measured from the binary, not remembered, so
-// it cannot drift from what is actually installed.
-func (a *App) coreSourceText() string {
-	if a.status.CoreVersion == "" {
-		return a.lang.T("state_unknown")
-	}
-	stats := a.lang.T("kernel_stats_off")
+// coreStatsLabel says whether this build counts per-account traffic. The answer comes
+// from the build tags the binary was compiled with, so it cannot drift from what the
+// core actually does.
+func (a *App) coreStatsLabel() string {
 	if a.status.StatsCapable {
-		stats = a.lang.T("kernel_stats_on")
+		return a.lang.T("core_stats_on")
 	}
-	return a.coreSourceLabel() + " · " + stats
+	return a.lang.T("core_stats_off")
 }
 
 // overviewBody is the service/node/version card.
@@ -592,43 +647,6 @@ func (a *App) syncIntervalText() string {
 		return a.lang.T("not_set")
 	}
 	return fmt.Sprintf("%ds", a.status.SubSyncSecs)
-}
-
-// deviceBody is the host card: meters for the three resources that run out, then
-// the identity of the machine.
-func (a *App) deviceBody(w int) []string {
-	s := a.style()
-	st := a.status
-	inner := ui.InnerWidth(s, w)
-	var body []string
-	meter := func(labelKey string, total, free uint64) {
-		if total == 0 {
-			return
-		}
-		free = minU64(free, total)
-		used := total - free
-		body = append(body, ui.MeterLine(s, a.lang.T(labelKey), usageCell(total, free),
-			float64(used)/float64(total), inner))
-	}
-	meter("device_memory", st.MemTotal, st.MemAvail)
-	meter("device_disk", st.DiskTotal, st.DiskFree)
-	meter("device_swap", st.SwapTotal, st.SwapFree)
-	if len(body) > 0 {
-		body = append(body, "")
-	}
-	left := [][2]string{
-		a.kv("device_host", st.Hostname, ui.KindPlain),
-		a.kv("device_os", withFallback(st.OS, a.lang.T("state_unknown")), ui.KindPlain),
-		a.kv("device_kernel", withFallback(st.Kernel, a.lang.T("state_unknown")), ui.KindPlain),
-		a.kv("device_cpu", a.cpuSummary(), ui.KindPlain),
-	}
-	right := [][2]string{
-		a.kv("device_uptime", withFallback(humanDuration(st.Uptime), "—"), ui.KindPlain),
-		a.kv("device_load", withFallback(st.LoadAvg, "—"), ui.KindPlain),
-		a.kv("device_local_ipv4", withFallback(st.LocalIPv4, "—"), ui.KindPlain),
-		a.kv("device_local_ipv6", withFallback(st.LocalIPv6, "—"), ui.KindPlain),
-	}
-	return append(body, ui.TwoCol(s, left, right, inner)...)
 }
 
 // accountsBody summarises the accounts: how many, how many still work, and how

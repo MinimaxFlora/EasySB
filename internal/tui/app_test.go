@@ -3,7 +3,9 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"image/color"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -14,12 +16,14 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/MinimaxFlora/EasySB/internal/bbr"
-	"github.com/MinimaxFlora/EasySB/internal/core"
 	"github.com/MinimaxFlora/EasySB/internal/i18n"
 	"github.com/MinimaxFlora/EasySB/internal/prefs"
 	"github.com/MinimaxFlora/EasySB/internal/state"
 	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
 	"github.com/MinimaxFlora/EasySB/internal/theme"
+	"github.com/MinimaxFlora/EasySB/internal/toolbox"
+	"github.com/MinimaxFlora/EasySB/internal/toolbox/tools"
+	"github.com/MinimaxFlora/EasySB/internal/ui"
 	"github.com/MinimaxFlora/EasySB/internal/user"
 )
 
@@ -39,16 +43,16 @@ func typeRune(r rune) tea.KeyPressMsg {
 
 func newTestApp(t *testing.T) *App {
 	t.Helper()
-	// The interface choices are written to disk, so they go to a temporary file
-	// instead of the real panel directory.
+	// The interface choices and the toolbox board are written to disk, so they go to
+	// temporary files instead of the real panel directory.
 	t.Setenv(prefs.PathEnv, filepath.Join(t.TempDir(), "easysb-ui.conf"))
+	t.Setenv(toolbox.BoardEnv, filepath.Join(t.TempDir(), "easysb-toolbox.json"))
 	a := New("test", i18n.Chinese)
 	m, _ := a.Update(tea.WindowSizeMsg{Width: 100, Height: 34})
 	a = m.(*App)
 	m, _ = a.Update(statusMsg(sysinfo.Status{
 		Service:     "running",
 		CoreVersion: "1.15.0-alpha.6",
-		CoreChannel: "alpha",
 		Autostart:   "enabled",
 		Domain:      "example.com",
 		Deployed:    true,
@@ -74,21 +78,6 @@ func TestDashboardFitsTerminal(t *testing.T) {
 		a.push(buildNode())
 		if lines := strings.Count(a.dashboard(), "\n") + 1; lines > h {
 			t.Fatalf("height %d: node dashboard drew %d lines", h, lines)
-		}
-	}
-}
-
-func TestMenuViewportKeepsCursorVisible(t *testing.T) {
-	a := New("test", i18n.Chinese)
-	a.width, a.height = 100, 10
-	a.sized = true
-	a.status = sysinfo.Collect("test")
-	a.ready = true
-	for i := range a.current().nodes {
-		a.index = i
-		frame := a.dashboard()
-		if !strings.Contains(frame, a.current().nodes[i].label(i18n.Chinese)) {
-			t.Fatalf("frame at index %d hides the selected row:\n%s", i, frame)
 		}
 	}
 }
@@ -198,7 +187,7 @@ func TestRootMenuHasNoNav(t *testing.T) {
 	// The root entries are the panel's map: every screen has to be reachable from
 	// here, and from the navigation grouping as well, or it is hidden behind a
 	// scroll nobody knows about.
-	want := []string{"kernel", "node", "domain", "subscribe", "users", "service", "system", "bbr", "script-update", "uninstall"}
+	want := []string{"toolbox", "node", "domain", "subscribe", "users", "service", "system", "bbr", "script-update", "uninstall"}
 	got := map[string]bool{}
 	for _, n := range a.current().nodes {
 		got[n.id] = true
@@ -210,32 +199,6 @@ func TestRootMenuHasNoNav(t *testing.T) {
 	}
 	if len(a.current().nodes) != len(want) {
 		t.Errorf("root has %d entries, expected %d", len(a.current().nodes), len(want))
-	}
-	placed := map[string]bool{}
-	for _, g := range a.style().Met.Groups {
-		for _, id := range g.IDs {
-			placed[id] = true
-		}
-	}
-	for _, n := range a.current().nodes {
-		if !placed[n.id] {
-			t.Errorf("entry %q is in no navigation group of the default skin", n.id)
-		}
-	}
-	// Every skin carries its own grouping, and an entry missing from one of them
-	// disappears from that skin's navigation column without any other symptom.
-	for _, skin := range theme.Skins() {
-		grouped := map[string]bool{}
-		for _, g := range skin.Met.Groups {
-			for _, id := range g.IDs {
-				grouped[id] = true
-			}
-		}
-		for _, n := range a.current().nodes {
-			if !grouped[n.id] {
-				t.Errorf("skin %q does not group the root entry %q", skin.ID, n.id)
-			}
-		}
 	}
 	if !got["uninstall"] {
 		t.Fatalf("uninstall should be in the root menu")
@@ -251,25 +214,33 @@ func TestRootMenuHasNoNav(t *testing.T) {
 	}
 }
 
-func TestKernelMenuEntries(t *testing.T) {
+// The 工具箱 section stands where 内核管理 used to: the core is compiled into the panel, so
+// what an operator needs there is a measurement of the machine rather than a menu of cores.
+// Its entries come from the registry, so the menu cannot drift from what the panel can run.
+func TestToolboxMenuEntries(t *testing.T) {
 	a := newTestApp(t)
-	a.push(buildKernel())
-	want := []string{"kernel-switch", "kernel-update"}
-	if got := len(a.current().nodes); got != len(want) {
-		t.Fatalf("kernel menu has %d entries, want %d", got, len(want))
+	a.push(buildToolbox())
+	groups := tools.Groups()
+	if got, want := len(a.current().nodes), len(groups)+1; got != want {
+		t.Fatalf("toolbox menu has %d entries, want %d groups and the board settings", got, len(groups))
 	}
-	for i, id := range want {
-		if got := a.current().nodes[i].id; got != id {
-			t.Fatalf("kernel entry %d = %s, want %s", i, got, id)
+	for i, group := range groups {
+		if got := a.current().nodes[i].id; got != "toolbox-"+group {
+			t.Fatalf("toolbox entry %d = %s, want toolbox-%s", i, got, group)
 		}
 	}
+	// The board is the page's own summary, so what belongs on it is the last entry of the
+	// section rather than the property of any one tool.
+	if got := a.current().nodes[len(groups)].id; got != "board-settings" {
+		t.Fatalf("last toolbox entry = %s, want board-settings", got)
+	}
 	if !a.hasNavRow() {
-		t.Fatalf("kernel menu should show a navigation row")
+		t.Fatalf("toolbox menu should show a navigation row")
 	}
 	view := a.View().Content
-	for _, label := range []string{"切换内核", "更新内核", i18n.Chinese.T("nav_back")} {
+	for _, label := range []string{i18n.Chinese.T("toolbox_group_unlock"), i18n.Chinese.T("toolbox_group_hardware"), i18n.Chinese.T("nav_back")} {
 		if !strings.Contains(view, label) {
-			t.Fatalf("kernel menu view missing %q: %s", label, view)
+			t.Fatalf("toolbox view missing %q: %s", label, view)
 		}
 	}
 	m, _ := a.Update(press('0'))
@@ -277,62 +248,294 @@ func TestKernelMenuEntries(t *testing.T) {
 	if !a.onNavRow() {
 		t.Fatalf("digit 0 should select the navigation row in a submenu")
 	}
-	if a.current().id != "kernel" {
-		t.Fatalf("expected kernel submenu, got %s", a.current().id)
+	if a.current().id != "toolbox" {
+		t.Fatalf("expected toolbox submenu, got %s", a.current().id)
 	}
 }
 
-// Switching the core is one list of the four channel/source combinations, so taking the
-// official core and going back to the author's build are the same kind of move.
-func TestKernelSwitchEntries(t *testing.T) {
+// Every registered tool gets one entry of its own, in registry order: the point of the
+// toolbox is that each measurement is reachable on its own.
+func TestToolboxGroupEntriesFollowTheRegistry(t *testing.T) {
 	a := newTestApp(t)
-	a.push(buildKernelSwitch())
-	want := []struct{ id, label string }{
-		{"kernel-apply-stable-author", "正式版 · 作者源"},
-		{"kernel-apply-alpha-author", "测试版 · 作者源"},
-		{"kernel-apply-stable-official", "正式版 · 官方源"},
-		{"kernel-apply-alpha-official", "测试版 · 官方源"},
+	// The panel enters the section first; a stack assembled without it would be a stack the
+	// panel never builds, and the page would be drawn as the main menu.
+	if !a.enterSection("toolbox") {
+		t.Fatal("the toolbox section should be reachable")
 	}
-	if got := len(a.current().nodes); got != len(want) {
-		t.Fatalf("switch menu has %d entries, want %d", got, len(want))
-	}
-	view := a.View().Content
-	for i, entry := range want {
-		if got := a.current().nodes[i].id; got != entry.id {
-			t.Fatalf("switch entry %d = %s, want %s", i, got, entry.id)
+	for _, group := range tools.Groups() {
+		a.push(buildToolGroup(group))
+		entries := tools.InGroup(group)
+		if got := len(a.current().nodes); got != len(entries) {
+			t.Fatalf("group %s has %d entries, want %d", group, got, len(entries))
 		}
-		if got := a.current().nodes[i].label(i18n.Chinese); got != entry.label {
-			t.Fatalf("switch entry %d label = %q, want %q", i, got, entry.label)
+		view := a.View().Content
+		for i, tool := range entries {
+			if got := a.current().nodes[i].id; got != "tool-"+tool.ID {
+				t.Fatalf("group %s entry %d = %s, want tool-%s", group, i, got, tool.ID)
+			}
+			label := i18n.Chinese.T("toolbox_" + tool.ID)
+			if strings.HasPrefix(label, "toolbox_") {
+				t.Fatalf("tool %s has no name in the table", tool.ID)
+			}
+			if !strings.Contains(view, label) {
+				t.Fatalf("group %s view missing %q: %s", group, label, view)
+			}
 		}
-		if !strings.Contains(view, entry.label) {
-			t.Fatalf("switch menu view missing %q: %s", entry.label, view)
-		}
-	}
-	if !a.hasNavRow() {
-		t.Fatalf("switch menu should show a navigation row")
+		a.pop()
 	}
 }
 
-// The combination that is installed is marked, and the mark comes from the recorded state:
-// without a record nothing is marked, because the core page's 看板 answers from the binary.
-func TestKernelCurrentKey(t *testing.T) {
-	cases := []struct {
-		name string
-		cfg  state.Config
-		want string
-	}{
-		{"author stable", state.Config{CoreChannel: "stable", CoreSource: core.SourceBuild}, "stable:build"},
-		{"official alpha", state.Config{CoreChannel: "alpha", CoreSource: core.SourceUpstream}, "alpha:upstream"},
-		{"channel missing", state.Config{CoreSource: core.SourceBuild}, "stable:build"},
-		{"no record", state.Config{CoreChannel: "stable"}, ""},
-		{"nothing at all", state.Config{}, ""},
+// Every menu in the panel has to fit the box the layout gives it. The boxes are fixed at the
+// main menu's size and no page scrolls, so a menu with more entries than rows would hide the
+// last ones with no way to reach them — which is the failure this test exists to catch.
+func TestEveryMenuFitsItsBox(t *testing.T) {
+	a := newTestApp(t)
+	l := a.bodyLayout()
+	room := boxRows(l.menu)
+	if room < 5 {
+		t.Fatalf("the menu slot holds %d rows, too few for the panel's menus", room)
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := kernelCurrentKey(tc.cfg); got != tc.want {
-				t.Fatalf("kernelCurrentKey(%+v) = %q, want %q", tc.cfg, got, tc.want)
+	var walk func(m *menu, path string, depth int)
+	walk = func(m *menu, path string, depth int) {
+		rows := len(a.menuCells(m.nodes, 0, ui.InnerWidth(a.style(), a.frameWidth())))
+		if depth > 1 {
+			rows++ // the row that leads back out
+		}
+		if rows > room {
+			t.Errorf("%s draws %d rows of entries, its box holds %d", path, rows, room)
+		}
+		for _, n := range m.nodes {
+			if n.sub != nil {
+				walk(n.sub, path+"/"+n.id, depth+1)
 			}
-		})
+		}
+	}
+	walk(a.stack[0], "main", 1)
+}
+
+// Every page draws its boxes in the same rows, at the same sizes. This is the test for the
+// complaint that started the fixed layout: moving from the main menu into a section used to
+// resize the boxes, and a page whose 看板 was taller than its room dropped the 看板 entirely.
+func TestEveryPageKeepsTheSameBoxes(t *testing.T) {
+	boxes := func(view string) [][2]int {
+		var out [][2]int
+		open := -1
+		for i, line := range strings.Split(view, "\n") {
+			switch {
+			case open < 0 && strings.Contains(line, "╭"):
+				open = i
+			case open >= 0 && strings.Contains(line, "╰"):
+				out = append(out, [2]int{open, i})
+				open = -1
+			}
+		}
+		return out
+	}
+
+	a := newTestApp(t)
+	main := boxes(a.View().Content)
+	if len(main) != 3 {
+		t.Fatalf("the main page should draw the 看板, the menu and the hints, got %d boxes", len(main))
+	}
+
+	pages := map[string]string{"主菜单": a.View().Content}
+	a.enterSection("toolbox")
+	pages["工具箱"] = a.View().Content
+	a.push(buildToolGroup(tools.GroupHardware))
+	pages["硬件与性能"] = a.View().Content
+	a.pop()
+	a.pop()
+	a.enterSection("users")
+	pages["账号管理"] = a.View().Content
+	a.pop()
+
+	for name, view := range pages {
+		got := boxes(view)
+		if len(got) != len(main) {
+			t.Errorf("%s draws %d boxes, the main page draws %d", name, len(got), len(main))
+			continue
+		}
+		for i := range got {
+			if got[i] != main[i] {
+				t.Errorf("%s draws box %d at rows %v, the main page draws it at %v", name, i, got[i], main[i])
+			}
+		}
+	}
+}
+
+// A running task and a finished report use the two slots as one box: same rows, same place, so
+// the screen does not change shape when the work starts or ends either.
+func TestTaskAndReportFillBothSlots(t *testing.T) {
+	a := newTestApp(t)
+	l := a.bodyLayout()
+	want := [2]int{2, 2 + l.span() - 1}
+	boxes := func(view string) [][2]int {
+		var out [][2]int
+		open := -1
+		for i, line := range strings.Split(view, "\n") {
+			switch {
+			case open < 0 && strings.Contains(line, "╭"):
+				open = i
+			case open >= 0 && strings.Contains(line, "╰"):
+				out = append(out, [2]int{open, i})
+				open = -1
+			}
+		}
+		return out
+	}
+
+	p := newProgress("三网回程", func(context.Context, *taskReporter) error { return nil })
+	p.resize(a.width, a.height, l.span())
+	a.task = p
+	running := boxes(a.View().Content)
+	if len(running) != 2 || running[0] != want {
+		t.Fatalf("the running screen should fill both slots at %v, got %v", want, running)
+	}
+
+	outcome := previewToolOutcome()
+	a.task = nil
+	a.report = &outcome
+	report := boxes(a.View().Content)
+	if len(report) != 2 || report[0] != want {
+		t.Fatalf("the report should fill both slots at %v, got %v", want, report)
+	}
+}
+
+// A finished tool leaves a report on the screen and a line on the board: the run is what
+// the operator asked for, so the panel shows its table rather than its log.
+func TestToolboxReportAndBoard(t *testing.T) {
+	a := newTestApp(t)
+	outcome := toolOutcome{
+		id: "unlock-ai",
+		result: toolbox.Result{
+			Headers: []string{"service", "status", "region"},
+			Rows: [][]string{
+				{"ChatGPT", "unlocked", "US"},
+				{"Claude", "unknown", "US"},
+			},
+			Notes:   []string{"Claude: claude.ai answered a Cloudflare challenge"},
+			Summary: "unlocked 1 · blocked 0 · unknown 1 (2)",
+		},
+		when: time.Now(),
+	}
+	a.toolResults = map[string]toolOutcome{outcome.id: outcome}
+	a.report = &outcome
+
+	view := a.View().Content
+	for _, want := range []string{
+		i18n.Chinese.T("toolbox_verdict_unlocked"),
+		i18n.Chinese.T("toolbox_verdict_unknown"),
+		i18n.Chinese.T("toolbox_col_region"),
+		"US",
+		i18n.Chinese.T("toolbox_rerun"),
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("report missing %q:\n%s", want, view)
+		}
+	}
+	// A verdict the panel defined is worded in the interface language; the numbers and
+	// names a tool reports are left as they came.
+	if strings.Contains(view, "unlocked") {
+		t.Errorf("the report leaked a raw verdict token:\n%s", view)
+	}
+
+	// Esc closes the report; the board then shows what the run found.
+	m, _ := a.Update(press(tea.KeyEsc))
+	a = m.(*App)
+	if a.report != nil {
+		t.Fatal("esc should close the report")
+	}
+	board := a.toolboxBody(88, 6)
+	joined := strings.Join(board, "\n")
+	if !strings.Contains(joined, i18n.Chinese.T("toolbox_unlock-ai")) || !strings.Contains(joined, "未知 1") {
+		t.Fatalf("board does not report the last run:\n%s", joined)
+	}
+	// The board words the verdicts like the report does: a summary that stayed in tokens
+	// would put `unknown 1` next to a table that says 未知.
+	for _, token := range []string{"unlocked", "blocked", "unknown"} {
+		if strings.Contains(joined, token) {
+			t.Errorf("the board leaked the raw token %q:\n%s", token, joined)
+		}
+	}
+	// The head counts the entries the board shows, so an operator can tell a board with one
+	// result on it from one that is still waiting for its first run.
+	if !strings.Contains(joined, i18n.Chinese.Format("toolbox_board_head", 1, len(tools.BoardDefault()))) {
+		t.Fatalf("board does not count what it shows:\n%s", joined)
+	}
+	// An entry that is on the board and has not run says so, rather than leaving a gap.
+	if !strings.Contains(joined, i18n.Chinese.T("toolbox_undetected")) {
+		t.Fatalf("board does not mark what has not run:\n%s", joined)
+	}
+}
+
+// Before anything runs the board shows the entries it is meant to show and marks them as not
+// run: an operator reading it knows what will appear there, and that the host has not answered
+// yet. Only a board with nothing selected falls back to an invitation.
+func TestToolboxBoardBeforeAnyRun(t *testing.T) {
+	a := newTestApp(t)
+	board := strings.Join(a.toolboxBody(88, 6), "\n")
+	if !strings.Contains(board, i18n.Chinese.Format("toolbox_board_head", 0, len(tools.BoardDefault()))) {
+		t.Fatalf("board head should count the entries it shows:\n%s", board)
+	}
+	for _, id := range tools.BoardDefault() {
+		if !strings.Contains(board, i18n.Chinese.T("toolbox_"+id)) {
+			t.Fatalf("board is missing the default entry %s:\n%s", id, board)
+		}
+	}
+	a.setBoardAll(false)
+	board = strings.Join(a.toolboxBody(88, 6), "\n")
+	if !strings.Contains(board, i18n.Chinese.T("toolbox_board_none")) {
+		t.Fatalf("a board with nothing selected should say so:\n%s", board)
+	}
+}
+
+// The board settings page is where the board's contents are chosen, and the choice is written
+// down with the rest of the interface preferences.
+func TestBoardSettingsChooseWhatTheBoardShows(t *testing.T) {
+	a := newTestApp(t)
+	a.push(buildToolbox())
+	// Walking into the settings entry has to leave the toolbox menu behind.
+	a.push(a.buildBoardSettings())
+	ids := tools.InGroup(tools.GroupHardware)
+	if on, total := a.boardGroupState(tools.GroupHardware); total != len(ids) {
+		t.Fatalf("hardware group counts %d of %d entries", on, total)
+	}
+	a.push(a.buildBoardGroup(tools.GroupHardware))
+	before := a.boardSelected(ids[0].ID)
+	m, _ := a.Update(press(tea.KeyEnter))
+	a = m.(*App)
+	if a.boardSelected(ids[0].ID) == before {
+		t.Fatalf("enter left %s at %v", ids[0].ID, before)
+	}
+	// The row shows the state it is in, so the page can be read without remembering it.
+	want := "[x] "
+	if before {
+		want = "[ ] "
+	}
+	if !strings.Contains(a.View().Content, want+i18n.Chinese.T("toolbox_"+ids[0].ID)) {
+		t.Fatalf("the row does not show %q:\n%s", want+ids[0].ID, a.View().Content)
+	}
+	// The choice survives a restart: it is read back from the preferences file.
+	stored := boardFromPrefs(prefs.Load(a.prefsPath))
+	if stored[ids[0].ID] == before {
+		t.Fatalf("the choice was not written down: %v", stored)
+	}
+	// Turning it back is the same key.
+	m, _ = a.Update(press(tea.KeyEnter))
+	a = m.(*App)
+	if a.boardSelected(ids[0].ID) != before {
+		t.Fatalf("enter should have put %s back to %v", ids[0].ID, before)
+	}
+	// The two whole-board rows are choices too, and the board follows them.
+	a.setBoardAll(true)
+	if on, total := a.boardGroupState(tools.GroupHardware); on != total {
+		t.Fatalf("select all left the hardware group at %d/%d", on, total)
+	}
+	a.setBoardAll(false)
+	if !a.boardSelected(tools.BoardDefault()[0]) {
+		// Nothing is selected, so a default entry must be off as well.
+	} else {
+		t.Fatalf("clear all should have turned every entry off")
 	}
 }
 
@@ -503,16 +706,28 @@ func TestDashboardShowsLogoAndMenuDescriptions(t *testing.T) {
 	if split < 0 {
 		t.Fatalf("the menu is not in a box of its own after the 看板:\n%s", view)
 	}
-	// The hints follow the menu instead of being pinned to the bottom, which is
-	// what leaves the gap the user asked to close: the menu card's bottom border
-	// and the explanation line are all that sit between them.
+	// The hints are part of the fixed tail: the menu box closes, one description line, and
+	// then the hint box — the same three rows on every page, which is what the layout
+	// reserves for them. They are not pinned to the bottom of the terminal, so the gap the
+	// user asked to close stays closed.
 	hint := at(i18n.Chinese.T("panel_hints"))
 	last := at("[ 10 ]")
 	if hint < 0 || last < 0 {
 		t.Fatalf("hints %d, last entry %d:\n%s", hint, last, view)
 	}
-	if hint-last > 4 {
-		t.Fatalf("hints at line %d, last entry at %d — they are not right under the menu:\n%s", hint, last, view)
+	menuBottom := -1
+	for i := last; i < len(lines); i++ {
+		if strings.Contains(lines[i], "╰") {
+			menuBottom = i
+			break
+		}
+	}
+	if menuBottom < 0 {
+		t.Fatalf("the menu box has no bottom border:\n%s", view)
+	}
+	if hint-menuBottom != 2 {
+		t.Fatalf("hints at line %d, menu box ends at %d — the tail is not the one row the layout reserves:\n%s",
+			hint, menuBottom, view)
 	}
 	if hint+3 >= len(lines)-1 {
 		t.Fatalf("hints at line %d of %d lines — they are pinned to the bottom:\n%s", hint, len(lines), view)
@@ -523,13 +738,13 @@ func TestDashboardShowsLogoAndMenuDescriptions(t *testing.T) {
 // second-level page shows a 看板 of its own in the top box and its entries in the
 // bottom one, so moving between pages swaps those two contents and nothing else.
 func TestEverySectionHasItsOwnPanel(t *testing.T) {
-	ids := []string{"kernel", "node", "domain", "subscribe", "users", "service", "bbr", "script-update", "uninstall"}
+	ids := []string{"toolbox", "node", "domain", "subscribe", "users", "service", "bbr", "script-update", "uninstall"}
 	seen := make(map[string]string, len(ids))
 	for _, id := range ids {
 		a := newTestApp(t)
 		a.width, a.height = 100, 40
 		a.section = id
-		title, rows := a.sectionPanel(a.width)
+		title, rows := a.sectionPanel(a.width, 6)
 		if strings.TrimSpace(title) == "" {
 			t.Errorf("section %q has no 看板 title", id)
 		}
@@ -610,7 +825,7 @@ func TestBBRMenuShape(t *testing.T) {
 	// Two columns of five fill the card: the second column starts at the entries
 	// after the fifth, and the last entry stays reachable on the same screen.
 	view := a.SnapshotScreen("", 100, 40)
-	for _, want := range []string{i18n.Chinese.T("kernel_title"), i18n.Chinese.T("svc_title"), i18n.Chinese.T("menu_uninstall")} {
+	for _, want := range []string{i18n.Chinese.T("toolbox_title"), i18n.Chinese.T("svc_title"), i18n.Chinese.T("menu_uninstall")} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("main menu missing %q:\n%s", want, view)
 		}
@@ -621,6 +836,56 @@ func TestBBRMenuShape(t *testing.T) {
 		if !strings.Contains(qdisc, q) {
 			t.Fatalf("queue discipline menu missing %q:\n%s", q, qdisc)
 		}
+	}
+}
+
+// The board is what makes a run worth repeating: a panel that forgot every result when it was
+// closed would make an operator re-run a traceroute, a speed test and three benchmarks to see
+// what yesterday's reading was.
+func TestToolboxBoardSurvivesARestart(t *testing.T) {
+	t.Setenv(prefs.PathEnv, filepath.Join(t.TempDir(), "easysb-ui.conf"))
+	boardFile := filepath.Join(t.TempDir(), "easysb-toolbox.json")
+	t.Setenv(toolbox.BoardEnv, boardFile)
+
+	a := New("test", i18n.Chinese)
+	outcome := previewToolOutcome()
+	a.toolResults = map[string]toolOutcome{outcome.id: outcome}
+	a.saveBoard()
+	if _, err := os.Stat(boardFile); err != nil {
+		t.Fatalf("the run should have been written down: %v", err)
+	}
+
+	restarted := New("test", i18n.Chinese)
+	got, ok := restarted.toolResults["unlock-media"]
+	if !ok {
+		t.Fatalf("the board did not survive the restart: %v", restarted.toolResults)
+	}
+	if got.result.Summary != outcome.result.Summary || len(got.result.Rows) != len(outcome.result.Rows) {
+		t.Errorf("the stored table came back different: %+v", got.result)
+	}
+	if !got.when.Equal(outcome.when) {
+		t.Errorf("the stored time came back as %v, want %v", got.when, outcome.when)
+	}
+
+	// And the section draws it, so a restarted panel opens on what was measured.
+	m, _ := restarted.Update(tea.WindowSizeMsg{Width: 100, Height: 34})
+	restarted = m.(*App)
+	if !restarted.enterSection("toolbox") {
+		t.Fatal("the toolbox section should be reachable")
+	}
+	view := ansiSGR.ReplaceAllString(restarted.View().Content, "")
+	// The board words the summary like the report does, so a stored English token must not
+	// come back as one.
+	if !strings.Contains(view, "解锁 6 · 不解锁 1 (7)") {
+		t.Fatalf("the board should show the stored summary in words:\n%s", view)
+	}
+
+	// A file that cannot be parsed is an empty board, never a panel that will not start.
+	if err := os.WriteFile(boardFile, []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if broken := New("test", i18n.Chinese); len(broken.toolResults) != 0 {
+		t.Errorf("a corrupt board should load as empty, got %d records", len(broken.toolResults))
 	}
 }
 
@@ -748,14 +1013,16 @@ func TestNoScreenCapturesTheMouse(t *testing.T) {
 		t.Fatalf("dashboard should not capture the mouse, got %v", got)
 	}
 	p := newProgress("qr", func(context.Context, *taskReporter) error { return nil })
-	p.resize(a.width, a.height)
+	p.resize(a.width, a.height, a.bodyLayout().span())
 	a.task = p
 	if got := a.View().MouseMode; got != tea.MouseModeNone {
 		t.Fatalf("task screen should not capture the mouse, got %v", got)
 	}
 }
 
-func TestUpperQQuitsFromSubscreens(t *testing.T) {
+// Q quits the panel from every page, upper or lower case. There is one key for leaving, and
+// it is not the key that walks back: Esc is the way back, on every page that has one.
+func TestQQuitsFromEveryScreen(t *testing.T) {
 	a := newTestApp(t)
 	a.links = newLinksModel("t", sampleLinks())
 	if _, cmd := a.Update(press('Q')); cmd == nil {
@@ -769,15 +1036,27 @@ func TestUpperQQuitsFromSubscreens(t *testing.T) {
 		t.Fatal("upper-case Q should quit from the task panel")
 	}
 
-	// Lower-case q on a subpage still steps back instead of quitting.
+	// Lower-case q quits too, on any page and at any depth.
 	a.task = nil
 	a.links = newLinksModel("t", sampleLinks())
-	m, cmd := a.Update(press('q'))
+	if _, cmd := a.Update(press('q')); cmd == nil {
+		t.Fatal("lower-case q should quit from the link panel")
+	}
+	a.links = nil
+	a.push(buildToolGroup(tools.GroupUnlock))
+	a.push(buildToolGroup(tools.GroupUnlock))
+	if _, cmd := a.Update(press('q')); cmd == nil {
+		t.Fatal("lower-case q should quit from a third-level page")
+	}
+
+	// Esc is what closes a subpage, and it does not quit the panel.
+	a.links = newLinksModel("t", sampleLinks())
+	m, cmd := a.Update(press(tea.KeyEsc))
 	if cmd != nil {
-		t.Fatal("lower-case q should not quit the link panel")
+		t.Fatal("esc should not quit the panel")
 	}
 	if m.(*App).links != nil {
-		t.Fatal("lower-case q should close the link panel")
+		t.Fatal("esc should close the link panel")
 	}
 }
 
@@ -969,7 +1248,7 @@ func TestRootEntriesOpenPages(t *testing.T) {
 		// The page is the same two boxes as every other: its 看板 on top, its own
 		// entries below, titled with the page.
 		view := a.View().Content
-		title, rows := a.sectionPanel(a.frameWidth())
+		title, rows := a.sectionPanel(a.frameWidth(), 6)
 		if title == "" || len(rows) == 0 {
 			t.Fatalf("%s: the page has no 看板", id)
 		}
@@ -1100,19 +1379,21 @@ func TestMenuCursorKeepsUniformWidth(t *testing.T) {
 	a.ready = true
 
 	inner := a.width - 4
-	descCol := a.menuDescColumn(inner, a.menuLabelColumn())
-	cursorWidth := a.menuCursorWidth(inner)
-	if cursorWidth != inner {
-		t.Fatalf("cursor width = %d, want inner %d", cursorWidth, inner)
-	}
+	// A row inside a section lists one entry per line and its bar spans the row, so the
+	// cursor keeps one size while it moves through entries of different lengths.
+	a.push(buildSubscribe())
+	labelCol := a.menuLabelColumn()
 	for i, n := range a.current().nodes {
-		bar := a.menuRow(true, i, n, inner, descCol, cursorWidth)
-		if got := lipgloss.Width(bar); got != cursorWidth {
-			t.Fatalf("row %d bar width = %d, want %d", i, got, cursorWidth)
+		bar := a.menuRow(true, i, n, inner, labelCol)
+		if got := lipgloss.Width(bar); got != inner {
+			t.Fatalf("row %d bar width = %d, want %d", i, got, inner)
 		}
 	}
 }
 
+// A page inside a section shows what its entries do: the label and the description sit in the
+// same cell, and the row the cursor is on repeats its description in full under the box, which
+// is where a description too wide for a column can be read to the end.
 func TestSubmenuShowsDescriptions(t *testing.T) {
 	a := New("test", i18n.Chinese)
 	a.width, a.height = 100, 46
@@ -1123,10 +1404,25 @@ func TestSubmenuShowsDescriptions(t *testing.T) {
 	a.push(buildSubscribe())
 	view := a.View().Content
 	for _, key := range []string{"desc_sub_url", "desc_sub_qr", "desc_sub_links", "desc_sub_svc_install"} {
-		if !strings.Contains(view, i18n.Chinese.T(key)) {
-			t.Fatalf("subscription submenu missing description %q:\n%s", key, view)
+		desc := i18n.Chinese.T(key)
+		if !strings.Contains(view, descPrefix(desc)) {
+			t.Fatalf("subscription submenu missing description %q (looked for %q):\n%s", key, descPrefix(desc), view)
 		}
 	}
+	// The hovered entry's description is repeated in full on the line under the box.
+	if first := i18n.Chinese.T("desc_sub_url"); !strings.Contains(view, first) {
+		t.Fatalf("the hovered entry's description is not shown in full:\n%s", view)
+	}
+}
+
+// descPrefix is the part of a description a menu column is guaranteed to have room for: a
+// column is half the frame, and a Chinese description is two columns per character.
+func descPrefix(desc string) string {
+	runes := []rune(desc)
+	if len(runes) > 6 {
+		runes = runes[:6]
+	}
+	return string(runes)
 }
 
 func TestPaletteFollowsTerminalBackground(t *testing.T) {
@@ -1162,35 +1458,27 @@ func TestThemeEnvOverrideWins(t *testing.T) {
 	}
 }
 
-// The core page has to say whether the installed core came from this repository's builds
-// or from the official releases, and whether it can count traffic: the source decides
-// whether per-account accounting works at all.
-func TestCoreSourceLabel(t *testing.T) {
+// The core the panel carries has to say whether this build counts per-account traffic:
+// that decides whether the traffic columns exist at all. The answer is a build tag, so it
+// comes from the binary rather than from anything stored on the host.
+func TestCoreStatsLabel(t *testing.T) {
 	cases := []struct {
-		name    string
-		source  string
-		stats   bool
-		want    string
-		wantRow string
+		name  string
+		stats bool
+		want  string
 	}{
-		{"recorded author source", core.SourceBuild, true, "作者源", "作者源 · 带流量统计"},
-		{"recorded author source, binary without counters", core.SourceBuild, false, "作者源", "作者源 · 无流量统计"},
-		{"recorded official source", core.SourceUpstream, false, "官方源", "官方源 · 无流量统计"},
-		{"no record, counters present", "", true, "作者源", "作者源 · 带流量统计"},
-		{"no record, no counters", "", false, "官方源", "官方源 · 无流量统计"},
+		{"counters compiled in", true, "带流量统计"},
+		{"no counters in this build", false, "无流量统计"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			a := newTestApp(t)
-			a.status.CoreSource = tc.source
 			a.status.StatsCapable = tc.stats
-			if got := a.coreSourceLabel(); got != tc.want {
-				t.Fatalf("coreSourceLabel = %q, want %q", got, tc.want)
+			if got := a.coreStatsLabel(); got != tc.want {
+				t.Fatalf("coreStatsLabel = %q, want %q", got, tc.want)
 			}
-			if got := a.coreSourceText(); got != tc.wantRow {
-				t.Fatalf("coreSourceText = %q, want %q", got, tc.wantRow)
-			}
-			// The version line names the source too, so the answer is on every page.
+			// The wordmark card and the version line name it too, so the answer is
+			// visible without opening a section.
 			summary, _ := a.coreSummary()
 			if !strings.Contains(summary, tc.want) {
 				t.Fatalf("coreSummary = %q, want it to name %q", summary, tc.want)
@@ -1199,50 +1487,51 @@ func TestCoreSourceLabel(t *testing.T) {
 	}
 }
 
-// An install request has nothing to do only when the channel *and* the source are the ones
-// already installed: comparing channels alone made the way back from the official source a
-// no-op.
-func TestSameInstall(t *testing.T) {
-	cases := []struct {
-		name       string
-		installed  bool
-		haveCh     string
-		haveSource string
-		wantCh     string
-		wantSource string
-		want       bool
-	}{
-		{"author stable already there", true, "stable", core.SourceBuild, "stable", core.SourceBuild, true},
-		{"official installed, author wanted", true, "stable", core.SourceUpstream, "stable", core.SourceBuild, false},
-		{"author installed, official wanted", true, "stable", core.SourceBuild, "stable", core.SourceUpstream, false},
-		{"other channel", true, "stable", core.SourceBuild, "alpha", core.SourceBuild, false},
-		{"nothing installed", false, "", core.SourceUpstream, "stable", core.SourceBuild, false},
+// A report taller than its box is scrolled with the arrow keys: the table is read in full
+// rather than cut off with a count of what did not fit, which is what a detection page needs —
+// the last rows of a system or disk report are the ones an operator came for.
+func TestReportScrollsTallTables(t *testing.T) {
+	a := newTestApp(t)
+	rows := make([][]string, 0, 30)
+	for i := 0; i < 30; i++ {
+		rows = append(rows, []string{fmt.Sprintf("项目 %d", i+1), fmt.Sprintf("值 %d", i+1)})
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := sameInstall(tc.installed, tc.haveCh, tc.haveSource, tc.wantCh, tc.wantSource)
-			if got != tc.want {
-				t.Fatalf("sameInstall(%v, %q, %q, %q, %q) = %v, want %v",
-					tc.installed, tc.haveCh, tc.haveSource, tc.wantCh, tc.wantSource, got, tc.want)
-			}
-		})
+	outcome := toolOutcome{
+		id:     "hw-info",
+		when:   time.Now(),
+		result: toolbox.Result{Headers: []string{"项目", "值"}, Rows: rows, Summary: "短结论"},
 	}
-}
+	a.toolResults = map[string]toolOutcome{"hw-info": outcome}
+	a.report = &outcome
 
-func TestCoreSourceFrom(t *testing.T) {
-	cases := []struct {
-		recorded string
-		stats    bool
-		want     string
-	}{
-		{"build", false, core.SourceBuild},
-		{core.SourceUpstream, true, core.SourceUpstream},
-		{"", true, core.SourceBuild},
-		{"", false, core.SourceUpstream},
+	first := ansiSGR.ReplaceAllString(a.View().Content, "")
+	if a.scrollMax == 0 {
+		t.Fatalf("a report of %d rows should be scrollable:\n%s", len(rows), first)
 	}
-	for _, tc := range cases {
-		if got := coreSourceFrom(tc.recorded, tc.stats); got != tc.want {
-			t.Errorf("coreSourceFrom(%q, %v) = %q, want %q", tc.recorded, tc.stats, got, tc.want)
-		}
+	if !strings.Contains(first, i18n.Chinese.T("task_scroll")) {
+		t.Fatalf("a scrollable report should say so in its hints:\n%s", first)
+	}
+	if !strings.Contains(first, i18n.Chinese.Format("box_scroll_at", 1, a.scrollMax+boxRows(a.bodyLayout().span()))) {
+		t.Fatalf("the report should say which line it starts at:\n%s", first)
+	}
+	m, _ := a.Update(press(tea.KeyDown))
+	a = m.(*App)
+	if a.scroll != 1 {
+		t.Fatalf("down moved the report to %d, want 1", a.scroll)
+	}
+	second := ansiSGR.ReplaceAllString(a.View().Content, "")
+	if second == first {
+		t.Fatalf("down did not move the visible rows:\n%s", second)
+	}
+	// The end key lands on the last window, and Esc leaves the screen from the top.
+	m, _ = a.Update(press(tea.KeyEnd))
+	a = m.(*App)
+	if a.scroll != a.scrollMax {
+		t.Fatalf("end left the report at %d, want %d", a.scroll, a.scrollMax)
+	}
+	m, _ = a.Update(press(tea.KeyEsc))
+	a = m.(*App)
+	if a.report != nil || a.scroll != 0 || a.scrollMax != 0 {
+		t.Fatalf("esc should close the report and drop its scroll: %v %d %d", a.report != nil, a.scroll, a.scrollMax)
 	}
 }

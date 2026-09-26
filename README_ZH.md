@@ -30,7 +30,7 @@
 - [配置模板](#配置模板)
 - [订阅](#订阅)
 - [防火墙与端口跳跃](#防火墙与端口跳跃)
-- [内核管理](#内核管理)
+- [工具箱](#工具箱)
 - [开发者：构建与测试](#开发者构建与测试)
 - [安全须知](#安全须知)
 - [开源协议](#开源协议)
@@ -39,14 +39,15 @@
 
 ## 项目简介
 
-EasySB 是一个面向 Linux VPS 的 sing-box 五合一部署脚本，把协议部署、证书申请、内核版本管理、订阅生成统一到一套交互式菜单里。
+EasySB 是一个面向 Linux VPS 的 sing-box 五合一部署工具，把协议部署、证书申请、服务解锁检测、订阅生成统一到一套交互式菜单里。
 
 - **Go 版（当前主实现）**：根目录 Go module，基于 bubbletea / bubbles / lipgloss 的深色仪表盘 TUI，编译为单一静态二进制并以 `sb` 呼出。
 - **模板**：`templates/` 存放五个协议的 JSONC 配置样例与订阅模板，既可以只用模板，也可以交给程序自动落地。
-- **内核**：sing-box 内核取自官方 [SagerNet/sing-box](https://github.com/SagerNet/sing-box) Releases，正式版与 alpha 内测版可随时切换、替换、卸载。
+- **内核**：sing-box **已编译进面板本体**——`github.com/sagernet/sing-box` 是 `go.mod` 的直接依赖，装上面板就有内核，节点就是 `easysb core run`；没有任何内核二进制要下载、替换或切换，账号流量统计也随构建一起带上（`with_v2ray_api`，见 `release/TAGS`）。
+- **证书**：用 `go-acme/lego` 在面板自己的进程里申请 Let's Encrypt 证书，不再下载 acme.sh，也不需要 socat。
 
 - 项目地址：https://github.com/MinimaxFlora/EasySB
-- 内核来源：https://github.com/SagerNet/sing-box
+- 内核来源（已编译进面板）：https://github.com/SagerNet/sing-box
 - 变更记录：[CHANGELOG.md](CHANGELOG.md)
 - 贡献指南：[CONTRIBUTING.md](CONTRIBUTING.md)
 - 安全策略：[SECURITY.md](SECURITY.md)
@@ -131,12 +132,13 @@ sb --language E
 | :--- | :--- |
 | 五协议部署 | 端口逐一编排；节点只保留不属于账号的材料（Reality 密钥对），账号凭据归各账号所有 |
 | 账号与流量 | 每个账号在每个协议上拥有独立凭据，支持流量限额、有效期、可用协议、启用开关、重置流量与更换令牌；停用、过期、超额账号自动从内核配置中移除 |
-| 内核版本管理 | 正式版 stable 与 alpha 内测版随时安装、替换、卸载，替换保留现有配置 |
-| 版本面板 | 菜单顶部常驻脚本版本、本地内核、正式版与 alpha 版，并标注可更新状态 |
+| 服务解锁状态 | 检测当前 IP 的真实可用情况：Netflix（含「仅原创」判定）、Disney+、YouTube Premium、Amazon Prime Video、DAZN、TVBAnywhere+、Spotify、Reddit、TikTok、ChatGPT、Gemini、Claude、Steam、Bilibili 中国大陆 / 港澳台 / 台湾、巴哈姆特動畫瘋，共 17 项；每项只发 1-3 个请求，结论分为解锁 / 部分解锁 / 屏蔽 / 检测失败并给出原因，判断不出结论时如实报失败，不猜「解锁」 |
+| 内核在面板里 | sing-box 是 `go.mod` 的直接依赖：节点就是 `easysb core run -c /etc/sing-box/config.json`，版本行直接读面板里编译进的那个版本；`easysb core check` 用同一套引擎校验配置，账号流量统计取决于构建是否带 `with_v2ray_api`（`release/TAGS`），面板会如实显示而不是假定 |
+| 版本面板 | 程序版本与面板内编译的 sing-box 版本，并标明本次构建能否统计流量 |
 | 设备面板 | 本机 IPv4/IPv6、交换空间、运行时间、CPU 核心数与负载、内存、磁盘、主机、内核、系统与时区 |
 | 系统信息 | 查看面板运行环境，并能在界面内直接换外观：`↑`/`↓` 加 `Enter` 或 `A`-`D` 选皮肤，`T` 切深浅配色，`I` 在 Unicode 符号与纯 ASCII 之间切换。改完下一帧就生效（主题从此不再跟随终端），字形预览一行可以在其他卡片出问题前先看出终端字体能不能显示这些字形；切换时顶部状态条与底部按键提示保持不动，只有正文换掉 |
 | 复制链接 | 订阅与分享链接以卡片网格呈现在与主菜单同尺寸的固定面板里；订阅卡片显示订阅名（sing-box / mihomo / Base64 订阅）与格式说明，分享链接卡片显示协议名，均不显示主机或完整 URL。`↑`/`↓`/`←`/`→`（或数字键）选择，`Enter` 复制当前项，`C` 复制全部，`Q` 退出程序，`Esc` 返回；复制成功的卡片变成成功色，复制全部在页头提示。窗口变窄变矮时网格自动减少列数并截断内容，面板不溢出。日志页 `C` 复制日志（OSC52） |
-| 证书管理 | acme.sh `--standalone` 申请、查看、切换激活、删除；申请前先检查 socat 与域名解析，申请时先停内核腾出 80 端口；acme.sh 以 `--nocron` 安装（最小化镜像没有 cron），自动续期改由面板自己的 systemd timer / OpenRC 脚本驱动，续期后自动重载 sing-box 与订阅服务 |
+| 证书管理 | 内置 lego 走 HTTP-01 standalone 直接申请 Let's Encrypt 证书：申请、查看、切换激活、删除；申请前先检查域名解析，申请时先停内核腾出 80 端口，全程无需下载任何脚本或额外监听工具。续期按到期时间判断（提前 30 天），由面板自己的 systemd timer / OpenRC 脚本驱动，续期后自动重载 sing-box 与订阅服务 |
 | 订阅生成 | 每个账号一个订阅地址（`/sub/<令牌>`），由内置订阅服务按客户端自动选择格式（`templates/config/tun-fakeip.json`、`templates/config/mihomo.yaml` 或 Base64 分享链接），并通过 `Subscription-Userinfo` 上报用量；面板提供二维码与各协议分享链接 |
 | 端口跳跃 | Hysteria2 默认 `2080:3000`，自动下发 iptables / nftables DNAT，并生成开机恢复单元 |
 | 服务管理 | 启动、停止、重启、查看状态与开机自启 |
@@ -150,7 +152,7 @@ sb --language E
 
 ```text
 主菜单（整幅卡片内左右两列，共 10 项）
-├── 内核管理     安装正式版 / 测试版、切换内核、更新当前通道
+├── 服务解锁状态 检测 ChatGPT / Netflix 等服务的解锁情况
 ├── 节点管理     一键部署、启用协议、参数设置（端口跳跃 / 端口 / 偷用域名 / Reality 密钥 / 订阅端口 / 统计间隔）
 ├── 域名管理     申请证书（含环境与解析预检）、立即续期、续期定时器、查看、切换激活、删除
 ├── 订阅管理     某账号的订阅地址 / 二维码 / 分享链接（先选账号，再输出订阅地址前缀）、订阅服务的安装 / 重启 / 状态
@@ -258,33 +260,76 @@ NAT 规则重启即失效，因此脚本会生成开机恢复单元：
 
 ---
 
-## 内核管理
+## 工具箱
+
+工具箱（主菜单第 1 项，占原来「服务解锁状态」的位置）把「这台机器到底能干什么」的测量集中在一处：每项一个条目、每项一份报告、看板记住每项上次的结果（写在 `/etc/sing-box/easysb-toolbox.json`，关了面板再打开还在）。**打开页面不会自动跑任何东西**——测速、回程、跑分都不是按一下方向键就该开始的事。
+
+| 分组 | 条目 |
+| :--- | :--- |
+| 解锁检测 | 流媒体解锁（Netflix、Disney+、YouTube Premium、Prime Video、DAZN、TVBAnywhere+、Spotify、Reddit、TikTok）、AI 解锁（ChatGPT、Gemini、Claude）、区域解锁（Steam、Bilibili 三个区域、巴哈姆特動畫瘋） |
+| 网络检测 | 三网回程（到电信/联通/移动的路径与回程线路）、就近测速、三网测速 |
+| IP 与端口 | IP 质量（多家数据库 + DNS 黑名单）、邮件端口（能否搭邮局） |
+| 硬件与性能 | 系统信息、硬盘信息、CPU 跑分、内存测试、磁盘 IO（顺序 + 4K 随机）、多盘 IO |
+
+界面是固定布局：任何页面都是同一套上下两个框（尺寸、位置都照主页面），条目多的页面在框内截断并写明还剩多少行，**面板不滚动**；跑起来的时候上下两框合成一个框，能算出总量的项给真进度百分比。按键也统一：**Q 在任何页面都直接退出面板**，返回只有 Esc，Enter 只用于进入与确认。
+
+结论只有三个词：**解锁 / 不解锁 / 未知**，配一列「地区」，表格一行一个服务。词是面板给的，数字是测的：
+
+- **解锁**：服务回了话，而且它自己的答复说这个地址能用。
+- **不解锁**：服务拒绝了，或者只接受一半（半能用不算能用）。
+- **未知**：答复读不出来——Cloudflare 挑战页、超时、页面里没有结论。这时表格里就写未知，原因放在表下的说明里，**绝不猜成解锁**。
+- 「地区」列是**各服务自己给出的判定**，不是面板算的：不同服务背后是不同的地理库，同一台机器被不同服务判成不同国家是常见现象（实测一台 Zenixcloud 的机器：Cloudflare / Netflix / Gemini 说 `US`，TikTok 与 DAZN 自报 `SC`）。
+
+跑一项的方式有二：面板里进「工具箱 → 分组 → 条目」；或者无终端环境用命令行：
+
+```bash
+sb --tool list          # 列出全部条目
+sb --tool backtrace     # 三网回程
+sb --tool unlock-media  # 流媒体解锁
+sb --unlock             # 17 项解锁一次跑完的报告
+```
+
+合并怪那套的取舍、每项的口径与数据来源、以及「为什么没有 geekbench / fio」都写在
+[docs/toolbox.md](docs/toolbox.md)。
+
+## 内核在面板里
 
 | 环节 | 说明 |
 | :--- | :--- |
-| 内核来源 | 官方 `SagerNet/sing-box` Releases，脚本直接下载官方资产 |
-| 正式版 | 官方 latest release |
-| 内测版 | 官方 prerelease |
-| 安装 | 按架构下载并校验，写入 `/etc/sing-box/sing-box` |
-| 替换 | 只更换二进制，保留 `/etc/sing-box/config.json` |
-| 卸载 | 停止服务并移除内核 |
-| 程序发行 | `.github/workflows/easysb-go-release.yml` 交叉编译各平台二进制，以 tag `v<VERSION>`（当前 `v4.1.0`）发布 |
+| 来源 | `github.com/sagernet/sing-box` 作为 `go.mod` 直接依赖（当前 `v1.14.2`）；装面板就等于装了内核 |
+| 节点 | `ExecStart=/usr/local/bin/easysb core run -c /etc/sing-box/config.json`；`/etc/sing-box/sing-box` 不再存在 |
+| 校验 | `easysb core check -c <配置>` 用将来真正服务节点的同一套引擎构建配置，部署路径重启服务前跑的就是它 |
+| 流量统计 | `with_v2ray_api`（定义在 `release/TAGS`）已编入；部署路径只在 `sbcore.StatsCapable()` 为真时写 `experimental.v2ray_api`，因为不带该 API 的内核会整份拒绝配置 |
+| 程序发行 | `.github/workflows/easysb-go-release.yml` 按 `release/TAGS` 的标签集交叉编译各架构二进制，以 tag `v<VERSION>` 发布 |
 
 ---
 
 ## 开发者：构建与测试
 
-Go 版（主实现，需要 Go 1.27.1，`go.mod` 已声明 `go 1.27.1`，启用 `GOTOOLCHAIN=auto` 时会自动获取该工具链）。`internal/tui/` 是 TUI 主界面与交互逻辑，`internal/` 下其余包各自负责内核、证书、服务、订阅、防火墙等模块，包职责见 `docs/architecture.md`：
+Go 版（主实现，需要 Go 1.27.1，`go.mod` 已声明 `go 1.27.1`，启用 `GOTOOLCHAIN=auto` 时会自动获取该工具链）。`internal/tui/` 是 TUI 主界面与交互逻辑，`internal/` 下其余包各自负责内置内核、证书、服务、订阅、解锁探测、防火墙等模块，包职责见 `docs/architecture.md`：
 
 ```bash
-# 编译二进制
-go build -o easysb .
+# 构建标签只有一处定义：release/TAGS
+tags=$(tr -d '[:space:]' < release/TAGS)
 
-# 运行测试
+# 编译二进制（内核与流量统计能力都在里面）
+go build -tags "$tags" -o easysb .
+
+# 运行测试：带标签与不带标签都要通过
+go test -tags "$tags" ./...
 go test ./...
+
+# 查看本二进制携带的内核版本，以及能否统计流量
+./easysb core version
+
+# 用编译进来的引擎校验一份节点配置
+./easysb core check -c /etc/sing-box/config.json
 
 # 无交互渲染一次仪表盘（用于预览 / 截图 / 排错）
 ./easysb --render --width 100 --height 34
+
+# 无终端环境下打印服务解锁报告
+./easysb --unlock
 
 # 切换语言、图标方案、配色与皮肤
 ./easysb --language E --icons ascii --theme dark --skin graphite

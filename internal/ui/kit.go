@@ -243,14 +243,6 @@ func Rule(s theme.Style, w int) string {
 	return s.Colored(s.Border, strings.Repeat(glyph, w))
 }
 
-// Badge renders a short state token in the tone it deserves.
-func Badge(s theme.Style, text string, k Kind) string {
-	if text == "" {
-		return ""
-	}
-	return s.Bold(k.Color(s), text)
-}
-
 // Meter renders a gradient bar of exactly w cells.
 func Meter(s theme.Style, ratio float64, w int) string {
 	if w <= 0 {
@@ -284,43 +276,6 @@ func MeterLine(s theme.Style, label, value string, ratio float64, w int) string 
 		barW = 4
 	}
 	return s.Faint(label) + " " + Meter(s, ratio, barW) + " " + s.Value(value)
-}
-
-// Spark renders a one-line trend of values, oldest first, as block glyphs. The
-// last w values are used and the series is scaled to its own range, so a flat
-// line still reads as a line rather than as nothing.
-func Spark(s theme.Style, values []float64, w int, k Kind) string {
-	if w <= 0 || len(values) == 0 {
-		return ""
-	}
-	if len(values) > w {
-		values = values[len(values)-w:]
-	}
-	glyphs := []rune("▁▂▃▄▅▆▇█")
-	lo, hi := values[0], values[0]
-	for _, v := range values {
-		lo = math.Min(lo, v)
-		hi = math.Max(hi, v)
-	}
-	span := hi - lo
-	var b strings.Builder
-	b.WriteString(strings.Repeat(s.Faint("·"), w-len(values)))
-	for _, v := range values {
-		idx := 0
-		if span > 0 {
-			idx = int(math.Round((v - lo) / span * float64(len(glyphs)-1)))
-		} else {
-			idx = len(glyphs) / 2
-		}
-		if idx < 0 {
-			idx = 0
-		}
-		if idx >= len(glyphs) {
-			idx = len(glyphs) - 1
-		}
-		b.WriteString(lipgloss.NewStyle().Foreground(k.Color(s)).Render(string(glyphs[idx])))
-	}
-	return b.String()
 }
 
 // KV renders aligned key/value rows. Keys are dim so the values carry the eye.

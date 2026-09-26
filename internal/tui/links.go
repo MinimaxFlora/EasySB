@@ -104,7 +104,9 @@ func gridDims(width, count int) (int, int) {
 func (l *linksModel) handleKey(msg tea.KeyPressMsg, lang i18n.Lang) (tea.Cmd, bool) {
 	key := strings.ToLower(msg.String())
 	switch key {
-	case "esc", "q", "backspace":
+	case "esc", "backspace":
+		// q is deliberately absent: it quits the panel from every page, so it
+		// reaches the global shortcut instead of closing this panel.
 		return nil, true
 	case "enter":
 		return l.copy(l.cursor), false

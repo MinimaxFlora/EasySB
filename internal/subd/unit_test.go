@@ -3,40 +3,53 @@ package subd
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/MinimaxFlora/EasySB/internal/service"
+	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
 )
 
-// The subscription unit has to name the installed panel, not whatever copy happens to be
-// running. A scratch copy that rewrote it once left the endpoint unable to start when the
-// copy was deleted, which takes the subscription down with it.
-func TestPickExecutable(t *testing.T) {
-	dir := t.TempDir()
-	installed := filepath.Join(dir, "easysb")
-	scratch := filepath.Join(dir, "easysb-new")
-	missing := filepath.Join(dir, "not-there")
-	for _, path := range []string{installed, scratch} {
-		if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o755); err != nil {
-			t.Fatalf("write %s: %v", path, err)
-		}
+// The subscription unit runs this same binary with --serve, and it has to name the
+// installed panel rather than a scratch copy: a unit rewritten to a copy that is then
+// deleted takes every client's subscription down with it.
+func TestSubscriptionUnitRunsThePanel(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "easysb.service")
+	if err := writeUnit(path, "/usr/local/bin/easysb", service.Systemd); err != nil {
+		t.Fatalf("writeUnit: %v", err)
 	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	text := string(body)
+	if !strings.Contains(text, "ExecStart=/usr/local/bin/easysb --serve") {
+		t.Fatalf("the unit does not serve subscriptions from the installed panel:\n%s", text)
+	}
+	// The endpoint is what every client's subscription URL points at, so the unit has to
+	// survive a reboot of the node it depends on.
+	if !strings.Contains(text, "Restart=always") {
+		t.Fatalf("the endpoint unit should restart on failure:\n%s", text)
+	}
+	if !strings.Contains(text, "Wants="+sysinfo.ServiceName+".service") {
+		t.Fatalf("the endpoint should be started with the node:\n%s", text)
+	}
+}
 
-	cases := []struct {
-		name       string
-		self       string
-		candidates []string
-		want       string
-	}{
-		{"running from the installed panel", installed, []string{installed}, installed},
-		{"running from a scratch copy", scratch, []string{installed}, installed},
-		{"nothing installed yet", scratch, []string{missing}, scratch},
-		{"self listed among the candidates wins", scratch, []string{missing, installed, scratch}, scratch},
-		{"nothing installed and no self", "", []string{missing}, ""},
+// The OpenRC form is written with a different shape, so it is checked on its own rather
+// than assumed to follow from the systemd one.
+func TestSubscriptionOpenRCUnit(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "easysb")
+	if err := writeUnit(path, "/usr/local/bin/easysb", service.OpenRC); err != nil {
+		t.Fatalf("writeUnit: %v", err)
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := pickExecutable(tc.self, tc.candidates); got != tc.want {
-				t.Fatalf("pickExecutable(%q, %v) = %q, want %q", tc.self, tc.candidates, got, tc.want)
-			}
-		})
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	text := string(body)
+	if !strings.Contains(text, `command="/usr/local/bin/easysb"`) ||
+		!strings.Contains(text, `command_args="--serve"`) {
+		t.Fatalf("the OpenRC unit does not serve subscriptions:\n%s", text)
 	}
 }

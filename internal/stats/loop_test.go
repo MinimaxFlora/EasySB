@@ -66,9 +66,10 @@ func newLoop(t *testing.T, path string, source *fakeSource, now time.Time) (*Loo
 			applied++
 			return nil
 		},
-		Interval: time.Minute,
-		Now:      func() time.Time { return now },
-		Log:      func(string) {},
+		Interval:     time.Minute,
+		StatsCapable: func() bool { return true },
+		Now:          func() time.Time { return now },
+		Log:          func(string) {},
 	})
 	return loop, &applied
 }
@@ -266,6 +267,7 @@ func TestLoopWithoutApplierSkipsRestart(t *testing.T) {
 		AccountsPath: path,
 		Node:         state.Default,
 		Dial:         func() (Counter, error) { return source, nil },
+		StatsCapable: func() bool { return true },
 		Now:          func() time.Time { return now },
 	})
 	if err := loop.Tick(context.Background()); err != nil {
@@ -277,6 +279,38 @@ func TestLoopWithoutApplierSkipsRestart(t *testing.T) {
 	}
 	if st := reload(t, path).Users()[0].Status(now); st != user.StatusQuota {
 		t.Fatalf("status = %s, want %s", st, user.StatusQuota)
+	}
+}
+
+// A build without the V2Ray API has nothing to read, so the cycle must cost nothing:
+// no dial, no failure line every interval, and one sentence saying why the counters
+// stay empty. The panel still deploys a working node in that build.
+func TestLoopSkipsSamplingWithoutCounters(t *testing.T) {
+	now := time.Date(2026, 3, 10, 12, 0, 0, 0, time.UTC)
+	_, path, _ := account(t, "alice", func(u *user.User) {})
+	dialed := 0
+	lines := []string{}
+	loop := New(Options{
+		AccountsPath: path,
+		Node:         state.Default,
+		Dial: func() (Counter, error) {
+			dialed++
+			return &fakeSource{}, nil
+		},
+		StatsCapable: func() bool { return false },
+		Now:          func() time.Time { return now },
+		Log:          func(line string) { lines = append(lines, line) },
+	})
+	for i := 0; i < 3; i++ {
+		if err := loop.Tick(context.Background()); err != nil {
+			t.Fatalf("tick %d: %v", i, err)
+		}
+	}
+	if dialed != 0 {
+		t.Fatalf("dialed %d times, want none: there is no API to read", dialed)
+	}
+	if len(lines) != 1 {
+		t.Fatalf("logged %d lines, want exactly one explanation: %v", len(lines), lines)
 	}
 }
 

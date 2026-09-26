@@ -54,9 +54,6 @@ func TestSkinsAreComplete(t *testing.T) {
 		if s.Met.Gutter < 0 || s.Met.PadX < 0 {
 			t.Errorf("%s: negative gutter or padding", s.ID)
 		}
-		if len(s.Met.Groups) == 0 {
-			t.Errorf("%s: no navigation grouping", s.ID)
-		}
 	}
 }
 

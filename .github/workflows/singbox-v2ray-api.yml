@@ -61,8 +61,10 @@ env:
   # Upstream source and the extra tag this workflow exists for.
   UPSTREAM: SagerNet/sing-box
   EXTRA_TAG: with_v2ray_api
-  # Architectures the panel maps `uname -m` to (internal/core ArchFromUname). The names
-  # are the ones that appear in the asset file name.
+  # Architectures upstream publishes cores for. The names are the ones that appear in
+  # the asset file name. The panel itself no longer downloads these archives — the core
+  # is compiled into it from go.mod — so this workflow is legacy and only keeps the
+  # channel releases alive for anyone still consuming them.
   ARCHES: amd64 arm64 armv7 armv6 386 riscv64 s390x
 
 jobs:

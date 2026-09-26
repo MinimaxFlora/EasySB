@@ -148,15 +148,12 @@ func TestBuildStatsBlockFollowsCore(t *testing.T) {
 	}
 }
 
-// TestParamsFromStateCarriesStatsChoice checks the state key that records the core
-// choice, including the historical deployments that never wrote it.
-func TestParamsFromStateCarriesStatsChoice(t *testing.T) {
-	cfg := state.Default()
-	if !ParamsFromState(cfg).Stats {
-		t.Fatal("a state file without the key keeps the counters")
-	}
-	cfg.StatsAPI = state.StatsAPINone
-	if ParamsFromState(cfg).Stats {
-		t.Fatal("StatsAPI=none should render a config without the counters")
+// TestParamsFromStateLeavesStatsToTheCaller pins the split of responsibility: the state
+// file describes the host, so it cannot say whether this build counts traffic. The deploy
+// path asks the build (internal/sbcore) and sets Params.Stats itself, which is why a state
+// file maps to a params value with the block switched off.
+func TestParamsFromStateLeavesStatsToTheCaller(t *testing.T) {
+	if ParamsFromState(state.Default()).Stats {
+		t.Fatal("ParamsFromState must not claim the counters: the build decides that")
 	}
 }

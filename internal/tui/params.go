@@ -9,7 +9,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/MinimaxFlora/EasySB/internal/core"
 	"github.com/MinimaxFlora/EasySB/internal/secret"
 	"github.com/MinimaxFlora/EasySB/internal/state"
 )
@@ -178,17 +177,15 @@ func editSNI() actionFunc {
 	}
 }
 
-// regenRealityKeys regenerates the Reality keypair with the installed core.
+// regenRealityKeys regenerates the Reality keypair. The keypair is X25519, so the panel
+// generates it itself: there is no core process to ask for one.
 func regenRealityKeys() actionFunc {
 	return func(a *App) tea.Cmd {
 		lang := a.lang
 		return a.startTask(lang.T("param_privkey"), func(ctx context.Context, r *taskReporter) error {
-			if !core.Installed() {
-				return errors.New(lang.T("param_install_core_first"))
-			}
-			priv, pub, err := core.RealityKeypair(ctx)
-			if err != nil {
-				return err
+			priv, pub := secret.RealityKeypair()
+			if priv == "" || pub == "" {
+				return errors.New(lang.T("param_key_fail"))
 			}
 			cfg := state.Load()
 			cfg.RealityPriv = priv

@@ -66,8 +66,9 @@ body:
         - TUIC v5
         - VLESS + Vision + Reality
         - VMess + WebSocket + TLS
-        - 证书 / acme.sh
+        - 证书 / lego
         - 订阅服务 / subd
+        - 服务解锁检测 / unlock
     validations:
       required: false
 

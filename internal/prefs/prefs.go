@@ -22,6 +22,10 @@ const (
 	ThemeEnv = "EASYSB_THEME"
 	IconsEnv = "EASYSB_ICONS"
 	LangEnv  = "EASYSB_LANG"
+
+	// BoardEnv carries the toolbox 看板's selection, so the entry points that build the panel
+	// from flags see the same choice the interface remembers.
+	BoardEnv = "EASYSB_BOARD"
 )
 
 // Prefs is what the panel remembers. Empty values mean "no choice yet", which
@@ -31,6 +35,11 @@ type Prefs struct {
 	Theme string
 	Icons string
 	Lang  string
+	// Board is the toolbox 看板 selection: the tool ids whose results are shown, as a
+	// comma-separated list. Empty means the panel has never been asked, so the entries that
+	// are worth a board row by default are shown; BoardNone means the operator turned all of
+	// them off, which is a choice and not an empty file.
+	Board string
 }
 
 // binding ties one choice together: its name in the file, the variable it reaches
@@ -48,6 +57,7 @@ var bindings = []binding{
 	{"THEME", ThemeEnv, func(p Prefs) string { return p.Theme }, func(p *Prefs, v string) { p.Theme = v }},
 	{"ICONS", IconsEnv, func(p Prefs) string { return p.Icons }, func(p *Prefs, v string) { p.Icons = v }},
 	{"LANG", LangEnv, func(p Prefs) string { return p.Lang }, func(p *Prefs, v string) { p.Lang = v }},
+	{"BOARD", BoardEnv, func(p Prefs) string { return p.Board }, func(p *Prefs, v string) { p.Board = v }},
 }
 
 // Path returns the preferences file location.
@@ -155,3 +165,8 @@ func splitLine(line string) (string, string, bool) {
 	}
 	return key, value, true
 }
+
+// BoardNone is what the board selection says when the operator turned every entry off. An
+// empty value cannot say it, because an empty value is what a preference that was never set
+// looks like, and those two states mean different things: defaults, or nothing at all.
+const BoardNone = "none"

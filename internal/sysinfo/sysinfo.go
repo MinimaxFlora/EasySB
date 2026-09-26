@@ -7,18 +7,18 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/MinimaxFlora/EasySB/internal/sbcore"
 )
 
 const (
 	WorkDir     = "/etc/sing-box"
 	ConfigJSON  = WorkDir + "/config.json"
 	StateFile   = WorkDir + "/easysb.conf"
-	CoreBin     = WorkDir + "/sing-box"
 	ServiceName = "sing-box"
 
 	CertDir        = WorkDir + "/cert"
@@ -53,25 +53,21 @@ var PanelPaths = []string{PanelPath, "/usr/local/bin/sb", "/usr/bin/sb"}
 
 type Status struct {
 	ScriptVersion string
-	CoreVersion   string
-	CoreChannel   string
-	// StatsCapable reports whether the installed core was built with the V2Ray API
-	// (with_v2ray_api), which is what per-account traffic accounting reads. The
-	// official builds leave it out.
+	// CoreVersion is the sing-box release compiled into this panel, and
+	// StatsCapable says whether that build carries the V2Ray API the traffic
+	// columns are read from. Both are properties of the binary, not of the host:
+	// there is no core to install, and no core file to ask.
+	CoreVersion  string
 	StatsCapable bool
-	// CoreSource records where the installed core was installed from: "build" for
-	// this repository's builds, "upstream" for the official releases. Empty when the
-	// install predates the record, in which case the build tags decide.
-	CoreSource string
-	Service    string
-	Autostart  string
-	Domain     string
-	SubPort    int
-	SubSyncSecs int
-	Hop        string
-	Ports      []PortInfo
-	Deployed   bool
-	StateFound bool
+	Service      string
+	Autostart    string
+	Domain       string
+	SubPort      int
+	SubSyncSecs  int
+	Hop          string
+	Ports        []PortInfo
+	Deployed     bool
+	StateFound   bool
 
 	Hostname string
 	OS       string
@@ -117,7 +113,7 @@ func Collect(scriptVersion string) Status {
 		Service:       "unknown",
 		Autostart:     "unknown",
 	}
-	st.CoreVersion, st.CoreChannel, st.StatsCapable = coreVersion()
+	st.CoreVersion, st.StatsCapable = sbcore.Version(), sbcore.StatsCapable()
 	st.Service = serviceState("is-active")
 	st.Autostart = serviceState("is-enabled")
 
@@ -125,7 +121,6 @@ func Collect(scriptVersion string) Status {
 
 	state := readState()
 	st.StateFound = len(state) > 0
-	st.CoreSource = state["CORE_SOURCE"]
 	st.Domain = state["DOMAIN"]
 	if st.Domain == "" {
 		st.Domain = state["CERT_DOMAIN"]
@@ -367,30 +362,6 @@ func timezone() string {
 		return name
 	}
 	return "UTC"
-}
-
-// coreVersion reads the installed core's version, the channel it belongs to, and whether
-// it can count traffic. All three come from the one `sing-box version` call: the tags it
-// prints are the ones the binary was built with.
-func coreVersion() (string, string, bool) {
-	if _, err := os.Stat(CoreBin); err != nil {
-		return "", "", false
-	}
-	out, err := run(3*time.Second, CoreBin, "version")
-	if err != nil {
-		return "", "", false
-	}
-	re := regexp.MustCompile(`(?m)version\s+([^\s]+)`)
-	m := re.FindStringSubmatch(out)
-	if len(m) < 2 {
-		return "", "", false
-	}
-	v := m[1]
-	channel := "stable"
-	if strings.Contains(strings.ToLower(v), "alpha") || strings.Contains(strings.ToLower(v), "beta") || strings.Contains(strings.ToLower(v), "rc") {
-		channel = "alpha"
-	}
-	return v, channel, strings.Contains(out, "with_v2ray_api")
 }
 
 func serviceState(verb string) string {

@@ -14,6 +14,7 @@ on:
       - 'go.mod'
       - 'go.sum'
       - 'VERSION'
+      - 'release/TAGS'
       - 'install.sh'
       - '.github/workflows/easysb-go-release.yml'
   workflow_dispatch:
@@ -66,8 +67,16 @@ jobs:
         id: ver
         run: echo "version=$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_OUTPUT"
 
+      # 构建标签只有一处定义：release/TAGS。with_v2ray_api 在其中，所以发布的二进制
+      # 带账号流量统计；少一个标签就是少一项能力，绝不在这里另抄一份。
+      # The build tags have exactly one definition, release/TAGS. with_v2ray_api is in
+      # it, which is what gives the released binary per-account traffic counters.
+      - name: 读取构建标签
+        id: tags
+        run: echo "tags=$(tr -d '[:space:]' < release/TAGS)" >> "$GITHUB_OUTPUT"
+
       - name: 单元测试
-        run: go test ./...
+        run: go test -tags "${{ steps.tags.outputs.tags }}" ./...
 
       - name: 交叉编译 linux/${{ matrix.asset }}
         env:
@@ -77,8 +86,8 @@ jobs:
           CGO_ENABLED: '0'
         run: |
           set -euo pipefail
-          go build -trimpath \
-            -ldflags "-s -w -X main.version=${{ steps.ver.outputs.version }} -X main.commit=${GITHUB_SHA}" \
+          go build -trimpath -tags "${{ steps.tags.outputs.tags }}" \
+            -ldflags "-s -w -checklinkname=0 -X main.version=${{ steps.ver.outputs.version }} -X main.commit=${GITHUB_SHA}" \
             -o "dist/easysb-linux-${{ matrix.asset }}" .
           ls -lh "dist/easysb-linux-${{ matrix.asset }}"
 
@@ -117,7 +126,8 @@ jobs:
             > EasySB Go v${{ steps.ver.outputs.version }} 二进制 / binaries
 
             - 项目地址 / Homepage: https://github.com/MinimaxFlora/EasySB
-            - 内核来源 / Core source: https://github.com/SagerNet/sing-box
+            - 内核 / Core: sing-box 已编译进面板（来源 https://github.com/SagerNet/sing-box），无需单独安装
+              the sing-box core is compiled into the panel, nothing to install separately
 
             安装 / Install:
 

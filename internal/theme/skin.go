@@ -31,13 +31,6 @@ const (
 	HeaderPlain
 )
 
-// NavGroup is one labelled cluster of root entries in the left navigation.
-// TitleKey is an i18n key; IDs are root node ids in the order they appear.
-type NavGroup struct {
-	TitleKey string
-	IDs      []string
-}
-
 // Metrics are the geometry knobs of a skin. They are deliberately few: a skin
 // may change framing, tinting, spacing and grouping, but not the order of the
 // information on a screen.
@@ -58,8 +51,6 @@ type Metrics struct {
 	// StripSep is the glyph drawn between status-strip items. Empty means the
 	// neutral " │ " every skin uses by default.
 	StripSep string
-	// Groups is the root navigation grouping.
-	Groups []NavGroup
 }
 
 // Skin is one selectable look. Palettes come in pairs because a terminal
@@ -188,12 +179,6 @@ func jadeSkin() Skin {
 			PadX:       2,
 			NavWidth:   27,
 			StripSep:   "┃",
-			Groups: []NavGroup{
-				{TitleKey: "nav_group_serve", IDs: []string{"node", "domain"}},
-				{TitleKey: "nav_group_client", IDs: []string{"users", "subscribe"}},
-				{TitleKey: "nav_group_system", IDs: []string{"system", "kernel", "service", "bbr"}},
-				{TitleKey: "nav_group_maint", IDs: []string{"script-update", "uninstall"}},
-			},
 		},
 	}
 }
@@ -250,12 +235,6 @@ func auroraSkin() Skin {
 			Gutter:     2,
 			PadX:       2,
 			NavWidth:   26,
-			Groups: []NavGroup{
-				{TitleKey: "nav_group_serve", IDs: []string{"node", "domain"}},
-				{TitleKey: "nav_group_client", IDs: []string{"users", "subscribe"}},
-				{TitleKey: "nav_group_system", IDs: []string{"system", "kernel", "service", "bbr"}},
-				{TitleKey: "nav_group_maint", IDs: []string{"script-update", "uninstall"}},
-			},
 		},
 	}
 }
@@ -312,13 +291,6 @@ func emberSkin() Skin {
 			Gutter:     1,
 			PadX:       2,
 			NavWidth:   28,
-			Groups: []NavGroup{
-				{TitleKey: "nav_group_server", IDs: []string{"node", "domain"}},
-				{TitleKey: "nav_group_kernel", IDs: []string{"kernel"}},
-				{TitleKey: "nav_group_client", IDs: []string{"users", "subscribe"}},
-				{TitleKey: "nav_group_sysinfo", IDs: []string{"system", "service", "bbr"}},
-				{TitleKey: "nav_group_maint", IDs: []string{"script-update", "uninstall"}},
-			},
 		},
 	}
 }
@@ -376,13 +348,6 @@ func graphiteSkin() Skin {
 			PadX:       1,
 			NavWidth:   24,
 			Compact:    true,
-			Groups: []NavGroup{
-				{TitleKey: "nav_group_run", IDs: []string{"node", "subscribe"}},
-				{TitleKey: "nav_group_config", IDs: []string{"kernel", "domain"}},
-				{TitleKey: "nav_group_client", IDs: []string{"users"}},
-				{TitleKey: "nav_group_system", IDs: []string{"system", "service", "bbr"}},
-				{TitleKey: "nav_group_maint", IDs: []string{"script-update", "uninstall"}},
-			},
 		},
 	}
 }
