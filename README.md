@@ -314,7 +314,7 @@ numbers come from — including why there is no geekbench or fio — is in
 | Node | `ExecStart=/usr/local/bin/easysb core run -c /etc/sing-box/config.json`; `/etc/sing-box/sing-box` no longer exists |
 | Validation | `easysb core check -c <config>` builds the configuration with the same engine that would serve it, which is what the deploy path runs before restarting |
 | Counters | `with_v2ray_api` (`release/TAGS`) is compiled in, and the deploy path writes `experimental.v2ray_api` only when `sbcore.StatsCapable()` says so, because a core without the API rejects the whole document |
-| Release | `.github/workflows/easysb-go-release.yml` cross-compiles every architecture with the tags from `release/TAGS` and publishes them under the `v<VERSION>` tag |
+| Release | `.github/workflows/easysb-go-release.yml` reads the architecture list and every build flag from the `Makefile` (`make release-matrix` / `make dist-asset`, which read `release/TAGS`) and publishes the binaries under the `v<VERSION>` tag |
 
 ---
 

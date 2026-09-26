@@ -300,7 +300,7 @@ sb --unlock             # 17 项解锁一次跑完的报告
 | 节点 | `ExecStart=/usr/local/bin/easysb core run -c /etc/sing-box/config.json`；`/etc/sing-box/sing-box` 不再存在 |
 | 校验 | `easysb core check -c <配置>` 用将来真正服务节点的同一套引擎构建配置，部署路径重启服务前跑的就是它 |
 | 流量统计 | `with_v2ray_api`（定义在 `release/TAGS`）已编入；部署路径只在 `sbcore.StatsCapable()` 为真时写 `experimental.v2ray_api`，因为不带该 API 的内核会整份拒绝配置 |
-| 程序发行 | `.github/workflows/easysb-go-release.yml` 按 `release/TAGS` 的标签集交叉编译各架构二进制，以 tag `v<VERSION>` 发布 |
+| 程序发行 | `.github/workflows/easysb-go-release.yml` 从 `Makefile` 读取架构清单与全部构建参数（`make release-matrix` / `make dist-asset`，二者读的都是 `release/TAGS`），以 tag `v<VERSION>` 发布各架构二进制 |
 
 ---
 
