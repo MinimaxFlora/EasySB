@@ -16,13 +16,19 @@
 #    bash install.sh --from-source  # 强制从源码构建
 #    bash install.sh --binary PATH  # 使用本地已编译好的二进制
 #    bash install.sh --lang E       # 英文输出
+#
+#  版本号没有常量：源码树内取根目录 VERSION，独立运行时从默认分支读取同一个文件。
+#  The version is not a constant: the in-tree VERSION inside a checkout, otherwise the
+#  same file read from the default branch.
 # ==============================================================================
 
 set -euo pipefail
 
-VERSION='5.0.0'
 REPO='MinimaxFlora/EasySB'
-RELEASE_TAG="v${VERSION}"
+# VERSION / RELEASE_TAG 由 resolve_version 填充（见下），这里不写死任何版本号。
+# VERSION / RELEASE_TAG are filled in by resolve_version; no version is hardcoded.
+VERSION=''
+RELEASE_TAG=''
 PREFIX="${PREFIX:-/usr/local}"
 BIN_NAME='easysb'
 # 源码构建必须带这些标签：with_quic 是 Hysteria2 / TUIC，with_utls 是 Reality，
@@ -144,15 +150,51 @@ detect_system() {
   esac
 }
 
-# 脚本位于源码树内时以树内 VERSION 为准，避免版本号两处维护
-# Prefer the in-tree VERSION when this script sits inside the source tree.
-sync_version_from_tree() {
+# 独立运行时从默认分支读取 VERSION 文件（与 internal/update 是同一个地址），而不是
+# 在脚本里写死版本号。用 raw 文件而非 GitHub API：匿名 API 有 60 次/小时的限流，raw
+# 没有。
+# Standalone runs read the VERSION file from the default branch — the same URL
+# internal/update uses — instead of pinning a number. The raw file is used rather than
+# the GitHub API because anonymous API calls are rate limited to 60 per hour.
+latest_version() {
+  local url="https://raw.githubusercontent.com/${REPO}/master/VERSION" v
+  v="$(curl -fsSL -A 'EasySB-installer' --connect-timeout 15 "$url" 2>/dev/null)" || return 1
+  v="$(printf '%s' "$v" | tr -d '[:space:]')"
+  [ -n "$v" ] || return 1
+  printf '%s' "$v"
+}
+
+# VERSION 的唯一来源；RELEASE_TAG 永远由它派生，脚本里不再出现第二个版本号。
+# The single source of VERSION; RELEASE_TAG is always derived from it, so the script
+# carries no second copy of the number.
+resolve_version() {
   local dir v
+
+  # 本地二进制自带版本号，无需 release tag。
+  # A local binary carries its own version, so no release tag is involved.
+  if [ -n "$LOCAL_BINARY" ]; then
+    VERSION="$( { "$LOCAL_BINARY" --version 2>/dev/null || true; } | sed -n 's/^EasySB[[:space:]]*\([^[:space:]]*\).*/\1/p' | head -1)" || VERSION=''
+    RELEASE_TAG=''
+    return 0
+  fi
+
+  # 源码树内以根目录 VERSION 为准（发布工作流读的就是它）。
+  # Inside a checkout the root VERSION file wins; it is what the release workflow reads.
   dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  [ -r "$dir/VERSION" ] || return 0
-  v="$(tr -d '[:space:]' < "$dir/VERSION")"
-  [ -n "$v" ] || return 0
-  VERSION="$v"
+  if [ -r "$dir/VERSION" ]; then
+    v="$(tr -d '[:space:]' < "$dir/VERSION")"
+    if [ -n "$v" ]; then
+      VERSION="$v"
+      RELEASE_TAG="v${VERSION}"
+      return 0
+    fi
+  fi
+
+  # 独立运行（curl | bash）：从默认分支读取当前版本，而不是固定写死。
+  # Standalone (curl | bash): read the current version from the default branch instead
+  # of pinning one.
+  VERSION="$(latest_version)" || VERSION=''
+  [ -n "$VERSION" ] || die "$(say '无法获取最新版本号，请在源码树内运行或检查网络' 'cannot determine the latest version; run inside the source tree or check the network')"
   RELEASE_TAG="v${VERSION}"
 }
 
@@ -290,7 +332,7 @@ build_from_source() {
   say "正在从源码构建" "Building from source"
   dim "tags: $tags"
   ( cd "$srcdir" && CGO_ENABLED=0 go build -trimpath -tags "$tags" \
-      -ldflags "-s -w -X main.version=${VERSION}" -o "$out" . ) || return 1
+      -ldflags "-s -w" -o "$out" . ) || return 1
   [ -s "$out" ] || return 1
   return 0
 }
@@ -326,10 +368,9 @@ install_binary() {
 main() {
   setup_sudo
   detect_system
-  sync_version_from_tree
-  log "EasySB installer · ${OS_ID}/${ARCH} · pkg=${PKG_MGR} · v${VERSION}"
-
   ensure_runtime_deps
+  resolve_version
+  log "EasySB installer · ${OS_ID}/${ARCH} · pkg=${PKG_MGR}${VERSION:+ · v${VERSION}}"
   install_binary
 
   printf '\n'

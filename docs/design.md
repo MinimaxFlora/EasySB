@@ -38,11 +38,13 @@ strings must be added to the table for both languages in the same commit.
 
 ## Version is data, not code
 
-`VERSION` is the single source of truth. The release workflow reads it, injects
-`main.version` with `-ldflags -X`, and publishes under the tag `v<VERSION>`.
-`install.sh` derives `RELEASE_TAG="v${VERSION}"`, and `internal/update` derives
-the same tag from the remote version. Never hardcode a release tag in more than
-one place.
+`VERSION` is the single source of truth, and it is compiled into the binary with
+`go:embed`. A bare `go build` and a published release therefore report the same
+number, with no `-ldflags -X main.version` to keep in step and no second constant
+to drift. The workflow publishes under the tag `v<VERSION>`; `install.sh` reads
+the in-tree file when it runs inside a checkout and otherwise asks GitHub for the
+latest release tag; `internal/update` derives the same tag from the remote
+version. Never hardcode a release tag in more than one place.
 
 ## Non-interactive entry points
 

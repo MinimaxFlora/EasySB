@@ -2,11 +2,11 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"flag"
 	"fmt"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -33,13 +33,16 @@ import (
 	"github.com/MinimaxFlora/EasySB/internal/user"
 )
 
-var (
-	// The release build injects the value from VERSION with -X main.version; this
-	// default is only what a bare `go build` reports, and it is kept equal to VERSION
-	// so the two never tell different stories.
-	version = "5.0.0"
-	commit  = ""
-)
+// version is compiled in from the repository's VERSION file, the single source of
+// truth for the release number. A bare `go build` therefore reports the same
+// version as a published release: there is no -ldflags -X to keep in step and no
+// second constant to drift.
+//
+//go:embed VERSION
+var version string
+
+// commit is stamped at build time (-X main.commit=<sha>), empty in a bare build.
+var commit = ""
 
 // versionLine is the human-facing build string, including the short commit when
 // the build stamped one.
@@ -520,28 +523,5 @@ func firstNonEmpty(values ...string) string {
 }
 
 func resolveVersion() string {
-	if v := readVersionFile(); v != "" {
-		return v
-	}
-	return version
-}
-
-func readVersionFile() string {
-	candidates := []string{
-		"/usr/share/easysb/VERSION",
-		"VERSION",
-	}
-	if exe, err := os.Executable(); err == nil {
-		candidates = append(candidates, filepath.Join(filepath.Dir(exe), "VERSION"))
-	}
-	for _, path := range candidates {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
-		if v := strings.TrimSpace(string(data)); v != "" {
-			return v
-		}
-	}
-	return ""
+	return strings.TrimSpace(version)
 }
