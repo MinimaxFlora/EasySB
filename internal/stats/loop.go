@@ -117,7 +117,6 @@ func (l *Loop) Tick(ctx context.Context) error {
 		return err
 	}
 	deltas := diffCounters(l.sample, counters, l.sampled)
-	l.sample, l.sampled = counters, true
 
 	changed := false
 	store.Mutate(func(u *user.User) {
@@ -140,10 +139,17 @@ func (l *Loop) Tick(ctx context.Context) error {
 		store.MarkApplied(now)
 		changed = true
 	}
-	if !changed {
-		return nil
+	if changed {
+		if err := store.Save(); err != nil {
+			return err
+		}
 	}
-	return store.Save()
+	// The baseline moves only after the deltas it produced are on disk. The store
+	// is reloaded from the file at the top of every cycle, so advancing the sample
+	// before a failed Apply or Save would subtract those bytes from the next diff
+	// and drop that interval's traffic for good.
+	l.sample, l.sampled = counters, true
+	return nil
 }
 
 // counters opens a source and reads the absolute counters of the given users.
