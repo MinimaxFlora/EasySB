@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
@@ -17,8 +18,9 @@ import (
 	"github.com/MinimaxFlora/EasySB/internal/subscribe"
 	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
 	"github.com/MinimaxFlora/EasySB/internal/theme"
+	"github.com/MinimaxFlora/EasySB/internal/toolbox"
+	"github.com/MinimaxFlora/EasySB/internal/toolbox/tools"
 	"github.com/MinimaxFlora/EasySB/internal/ui"
-	"github.com/MinimaxFlora/EasySB/internal/unlock"
 	"github.com/MinimaxFlora/EasySB/internal/user"
 )
 
@@ -39,13 +41,16 @@ type App struct {
 	status        sysinfo.Status
 	ready         bool
 	sized         bool
-	// unlockReport is the last 服务解锁状态 run the operator started. A probe run
-	// leaves the process, so the panel keeps the result of the one it ran instead
-	// of re-probing whenever the section is opened.
-	unlockReport *unlock.Report
-	quote        string
-	toast        string
-	toastErr     bool
+	// toolResults is the last outcome of every toolbox entry that has run, keyed by tool
+	// id. A tool leaves the process (a probe run, a traceroute, a benchmark), so the panel
+	// keeps what the run it started found instead of running it again on every visit.
+	toolResults map[string]toolOutcome
+	// report is the outcome the report screen is showing, nil when no report is open. A
+	// finished tool sets it, so a run ends on its table rather than on its log.
+	report   *toolOutcome
+	quote    string
+	toast    string
+	toastErr bool
 	// section is the root entry the panel is standing in, empty on the main
 	// menu. It is set when a root entry is entered and cleared on the way back.
 	section string
@@ -187,6 +192,11 @@ func (a *App) Snapshot(width, height int) string {
 		// A task owns the screen while it runs, so a rendered frame is the task's.
 		return a.task.View(a.width, a.height, a.statusStrip(a.frameWidth()), a.style(), a.lang, a.iconSet)
 	}
+	if a.report != nil {
+		// A report owns the screen once a tool has finished, so a rendered frame
+		// is the report's, exactly as in the running panel.
+		return a.reportScreen()
+	}
 	return a.dashboard()
 }
 
@@ -230,6 +240,15 @@ func (a *App) SnapshotScreen(screen string, width, height int) string {
 		p.setDownload(previewDownload())
 		p.resize(a.width, a.height)
 		a.task = p
+	case "toolbox-report":
+		// The report screen is the one a finished tool leaves behind: entering the
+		// section and a group stands the panel where the run was started from, and
+		// the sample run is recorded so the board behind it has a line too.
+		a.enterSection("toolbox")
+		a.push(buildToolGroup(tools.GroupUnlock))
+		outcome := previewToolOutcome()
+		a.toolResults = map[string]toolOutcome{outcome.id: outcome}
+		a.report = &outcome
 	}
 	return a.Snapshot(width, height)
 }
@@ -247,6 +266,32 @@ func previewTaskLog() []string {
 // previewDownload is the sample download reading of a rendered task screen.
 func previewDownload() (string, int64, int64) {
 	return "easysb-linux-amd64", 12 << 20, 29 << 20
+}
+
+// previewToolOutcome is the sample a rendered report screen shows. A report exists only
+// after a tool has run, and a rendered frame has no event loop to run one, so the screen is
+// drawn from a table of the shape the unlock entries produce.
+func previewToolOutcome() toolOutcome {
+	return toolOutcome{
+		id:   "unlock-media",
+		when: time.Date(2026, 9, 26, 7, 42, 11, 0, time.UTC),
+		result: toolbox.Result{
+			Headers: []string{"service", "status", "region"},
+			Rows: [][]string{
+				{"Netflix", "unlocked", "US"},
+				{"Disney+", "unlocked", "US"},
+				{"YouTube Premium", "unlocked", "US"},
+				{"Amazon Prime Video", "unlocked", "US"},
+				{"DAZN", "unlocked", "SC"},
+				{"Spotify", "blocked", "—"},
+				{"TikTok", "unlocked", "SC"},
+			},
+			Notes: []string{
+				"Spotify: Spotify refuses registration from this IP (status 320): You seem to be using a proxy service.",
+			},
+			Summary: "unlocked 6 · blocked 1 (7)",
+		},
+	}
 }
 
 // enterSection pushes the submenu of a root entry by id, so a page can be rendered by
@@ -584,6 +629,18 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return a, cmd
 	}
 
+	// The report screen is a dead end with one way forward: read it, run it again, or go
+	// back. Nothing else it could do would be clearer than that.
+	if a.report != nil {
+		switch key {
+		case "esc", "enter", "backspace":
+			a.report = nil
+		case "r":
+			return a, a.rerunReport()
+		}
+		return a, nil
+	}
+
 	// The system screen owns a few keys of its own and lets the rest fall through
 	// to the global shortcuts below.
 	if a.system != nil {
@@ -660,6 +717,8 @@ func (a *App) View() tea.View {
 		content = a.task.View(a.width, a.height, a.statusStrip(a.frameWidth()), a.style(), a.lang, a.iconSet)
 	case a.links != nil:
 		content = a.links.View(a.width, a.height, a.palette, a.lang, a.iconSet)
+	case a.report != nil:
+		content = a.reportScreen()
 	default:
 		content = a.dashboard()
 	}
@@ -826,16 +885,6 @@ func (a *App) numberedLabel(i int, n *node) string {
 		name = n.label(a.lang)
 	}
 	return a.numberTag(i) + name
-}
-
-// nodeLabel prefixes a menu entry with its icon, falling back to a bullet for
-// entries that have no dedicated glyph. The navigation column uses it; the menus
-// themselves are numbered.
-func (a *App) nodeLabel(n *node) string {
-	if n.icon != nil {
-		return n.icon(a.iconSet) + " " + n.label(a.lang)
-	}
-	return a.iconSet.Bullet + " " + n.label(a.lang)
 }
 
 func (a *App) rowLine(selected bool, label string, inner, cursorWidth int) string {

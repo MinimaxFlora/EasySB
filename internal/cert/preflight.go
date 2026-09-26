@@ -22,15 +22,7 @@ type Report struct {
 	DNSFail  error
 }
 
-// Listener reports whether the HTTP-01 challenge can be answered from this
-// process, which is the question the preflight used to answer by looking for
-// socat or python on the host. Both are gone: the listener is the standard
-// library, so the only thing left that can stop a challenge is port 80 being
-// taken, and the caller asks about that with CheckPort80 once the core is
-// stopped, because a running core is usually what holds the port.
-func (r Report) Listener() bool { return true }
-
-// Mismatch reports whether the domain resolves somewhere else. An empty PublicIP
+// Mismatch reports whether the domain resolves somewhere else.
 // means the panel could not work out this server's address, which is not a
 // mismatch, only an unknown.
 func (r Report) Mismatch() bool {

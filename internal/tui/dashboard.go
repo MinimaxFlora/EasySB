@@ -168,8 +168,8 @@ func (a *App) sectionMenu(w, h int) []string {
 // its entries, and only those two contents are swapped as the navigation moves.
 func (a *App) sectionPanel(w int) (string, []string) {
 	switch a.sectionID() {
-	case "unlock":
-		return a.lang.T("panel_unlock"), a.unlockBody(w)
+	case "toolbox":
+		return a.lang.T("panel_toolbox"), a.toolboxBody(w)
 	case "node":
 		return a.lang.T("panel_node"), a.nodeBody(w)
 	case "domain":
@@ -546,43 +546,6 @@ func (a *App) syncIntervalText() string {
 		return a.lang.T("not_set")
 	}
 	return fmt.Sprintf("%ds", a.status.SubSyncSecs)
-}
-
-// deviceBody is the host card: meters for the three resources that run out, then
-// the identity of the machine.
-func (a *App) deviceBody(w int) []string {
-	s := a.style()
-	st := a.status
-	inner := ui.InnerWidth(s, w)
-	var body []string
-	meter := func(labelKey string, total, free uint64) {
-		if total == 0 {
-			return
-		}
-		free = minU64(free, total)
-		used := total - free
-		body = append(body, ui.MeterLine(s, a.lang.T(labelKey), usageCell(total, free),
-			float64(used)/float64(total), inner))
-	}
-	meter("device_memory", st.MemTotal, st.MemAvail)
-	meter("device_disk", st.DiskTotal, st.DiskFree)
-	meter("device_swap", st.SwapTotal, st.SwapFree)
-	if len(body) > 0 {
-		body = append(body, "")
-	}
-	left := [][2]string{
-		a.kv("device_host", st.Hostname, ui.KindPlain),
-		a.kv("device_os", withFallback(st.OS, a.lang.T("state_unknown")), ui.KindPlain),
-		a.kv("device_kernel", withFallback(st.Kernel, a.lang.T("state_unknown")), ui.KindPlain),
-		a.kv("device_cpu", a.cpuSummary(), ui.KindPlain),
-	}
-	right := [][2]string{
-		a.kv("device_uptime", withFallback(humanDuration(st.Uptime), "—"), ui.KindPlain),
-		a.kv("device_load", withFallback(st.LoadAvg, "—"), ui.KindPlain),
-		a.kv("device_local_ipv4", withFallback(st.LocalIPv4, "—"), ui.KindPlain),
-		a.kv("device_local_ipv6", withFallback(st.LocalIPv6, "—"), ui.KindPlain),
-	}
-	return append(body, ui.TwoCol(s, left, right, inner)...)
 }
 
 // accountsBody summarises the accounts: how many, how many still work, and how

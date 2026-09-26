@@ -63,12 +63,6 @@ func Download(ctx context.Context, url, dest string) error {
 	return DownloadWithProgress(ctx, url, dest, 5*time.Minute, nil)
 }
 
-// DownloadWithin is Download with an explicit budget, for the callers that pull
-// something much larger than a panel release.
-func DownloadWithin(ctx context.Context, url, dest string, timeout time.Duration) error {
-	return DownloadWithProgress(ctx, url, dest, timeout, nil)
-}
-
 // DownloadWithProgress is the whole download path: it streams url to dest and reports
 // the bytes as they arrive to progress. A nil progress means the caller only wants the
 // file, which is what the non-interactive entry points do.

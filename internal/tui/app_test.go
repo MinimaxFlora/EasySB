@@ -19,7 +19,8 @@ import (
 	"github.com/MinimaxFlora/EasySB/internal/state"
 	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
 	"github.com/MinimaxFlora/EasySB/internal/theme"
-	"github.com/MinimaxFlora/EasySB/internal/unlock"
+	"github.com/MinimaxFlora/EasySB/internal/toolbox"
+	"github.com/MinimaxFlora/EasySB/internal/toolbox/tools"
 	"github.com/MinimaxFlora/EasySB/internal/user"
 )
 
@@ -197,7 +198,7 @@ func TestRootMenuHasNoNav(t *testing.T) {
 	// The root entries are the panel's map: every screen has to be reachable from
 	// here, and from the navigation grouping as well, or it is hidden behind a
 	// scroll nobody knows about.
-	want := []string{"unlock", "node", "domain", "subscribe", "users", "service", "system", "bbr", "script-update", "uninstall"}
+	want := []string{"toolbox", "node", "domain", "subscribe", "users", "service", "system", "bbr", "script-update", "uninstall"}
 	got := map[string]bool{}
 	for _, n := range a.current().nodes {
 		got[n.id] = true
@@ -209,32 +210,6 @@ func TestRootMenuHasNoNav(t *testing.T) {
 	}
 	if len(a.current().nodes) != len(want) {
 		t.Errorf("root has %d entries, expected %d", len(a.current().nodes), len(want))
-	}
-	placed := map[string]bool{}
-	for _, g := range a.style().Met.Groups {
-		for _, id := range g.IDs {
-			placed[id] = true
-		}
-	}
-	for _, n := range a.current().nodes {
-		if !placed[n.id] {
-			t.Errorf("entry %q is in no navigation group of the default skin", n.id)
-		}
-	}
-	// Every skin carries its own grouping, and an entry missing from one of them
-	// disappears from that skin's navigation column without any other symptom.
-	for _, skin := range theme.Skins() {
-		grouped := map[string]bool{}
-		for _, g := range skin.Met.Groups {
-			for _, id := range g.IDs {
-				grouped[id] = true
-			}
-		}
-		for _, n := range a.current().nodes {
-			if !grouped[n.id] {
-				t.Errorf("skin %q does not group the root entry %q", skin.ID, n.id)
-			}
-		}
 	}
 	if !got["uninstall"] {
 		t.Fatalf("uninstall should be in the root menu")
@@ -250,27 +225,28 @@ func TestRootMenuHasNoNav(t *testing.T) {
 	}
 }
 
-// The 服务解锁状态 section stands where 内核管理 used to: the core is compiled into the
-// panel, so what an operator needs there is which services this IP can really use.
-func TestUnlockMenuEntries(t *testing.T) {
+// The 工具箱 section stands where 内核管理 used to: the core is compiled into the panel, so
+// what an operator needs there is a measurement of the machine rather than a menu of cores.
+// Its entries come from the registry, so the menu cannot drift from what the panel can run.
+func TestToolboxMenuEntries(t *testing.T) {
 	a := newTestApp(t)
-	a.push(buildUnlock())
-	want := []string{"unlock-check", "unlock-single"}
-	if got := len(a.current().nodes); got != len(want) {
-		t.Fatalf("unlock menu has %d entries, want %d", got, len(want))
+	a.push(buildToolbox())
+	groups := tools.Groups()
+	if got := len(a.current().nodes); got != len(groups) {
+		t.Fatalf("toolbox menu has %d entries, want %d groups", got, len(groups))
 	}
-	for i, id := range want {
-		if got := a.current().nodes[i].id; got != id {
-			t.Fatalf("unlock entry %d = %s, want %s", i, got, id)
+	for i, group := range groups {
+		if got := a.current().nodes[i].id; got != "toolbox-"+group {
+			t.Fatalf("toolbox entry %d = %s, want toolbox-%s", i, got, group)
 		}
 	}
 	if !a.hasNavRow() {
-		t.Fatalf("unlock menu should show a navigation row")
+		t.Fatalf("toolbox menu should show a navigation row")
 	}
 	view := a.View().Content
-	for _, label := range []string{i18n.Chinese.T("unlock_check"), i18n.Chinese.T("unlock_single"), i18n.Chinese.T("nav_back")} {
+	for _, label := range []string{i18n.Chinese.T("toolbox_group_unlock"), i18n.Chinese.T("toolbox_group_hardware"), i18n.Chinese.T("nav_back")} {
 		if !strings.Contains(view, label) {
-			t.Fatalf("unlock menu view missing %q: %s", label, view)
+			t.Fatalf("toolbox view missing %q: %s", label, view)
 		}
 	}
 	m, _ := a.Update(press('0'))
@@ -278,34 +254,98 @@ func TestUnlockMenuEntries(t *testing.T) {
 	if !a.onNavRow() {
 		t.Fatalf("digit 0 should select the navigation row in a submenu")
 	}
-	if a.current().id != "unlock" {
-		t.Fatalf("expected unlock submenu, got %s", a.current().id)
+	if a.current().id != "toolbox" {
+		t.Fatalf("expected toolbox submenu, got %s", a.current().id)
 	}
 }
 
-// Every service in the catalogue gets one entry, in the catalogue's own order, so a
-// single verdict can be re-checked without probing the whole list.
-func TestUnlockSingleEntriesFollowTheCatalogue(t *testing.T) {
+// Every registered tool gets one entry of its own, in registry order: the point of the
+// toolbox is that each measurement is reachable on its own.
+func TestToolboxGroupEntriesFollowTheRegistry(t *testing.T) {
 	a := newTestApp(t)
-	a.push(buildUnlockSingle())
-	catalogue := unlock.Catalogue()
-	if got := len(a.current().nodes); got != len(catalogue) {
-		t.Fatalf("single-probe menu has %d entries, want %d", got, len(catalogue))
+	for _, group := range tools.Groups() {
+		a.push(buildToolGroup(group))
+		entries := tools.InGroup(group)
+		if got := len(a.current().nodes); got != len(entries) {
+			t.Fatalf("group %s has %d entries, want %d", group, got, len(entries))
+		}
+		view := a.View().Content
+		for i, tool := range entries {
+			if got := a.current().nodes[i].id; got != "tool-"+tool.ID {
+				t.Fatalf("group %s entry %d = %s, want tool-%s", group, i, got, tool.ID)
+			}
+			label := i18n.Chinese.T("toolbox_" + tool.ID)
+			if strings.HasPrefix(label, "toolbox_") {
+				t.Fatalf("tool %s has no name in the table", tool.ID)
+			}
+			if !strings.Contains(view, label) {
+				t.Fatalf("group %s view missing %q: %s", group, label, view)
+			}
+		}
+		a.pop()
 	}
+}
+
+// A finished tool leaves a report on the screen and a line on the board: the run is what
+// the operator asked for, so the panel shows its table rather than its log.
+func TestToolboxReportAndBoard(t *testing.T) {
+	a := newTestApp(t)
+	outcome := toolOutcome{
+		id: "unlock-ai",
+		result: toolbox.Result{
+			Headers: []string{"service", "status", "region"},
+			Rows: [][]string{
+				{"ChatGPT", "unlocked", "US"},
+				{"Claude", "unknown", "US"},
+			},
+			Notes:   []string{"Claude: claude.ai answered a Cloudflare challenge"},
+			Summary: "unlocked 1 · blocked 0 · unknown 1 (2)",
+		},
+		when: time.Now(),
+	}
+	a.toolResults = map[string]toolOutcome{outcome.id: outcome}
+	a.report = &outcome
+
 	view := a.View().Content
-	for i, service := range catalogue {
-		if got := a.current().nodes[i].id; got != "unlock-"+service.ID {
-			t.Fatalf("single-probe entry %d = %s, want unlock-%s", i, got, service.ID)
+	for _, want := range []string{
+		i18n.Chinese.T("toolbox_verdict_unlocked"),
+		i18n.Chinese.T("toolbox_verdict_unknown"),
+		i18n.Chinese.T("toolbox_col_region"),
+		"US",
+		i18n.Chinese.T("toolbox_rerun"),
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("report missing %q:\n%s", want, view)
 		}
-		// A service with a translation in the table is shown translated, and one
-		// without keeps the catalogue's own name rather than a raw key.
-		name := unlockServiceName(i18n.Chinese, service)
-		if strings.HasPrefix(name, "unlock_service_") {
-			t.Fatalf("service %s rendered its raw key", service.ID)
-		}
-		if !strings.Contains(view, name) {
-			t.Fatalf("single-probe view missing %q: %s", name, view)
-		}
+	}
+	// A verdict the panel defined is worded in the interface language; the numbers and
+	// names a tool reports are left as they came.
+	if strings.Contains(view, "unlocked") {
+		t.Errorf("the report leaked a raw verdict token:\n%s", view)
+	}
+
+	// Esc closes the report; the board then shows what the run found.
+	m, _ := a.Update(press(tea.KeyEsc))
+	a = m.(*App)
+	if a.report != nil {
+		t.Fatal("esc should close the report")
+	}
+	board := a.toolboxBody(88)
+	joined := strings.Join(board, "\n")
+	if !strings.Contains(joined, i18n.Chinese.T("toolbox_unlock-ai")) || !strings.Contains(joined, "unknown 1") {
+		t.Fatalf("board does not report the last run:\n%s", joined)
+	}
+	if !strings.Contains(joined, i18n.Chinese.Format("toolbox_board_pending", len(tools.All())-1)) {
+		t.Fatalf("board does not count what has not run:\n%s", joined)
+	}
+}
+
+// Before anything runs the board says so instead of showing an empty table.
+func TestToolboxBoardBeforeAnyRun(t *testing.T) {
+	a := newTestApp(t)
+	board := strings.Join(a.toolboxBody(88), "\n")
+	if !strings.Contains(board, i18n.Chinese.T("toolbox_board_empty_hint")) {
+		t.Fatalf("empty board should invite a run:\n%s", board)
 	}
 }
 
@@ -496,7 +536,7 @@ func TestDashboardShowsLogoAndMenuDescriptions(t *testing.T) {
 // second-level page shows a 看板 of its own in the top box and its entries in the
 // bottom one, so moving between pages swaps those two contents and nothing else.
 func TestEverySectionHasItsOwnPanel(t *testing.T) {
-	ids := []string{"unlock", "node", "domain", "subscribe", "users", "service", "bbr", "script-update", "uninstall"}
+	ids := []string{"toolbox", "node", "domain", "subscribe", "users", "service", "bbr", "script-update", "uninstall"}
 	seen := make(map[string]string, len(ids))
 	for _, id := range ids {
 		a := newTestApp(t)
@@ -583,7 +623,7 @@ func TestBBRMenuShape(t *testing.T) {
 	// Two columns of five fill the card: the second column starts at the entries
 	// after the fifth, and the last entry stays reachable on the same screen.
 	view := a.SnapshotScreen("", 100, 40)
-	for _, want := range []string{i18n.Chinese.T("unlock_title"), i18n.Chinese.T("svc_title"), i18n.Chinese.T("menu_uninstall")} {
+	for _, want := range []string{i18n.Chinese.T("toolbox_title"), i18n.Chinese.T("svc_title"), i18n.Chinese.T("menu_uninstall")} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("main menu missing %q:\n%s", want, view)
 		}

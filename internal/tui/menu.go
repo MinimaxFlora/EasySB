@@ -44,7 +44,7 @@ func buildRoot() *menu {
 		id:    "root",
 		title: tk("menu_main"),
 		nodes: []*node{
-			{id: "unlock", label: tk("unlock_title"), desc: tk("menu_unlock"), icon: func(s icons.Set) string { return s.Globe }, sub: buildUnlock()},
+			{id: "toolbox", label: tk("toolbox_title"), desc: tk("menu_toolbox"), icon: func(s icons.Set) string { return s.Globe }, sub: buildToolbox()},
 			{id: "node", label: tk("node_title"), desc: tk("menu_node"), icon: func(s icons.Set) string { return s.Rocket }, sub: buildNode()},
 			{id: "domain", label: tk("domain_title"), desc: tk("menu_domain"), icon: func(s icons.Set) string { return s.Globe }, sub: buildDomain()},
 			{id: "subscribe", label: tk("sub_title"), desc: tk("menu_subscribe"), icon: func(s icons.Set) string { return s.Subscribe }, sub: buildSubscribe()},

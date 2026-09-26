@@ -187,51 +187,6 @@ func humanDuration(d time.Duration) string {
 	return b.String()
 }
 
-// styledTwoCols aligns two cells into a two-column row, truncating each value to
-// whatever the terminal width allows before applying its style.
-func (a *App) styledTwoCols(width int, lLabel, lText string, lStyle func(string) string, rLabel, rText string, rStyle func(string) string) string {
-	col := (width - 4) / 2
-	labelW := keyColumn
-	if max := col - 2; labelW > max {
-		labelW = max
-	}
-	if max := width - 4 - col; labelW > max {
-		labelW = max
-	}
-	if labelW < 1 {
-		labelW = 1
-	}
-	lValue := theme.Truncate(lText, maxInt(0, col-labelW-1))
-	rValue := theme.Truncate(rText, maxInt(0, width-4-col-labelW))
-	lLabel = theme.Truncate(lLabel, labelW)
-	rLabel = theme.Truncate(rLabel, labelW)
-	left := theme.Pad(a.palette.Label(theme.Pad(lLabel, labelW))+lStyle(lValue), col)
-	right := a.palette.Label(theme.Pad(rLabel, labelW)) + rStyle(rValue)
-	return "  " + left + "  " + right
-}
-
-// twoCols renders a two-column key/value row, padding the left column so the
-// right one lines up across rows.
-func (a *App) twoCols(width int, lKey, lVal, rKey, rVal string) string {
-	return a.styledTwoCols(width, a.lang.T(lKey), a.panelValue(lVal), a.palette.Value,
-		a.lang.T(rKey), a.panelValue(rVal), a.palette.Value)
-}
-
-// kvRow renders a single aligned label/value row.
-func (a *App) kvRow(label, value string, width int) string {
-	labelWidth := keyColumn + 5
-	if labelWidth > width-4 {
-		labelWidth = maxInt(1, width-4)
-	}
-	plain := theme.Truncate(label, labelWidth)
-	pad := labelWidth - lipgloss.Width(plain)
-	if pad < 1 {
-		pad = 1
-	}
-	val := theme.Truncate(a.panelValue(value), maxInt(0, width-2-labelWidth-1))
-	return "  " + a.palette.Label(plain) + strings.Repeat(" ", pad) + a.palette.Value(val)
-}
-
 // portSummary lists the enabled protocol ports for the node card.
 func portSummary(cfg state.Config) string {
 	var out []string

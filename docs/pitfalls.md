@@ -76,6 +76,24 @@ Traps already hit in this repository. Each entry names the symptom and the fix.
 - **Comments are invalid JSON.** `templates/` files are JSONC for humans. Strip
   comments before handing anything to `sing-box check`.
 
+## The toolbox
+
+- **A tool writes nothing to stdout.** The panel owns the terminal, so a tool that prints
+  (a library's spinner, a `fmt.Println` left in during a debug run) tears the frame apart
+  instead of corrupting its own table. Every toolbox tool returns a `toolbox.Result` and
+  reports progress through `Options.Log`. This is why `speedtest-go` is used as a library:
+  its CLI's spinner is a separate `main` package that is not imported.
+- **A tool takes its dependencies from `Options`.** HTTP, DNS, dials, commands and the
+  scratch directory all arrive injected, so its test drives every failure path (a refused
+  connection, a 503, a stubbed `/proc`) without a network or root. A tool that reaches for
+  `http.DefaultClient` or `net.Dial` directly cannot be tested where the panel is built.
+- **A verdict is a token, not a word.** The unlock entries return `unlocked` / `blocked` /
+  `unknown` and the interface words them, so the same run reads correctly in both languages.
+  A tool that returns a translated sentence freezes the language into the data.
+- **Nothing is downloaded to measure something.** The CPU, memory and disk benchmarks are
+  this binary's own workloads; they are not geekbench, sysbench or fio results and must never
+  be labelled as such. If a measurement needs an external binary, the entry does not exist.
+
 ## Subscription service
 
 - **A client that cannot parse the profile must not receive one.** Refusing an

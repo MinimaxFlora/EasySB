@@ -30,7 +30,7 @@
 - [Config Templates](#config-templates)
 - [Subscription](#subscription)
 - [Firewall and Port Hopping](#firewall-and-port-hopping)
-- [Service Unlock Status](#service-unlock-status)
+- [Toolbox](#toolbox)
 - [Developers: Build and Test](#developers-build-and-test)
 - [Security Notes](#security-notes)
 - [License](#license)
@@ -258,45 +258,46 @@ The unit restores rules via `easysb --apply-firewall`. It is not created when Hy
 
 ---
 
-## Service Unlock Status
+## Toolbox
 
-The section that replaced 内核管理 answers the question a VPS operator actually has: which
-of these services work from *this* IP. The probes are a Go re-implementation of
-[RegionRestrictionCheck](https://github.com/lmc999/RegionRestrictionCheck) — one to three
-HTTP requests per service, then a read of the body, no login and no extra data files.
+The toolbox (the first entry of the main menu, where 服务解锁状态 used to be) is where a host
+is measured: one entry per measurement, one report per entry, and a board that remembers
+what the last run of each entry found. **Opening the section runs nothing** — a speed test, a
+return route or a benchmark is not something a navigation key should start.
 
-| Item | Description |
+| Group | Entries |
 | :--- | :--- |
-| Streaming | Netflix (a blocked title may still play originals, which is reported as partially unlocked), Disney+, YouTube Premium, Amazon Prime Video, DAZN, TVBAnywhere+, Spotify, Reddit, TikTok |
-| AI | ChatGPT, Google Gemini, Claude |
-| Game store | Steam (its regional signal is the store currency) |
-| Mainland China / Taiwan | BiliBili mainland, BiliBili Hong Kong-Macau-Taiwan, BiliBili Taiwan, 巴哈姆特動畫瘋 |
-| Verdicts | unlocked / partially unlocked / blocked / failed. A probe never reports "unlocked" on partial evidence: an unreadable answer becomes a failure with the reason it saw, and the board counts each verdict |
-| Where to run it | The panel page (whole catalogue or one service, results land in the task screen and stay on the board) and `sb --unlock` for a plain-text report without a terminal |
-| Core | None of this needs a core binary: the checks are the panel's own HTTP client, and so is the sing-box engine the node runs |
+| Unlock checks | Streaming (Netflix, Disney+, YouTube Premium, Prime Video, DAZN, TVBAnywhere+, Spotify, Reddit, TikTok), AI (ChatGPT, Gemini, Claude), regional (Steam, the three Bilibili catalogues, Bahamut Anime) |
+| Network | Return routes to the Chinese carriers, a nearby speed test, a three-network speed test |
+| IP and ports | IP quality (several databases plus DNS blocklists), mail ports (could this host run mail?) |
+| Hardware and performance | System information, disks, CPU benchmark, memory test, sequential and random 4K disk IO, every mounted disk |
 
-The region column is **the service's own answer**, not something the panel computes: the services sit in front of different geolocation databases, and one machine being seen as two different countries is normal. On a Zenixcloud address we measured, Cloudflare, Netflix and Gemini said `US` while TikTok and DAZN reported `SC` — both are shown as given, because the question the panel answers is "how does this service see you", not "where are you".
+A verdict is one of three words — **unlocked / blocked / unknown** — beside the region the
+service itself reported, one service per row:
 
-Two verdicts that invite a second look:
+- **unlocked**: the service answered, and its own answer says this address is served.
+- **blocked**: the service refused this address, or offered it only partly (half-working is
+  not working).
+- **unknown**: the answer could not be read — a Cloudflare challenge, a timeout, a page with
+  no verdict in it. The table says so and the note underneath says what it saw; it is never
+  guessed into an "unlocked".
+- The region column is **the service's own answer**, not something the panel computes: the
+  services sit in front of different geolocation databases, and one machine being seen as two
+  countries is normal (measured on a Zenixcloud host: Cloudflare, Netflix and Gemini said
+  `US` while TikTok and DAZN reported `SC`).
 
-- **Prime Video** serves its storefront in several shapes: a ~520 KB page whose geo block sits about 170 KB in, a multi-megabyte one whose block sits further, and a lean ~40 KB one that carries no geo information at all — plus the odd 503. Which one arrives varies between requests for the same IP, and the reference script's own `curl` command hits the empty shape too (measured: once in three runs there, three times in six here). The probe reads to the marker (cap 8 MB) and simply asks again — up to three attempts — before it reports a country as unreadable, which the failure text states.
-- **Claude** answers a datacenter address with a Cloudflare challenge (HTTP 403). The reference script would call that "yes" because the URL never changed, which is a guess; the panel reports a failed check and attaches the region read from `claude.ai/cdn-cgi/trace`, because a challenge says Cloudflare distrusts the address — it says nothing about the country.
+Run one entry from the panel (工具箱 → group → entry), or without a terminal:
 
-### Where this differs from the reference script
+```bash
+sb --tool list          # every entry
+sb --tool backtrace     # return routes
+sb --tool unlock-media  # streaming unlock
+sb --unlock             # all seventeen unlock checks in one report
+```
 
-Sixteen of the seventeen services ask the same endpoint and read the same field as the reference script. The differences are deliberate and all of them are listed here:
-
-| Item | Difference | Why |
-| :--- | :--- | :--- |
-| Prime Video | reads to the geo marker (cap 8 MB) and makes up to three attempts before failing | the script makes one `curl`, and reports `Failed (Error: PAGE ERROR)` whenever the storefront answers with its lean shape |
-| YouTube Premium | also requires `ad-free` before it says yes, reading to that marker | same final gate as the script, so a region alone cannot pass as an offer |
-| Claude | a challenge page is a failed check, with the region attached | the script reads an unchanged URL as "yes", which would call a Cloudflare challenge available |
-| ChatGPT | reads the value of `unsupported_country` | the script's `grep` also matches `"unsupported_country":false`, turning a working country into a "no" |
-| Disney+ | asks the GraphQL session for `location{countryCode}`; an unread region is a failure, not a "no" | the script's query returns no location, and an empty region is reported as "No" |
-| Steam | parses `meta itemprop="priceCurrency"` and falls back to the `steamCountry` cookie | the script's `cut -d '"' -f4` depends on field order |
-| TikTok | the script has no TikTok check | ours adds one browser-header retry to tell "region only under browser headers" from a block |
-| IPv6 | no IPv6 branch | the script reports these services as unsupported over IPv6; the panel judges from the host's default egress |
-| The rest | the script also measures OneTrust, iQyi, Bing/Apple regions, Wikipedia editability, Google Play, CDN ownership and more | the panel keeps the seventeen that matter to running a node |
+What was taken from 融合怪 ecs and what was left out, what each tool measures and where its
+numbers come from — including why there is no geekbench or fio — is in
+[docs/toolbox.md](docs/toolbox.md).
 
 ## The core inside the panel
 

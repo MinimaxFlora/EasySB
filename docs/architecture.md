@@ -12,7 +12,7 @@ panel's own release (`internal/update`) and the optional BBR kernel packages
 
 ```
 .
-├── main.go                         # entry point, flags, version resolution, `core run`
+├── main.go                         # entry point, flags, version resolution, `core run`, `--tool`
 ├── VERSION                         # program version, single source of truth
 ├── release/TAGS                    # the one definition of the build tag set
 ├── install.sh                      # one-click installer (binary or source)
@@ -77,6 +77,14 @@ editing.
 | `internal/netutil` | small network helpers (public IPv4-first IP detection, host resolution) |
 | `internal/uninstall` | remove the deployment while keeping the issued certificates |
 | `internal/update` | self-update from the GitHub release tag `v<version>` |
+| `internal/toolbox` | what every toolbox entry returns and what the panel hands it: one `Result` shaped as a table, one `Options` carrying every outside dependency |
+| `internal/toolbox/tools` | the toolbox registry: the one list the menu, the board and `--tool` read |
+| `internal/toolbox/backtrace` | 三网回程: ICMP path probing and the carrier that carries the return traffic |
+| `internal/toolbox/ipquality` | IP 质量: several keyless databases, IP type, DNS blocklists |
+| `internal/toolbox/portcheck` | 邮件端口: mail ports against the public address, PTR and FCrDNS |
+| `internal/toolbox/bench` | CPU, memory and disk workloads, measured with the standard library |
+| `internal/toolbox/speed` | speedtest.net runs: nearby servers, and only Chinese carrier servers for 三网测速 |
+| `internal/toolbox/hw` | system and disk information read from /proc, /sys and df |
 | `internal/unlock` | service-unlock probes: whether this IP can use ChatGPT, Netflix, Disney+, YouTube Premium, Prime Video, TikTok, Spotify, Reddit, Steam, 巴哈姆特動畫瘋 and the Bilibili catalogues, each verdict from a small HTTP request and never an optimistic guess |
 | `internal/i18n` | `C` / `E` bilingual string table |
 | `internal/icons` | single-column Unicode symbol palette, `EASYSB_ICONS=ascii` falls back to ASCII |

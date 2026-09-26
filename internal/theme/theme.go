@@ -163,22 +163,6 @@ func BottomRule(width int, c color.Color) string {
 	return lipgloss.NewStyle().Foreground(c).Render("╰" + strings.Repeat("─", width-2) + "╯")
 }
 
-// SectionRule draws a full-width divider between two sections of a panel.
-func SectionRule(width int, c color.Color) string {
-	if width < 2 {
-		return ""
-	}
-	return lipgloss.NewStyle().Foreground(c).Render("├" + strings.Repeat("─", width-2) + "┤")
-}
-
-// FrameRule draws a horizontal rule that joins the panel's two side borders.
-func FrameRule(width int, c color.Color) string {
-	if width < 2 {
-		return ""
-	}
-	return lipgloss.NewStyle().Foreground(c).Render("│" + strings.Repeat("─", width-2) + "│")
-}
-
 // FrameLine wraps one body row in the panel's side borders, padding it to the
 // inner width so the right border stays aligned.
 func FrameLine(s string, width int, c color.Color) string {

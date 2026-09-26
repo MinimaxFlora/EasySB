@@ -483,15 +483,6 @@ func TestReportMismatch(t *testing.T) {
 	}
 }
 
-// TestReportListener pins the answer the issue flow branches on: the challenge
-// listener is part of this binary now, so the only thing left to check is the
-// port, which the flow asks about separately once the core is stopped.
-func TestReportListener(t *testing.T) {
-	if !(Report{}).Listener() {
-		t.Fatal("the in-process challenge listener is always available")
-	}
-}
-
 // TestOthersAndStrayAddress cover the failure this panel hit in practice: a domain
 // with one correct A record and one stale one. Let's Encrypt validates every
 // address, so the stale record fails the order, and the error names that address.

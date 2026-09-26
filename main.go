@@ -12,6 +12,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/MinimaxFlora/EasySB/internal/cert"
 	"github.com/MinimaxFlora/EasySB/internal/config"
@@ -25,6 +26,8 @@ import (
 	"github.com/MinimaxFlora/EasySB/internal/stats"
 	"github.com/MinimaxFlora/EasySB/internal/subd"
 	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
+	"github.com/MinimaxFlora/EasySB/internal/toolbox"
+	"github.com/MinimaxFlora/EasySB/internal/toolbox/tools"
 	"github.com/MinimaxFlora/EasySB/internal/tui"
 	"github.com/MinimaxFlora/EasySB/internal/unlock"
 	"github.com/MinimaxFlora/EasySB/internal/user"
@@ -60,13 +63,14 @@ func main() {
 	skinFlag := flag.String("skin", "", "界面皮肤 / UI skin: jade, aurora, ember, graphite (or a-d)")
 	showVersion := flag.Bool("version", false, "显示版本 / show version")
 	render := flag.Bool("render", false, "渲染一次仪表盘后退出 / render once and exit")
-	screen := flag.String("screen", "", "配合 --render 渲染指定界面，用栏目 id（unlock/node/domain/bbr…）、system、task 或 bbr-versions / with --render, draw this screen by section id, or system, task, bbr-qdisc, bbr-versions")
+	screen := flag.String("screen", "", "配合 --render 渲染指定界面：栏目 id（toolbox/node/domain/bbr…）、system、task、toolbox-report 或 bbr-versions / with --render, draw this screen by section id, or system, task, toolbox-report, bbr-qdisc, bbr-versions")
 	applyFirewall := flag.Bool("apply-firewall", false, "应用端口跳跃防火墙规则 / apply port-hopping firewall rules")
 	renewCerts := flag.Bool("renew-certs", false, "续期证书并重载服务（供定时器调用）/ renew certificates and reload the services")
 	installTimer := flag.Bool("install-renew-timer", false, "安装证书续期定时器 / install the certificate renewal timer")
 	removeTimer := flag.Bool("remove-renew-timer", false, "移除证书续期定时器 / remove the certificate renewal timer")
 	serve := flag.Bool("serve", false, "运行订阅服务 / run the subscription service")
-	unlockCheck := flag.Bool("unlock", false, "检测服务解锁状态并输出报告 / probe the service unlock status and print a report")
+	unlockCheck := flag.Bool("unlock", false, "一次跑完 17 项解锁检测并输出报告（同工具箱的三个解锁条目）/ run all seventeen unlock checks in one report (the same three entries as the toolbox)")
+	toolFlag := flag.String("tool", "", "工具箱的某一项，list 列出全部 / one toolbox entry, or list")
 	width := flag.Int("width", 100, "渲染宽度 / render width")
 	height := flag.Int("height", 36, "渲染高度 / render height")
 	flag.Parse()
@@ -86,6 +90,10 @@ func main() {
 		return
 	}
 
+	if *toolFlag != "" {
+		runToolboxTool(*toolFlag, i18n.Parse(*langFlag))
+		return
+	}
 	if *renewCerts {
 		runRenewCerts()
 		return
@@ -205,6 +213,123 @@ func runUnlockCheck() {
 	fmt.Printf("\nunlocked %d · partial %d · blocked %d · failed %d\n",
 		report.Count(unlock.StatusUnlocked), report.Count(unlock.StatusPartial),
 		report.Count(unlock.StatusBlocked), report.Count(unlock.StatusFailed))
+}
+
+// runToolboxTool prints one toolbox entry as a plain table and exits. It is the same run
+// the panel starts from its menu, for a host that is scripted rather than opened, and it is
+// how this project verifies a tool on a real machine.
+func runToolboxTool(id string, lang i18n.Lang) {
+	if id == "list" || id == "" {
+		printToolboxList(lang)
+		return
+	}
+	tool, ok := tools.Lookup(id)
+	if !ok {
+		fmt.Fprintf(os.Stderr, "unknown toolbox entry %q\n\n", id)
+		printToolboxList(lang)
+		os.Exit(2)
+	}
+
+	fmt.Printf("%s\n\n", lang.T("toolbox_"+id))
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	result, err := tool.Run(ctx, toolbox.Options{Log: func(line string) { fmt.Fprintln(os.Stderr, "  "+line) }})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s: %v\n", lang.T("toolbox_failed"), err)
+		os.Exit(1)
+	}
+	printPlainTable(lang, result)
+}
+
+// printPlainTable writes a result without the panel's frame: this output is read from a log
+// or piped into something else, so it stays plain text and keeps its columns aligned.
+func printPlainTable(lang i18n.Lang, result toolbox.Result) {
+	headers := result.Headers
+	if len(headers) == 0 {
+		headers = []string{"item", "value"}
+	}
+	rows := make([][]string, 0, len(result.Rows))
+	for _, row := range result.Rows {
+		localised := make([]string, 0, len(row))
+		for _, cell := range row {
+			localised = append(localised, cellText(lang, cell))
+		}
+		rows = append(rows, localised)
+	}
+	localisedHeaders := make([]string, 0, len(headers))
+	for _, header := range headers {
+		localisedHeaders = append(localisedHeaders, cellText(lang, header))
+	}
+
+	// Column widths are display widths, not rune counts: a Chinese verdict occupies two
+	// columns per character, and counting runes would leave every table with a Chinese
+	// cell ragged.
+	width := make([]int, len(headers))
+	for i, header := range localisedHeaders {
+		width[i] = lipgloss.Width(header)
+	}
+	for _, row := range rows {
+		for i, cell := range row {
+			if i < len(width) && lipgloss.Width(cell) > width[i] {
+				width[i] = lipgloss.Width(cell)
+			}
+		}
+	}
+	printRow := func(cells []string) {
+		line := ""
+		for i, w := range width {
+			cell := ""
+			if i < len(cells) {
+				cell = cells[i]
+			}
+			line += cell + strings.Repeat(" ", w-lipgloss.Width(cell)+2)
+		}
+		fmt.Println(strings.TrimRight(line, " "))
+	}
+	printRow(localisedHeaders)
+	for _, row := range rows {
+		printRow(row)
+	}
+
+	for _, note := range result.Notes {
+		fmt.Println("· " + note)
+	}
+	if result.Summary != "" {
+		fmt.Println()
+		fmt.Println(result.Summary)
+	}
+}
+
+// cellText words the tokens the panel defined, so the command line reads like the panel's
+// table: the verdicts first, then the column names the registry uses.
+func cellText(lang i18n.Lang, cell string) string {
+	if tools.IsVerdict(cell) {
+		return tools.Verdict(lang, cell)
+	}
+	switch cell {
+	case "service":
+		return lang.T("toolbox_col_service")
+	case "status":
+		return lang.T("toolbox_col_status")
+	case "region":
+		return lang.T("toolbox_col_region")
+	case "item":
+		return lang.T("toolbox_col_item")
+	case "value":
+		return lang.T("toolbox_col_value")
+	}
+	return cell
+}
+
+// printToolboxList names every entry, so an unknown --tool argument is answered with the
+// list instead of an error alone.
+func printToolboxList(lang i18n.Lang) {
+	for _, group := range tools.Groups() {
+		fmt.Println("[" + lang.T("toolbox_group_"+group) + "]")
+		for _, tool := range tools.InGroup(group) {
+			fmt.Printf("  %-18s %s\n", tool.ID, lang.T("toolbox_"+tool.ID))
+		}
+	}
 }
 
 // unlockGroupName names a catalogue group in the report's own language, which is

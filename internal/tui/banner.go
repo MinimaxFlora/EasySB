@@ -86,13 +86,6 @@ func (a *App) quoteLine(inner int) string {
 	return theme.Center(a.palette.Dim(text), inner)
 }
 
-func channelKey(channel string) string {
-	if channel == "alpha" {
-		return "ver_channel_alpha"
-	}
-	return "ver_channel_stable"
-}
-
 func maxInt(a, b int) int {
 	if a > b {
 		return a
