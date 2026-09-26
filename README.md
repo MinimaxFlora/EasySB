@@ -262,7 +262,8 @@ The unit restores rules via `easysb --apply-firewall`. It is not created when Hy
 
 The toolbox (the first entry of the main menu, where 服务解锁状态 used to be) is where a host
 is measured: one entry per measurement, one report per entry, and a board that remembers
-what the last run of each entry found. **Opening the section runs nothing** — a speed test, a
+what the last run of each entry found — stored in `/etc/sing-box/easysb-toolbox.json`, so it
+outlives the panel. **Opening the section runs nothing** — a speed test, a
 return route or a benchmark is not something a navigation key should start.
 
 | Group | Entries |
