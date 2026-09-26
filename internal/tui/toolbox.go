@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"sort"
 	"strings"
 	"time"
 
@@ -66,7 +67,12 @@ func toolAction(id string) actionFunc {
 		}
 		title := a.lang.T("toolbox_" + id)
 		return a.startTask(title, func(ctx context.Context, r *taskReporter) error {
-			result, err := tool.Run(ctx, toolbox.Options{Log: r.Log})
+			result, err := tool.Run(ctx, toolbox.Options{
+				Log: r.Log,
+				// A tool that can count its steps reports them, and the screen turns them
+				// into a bar; one that cannot keeps the elapsed-time line.
+				Progress: func(p toolbox.Progress) { r.Steps(p.Done, p.Total, p.Label) },
+			})
 			r.SetResult(toolOutcome{id: id, result: result, err: err, when: time.Now()})
 			if err != nil {
 				return err
@@ -95,6 +101,9 @@ func (a *App) adoptTaskResult() {
 	a.toolResults[outcome.id] = outcome
 	a.report = &outcome
 	a.saveBoard()
+	// A counted run fills its bar to the end before the report takes the screen, so a finished
+	// run looks finished rather than vanishing at 8/12.
+	a.task.markComplete()
 	// The result replaces the running screen as soon as the run ends: the task screen has
 	// said everything it has to say by then, and making the operator press a key to see a
 	// measurement they asked for is a step with nothing in it.
@@ -112,48 +121,79 @@ func (a *App) rerunReport() tea.Cmd {
 	return toolAction(id)(a)
 }
 
-// reportScreen draws one tool's report: the title of the run, its table, and the notes
-// underneath. A failed run says so before the table, because a table of zeros that came
-// from a permission error would otherwise read as a measurement.
+// reportScreen draws one finished run in the space a page's two boxes would have used: one
+// box, the same rows, in the same place, with the table inside it. The notes underneath are
+// the lines that fit — no page of the panel scrolls, so a note with no room left is counted
+// instead of hidden.
 func (a *App) reportScreen() string {
 	w, h := a.frameWidth(), a.height
 	if h <= 0 {
 		h = 24
 	}
-	s := a.style()
-	inner := ui.InnerWidth(s, w)
-	outcome := a.report
-	if outcome == nil {
-		return framePanel(a.palette, a.lang, w, h, nil, a.lang.T("esc_back"))
+	l := a.bodyLayout()
+	inner := ui.InnerWidth(a.style(), w)
+	if a.report == nil {
+		return ui.Fit(append([]string{a.statusStrip(w), ""}, keyTail(a.palette, a.lang, "", a.lang.T("hint_back"), w, l.tail)...), w, h)
 	}
+	title := a.lang.T("toolbox_" + a.report.id)
+	out := []string{a.statusStrip(w), ""}
+	out = append(out, a.boxAt(title, a.reportBody(*a.report, inner, boxRows(l.span())), w, l.span())...)
+	desc := a.lang.T("toolbox_ran_at") + " " + a.report.when.Format("2006-01-02 15:04:05")
+	hint := a.lang.T("toolbox_rerun") + "  " + a.lang.T("hint_back") + "  " + a.lang.T("hint_quit")
+	out = append(out, keyTail(a.palette, a.lang, desc, hint, w, l.tail)...)
+	return ui.Fit(out, w, h)
+}
 
-	body := make([]string, 0, len(outcome.result.Rows)+8)
+// reportBody lays one run out in the rows the box has. The table comes first because it is
+// what the operator asked for, then as many notes as fit, then the summary and the time: a
+// measurement that cannot be shown in full still shows what it was.
+func (a *App) reportBody(outcome toolOutcome, inner int, room int) []string {
+	s := a.style()
+	lines := make([]string, 0, room)
 	if outcome.err != nil {
-		for _, line := range wrapText(outcome.err.Error(), inner) {
-			body = append(body, s.Colored(s.Err, line))
+		for _, line := range wrapText(a.lang.T("toolbox_failed")+": "+outcome.err.Error(), inner) {
+			lines = append(lines, s.Colored(s.Err, line))
 		}
 	}
-	headers, rows := a.reportTable(*outcome)
-	body = append(body, ui.Table(s, headers, rows, inner)...)
-	if len(outcome.result.Notes) > 0 {
-		body = append(body, "")
-		for _, note := range outcome.result.Notes {
-			for i, line := range wrapText("· "+a.localizeText(note), inner) {
-				if i == 0 {
-					body = append(body, s.Faint(line))
-					continue
-				}
-				body = append(body, s.Faint("  "+strings.TrimLeft(line, "· ")))
+	if len(outcome.result.Rows) > 0 {
+		headers, rows := a.reportTable(outcome)
+		lines = append(lines, ui.Table(s, headers, rows, inner)...)
+	}
+
+	foot := make([]string, 0, 2)
+	if outcome.result.Summary != "" {
+		foot = append(foot, "", s.Bold(s.OK, a.localizeText(outcome.result.Summary)))
+	}
+
+	// The notes fill the room between the table and the summary. They carry what a cell
+	// cannot, so the last line says how many were left out rather than dropping them
+	// without a word.
+	noteLines := make([]string, 0, len(outcome.result.Notes))
+	for _, note := range outcome.result.Notes {
+		noteLines = append(noteLines, wrapText("· "+a.localizeText(note), inner)...)
+	}
+	if len(noteLines) > 0 {
+		roomForNotes := room - len(lines) - len(foot) - 1
+		shown, hidden := noteLines, 0
+		switch {
+		case roomForNotes >= 2 && len(shown) > roomForNotes-1:
+			hidden = len(shown) - (roomForNotes - 1)
+			shown = shown[:roomForNotes-1]
+		case roomForNotes < 2:
+			hidden, shown = len(shown), nil
+		}
+		if len(shown) > 0 {
+			lines = append(lines, "")
+			for _, line := range shown {
+				lines = append(lines, s.Faint(line))
 			}
 		}
+		if hidden > 0 {
+			lines = append(lines, s.Faint(a.lang.Format("toolbox_notes_hidden", hidden)))
+		}
 	}
-	if outcome.result.Summary != "" {
-		body = append(body, "", s.Bold(s.OK, a.localizeText(outcome.result.Summary)))
-	}
-	body = append(body, "", s.Faint(a.lang.T("toolbox_ran_at")+" "+outcome.when.Format("2006-01-02 15:04:05")))
-
-	hint := a.lang.T("toolbox_rerun") + "  " + a.lang.T("hint_back")
-	return framePanel(a.palette, a.lang, w, h, body, a.palette.Dim(hint))
+	lines = append(lines, foot...)
+	return a.clipRows(lines, room)
 }
 
 // localizeText words the verdict tokens inside a sentence a tool built out of them, such as
@@ -238,22 +278,23 @@ func toolWordKind(value string) ui.Kind {
 
 // toolboxBody is the section's 看板: the last outcome of every tool that has run, and a
 // count of the ones that have not. It never runs a tool itself.
-func (a *App) toolboxBody(w int) []string {
+func (a *App) toolboxBody(w int, limit int) []string {
 	s := a.style()
 	lang := a.lang
 	inner := ui.InnerWidth(s, w)
 
-	ran := make([][2]string, 0, len(tools.All()))
-	pending := 0
+	type measured struct {
+		tool    string
+		outcome toolOutcome
+	}
+	ran := make([]measured, 0, len(tools.All()))
 	for _, group := range tools.Groups() {
 		for _, tool := range tools.InGroup(group) {
 			outcome, ok := a.toolResults[tool.ID]
 			if !ok {
-				pending++
 				continue
 			}
-			value, kind := a.outcomeLine(outcome)
-			ran = append(ran, a.kv("toolbox_"+tool.ID, value, kind))
+			ran = append(ran, measured{tool: tool.ID, outcome: outcome})
 		}
 	}
 	if len(ran) == 0 {
@@ -263,9 +304,40 @@ func (a *App) toolboxBody(w int) []string {
 			s.Faint(lang.T("toolbox_board_empty_hint")),
 		}
 	}
-	out := ui.KV(s, ran, inner)
-	if pending > 0 {
-		out = append(out, "", s.Faint(lang.Format("toolbox_board_pending", pending)))
+	// The board is a summary, not a table: the box has a fixed number of rows and no page of
+	// the panel scrolls, so what is shown is the newest runs and how many were left out. The
+	// full table lives on the entry's own report, one key away.
+	sort.Slice(ran, func(i, j int) bool { return ran[i].outcome.when.After(ran[j].outcome.when) })
+	head := ""
+	switch pending := len(tools.All()) - len(ran); {
+	case pending == 0:
+		head = lang.Format("toolbox_board_ran_all", len(ran))
+	default:
+		head = lang.Format("toolbox_board_ran", len(ran), pending)
+	}
+	room := limit - 1
+	if room < 1 {
+		room = 1
+	}
+	hidden := 0
+	if len(ran) > room {
+		hidden = len(ran) - room
+		ran = ran[:room]
+		if hidden == 1 {
+			room--
+			ran = ran[:room]
+		}
+	}
+	rows := make([][2]string, 0, len(ran))
+	for _, m := range ran {
+		value, kind := a.outcomeLine(m.outcome)
+		rows = append(rows, a.kv("toolbox_"+m.tool, value, kind))
+	}
+	out := make([]string, 0, limit)
+	out = append(out, s.Faint(head))
+	out = append(out, ui.KV(s, rows, inner)...)
+	if hidden > 0 {
+		out = append(out, s.Faint(lang.Format("toolbox_board_more", hidden)))
 	}
 	return out
 }

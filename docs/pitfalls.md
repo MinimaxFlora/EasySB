@@ -94,6 +94,20 @@ Traps already hit in this repository. Each entry names the symptom and the fix.
   this binary's own workloads; they are not geekbench, sysbench or fio results and must never
   be labelled as such. If a measurement needs an external binary, the entry does not exist.
 
+- **A box that resizes moves the page under the cursor.** The section pages used to grow their
+  menu box to fill whatever the 看板 left, and to drop the 看板 entirely when it did not fit, so
+  every page had its own box sizes. The slots are fixed now (`internal/tui/layout.go`) and a
+  page clips its content instead of changing shape; `TestEveryPageKeepsTheSameBoxes` is what
+  keeps it that way.
+- **A fixed box has to hold the panel's tallest menu, not the main menu.** Sizing the bottom
+  slot from the main menu alone left the account detail page (twelve entries) with two entries
+  pushed out of the box — and no page scrolls, so they were unreachable. The slot is sized for
+  the worst case; the main menu just uses part of it.
+- **Q quits, Esc goes back, Enter enters.** Any screen that treats `q` as "back" makes the one
+  key an operator reaches for to leave a trap; and a report that closed on Enter made Enter
+  mean "back" on exactly one page. The quit keys are read before any screen sees them
+  (`App.handleKey`), and no screen closes on Enter.
+
 ## Subscription service
 
 - **A client that cannot parse the profile must not receive one.** Refusing an

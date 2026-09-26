@@ -29,6 +29,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -156,6 +157,9 @@ type Options struct {
 	// UserAgent is sent with every request. Default a desktop Chrome string,
 	// because these services block a bare Go client.
 	UserAgent string
+	// Progress receives one call per finished probe, so a caller can show how far a run of
+	// several services has got. It is called from the probe goroutines and must not block.
+	Progress func(done, total int, name string)
 }
 
 // Detector runs the probes.
@@ -164,6 +168,7 @@ type Detector struct {
 	timeout     time.Duration
 	concurrency int
 	ua          string
+	progress    func(done, total int, name string)
 }
 
 // New builds a Detector. A nil Options.Client falls back to a private
@@ -174,6 +179,7 @@ func New(opts Options) *Detector {
 		timeout:     opts.Timeout,
 		concurrency: opts.Concurrency,
 		ua:          opts.UserAgent,
+		progress:    opts.Progress,
 	}
 	if d.client == nil {
 		d.client = &http.Client{Timeout: 30 * time.Second}
@@ -201,6 +207,9 @@ func (d *Detector) Check(ctx context.Context, ids ...string) []Result {
 	results := make([]Result, len(probes))
 	sem := make(chan struct{}, d.concurrency)
 	var wg sync.WaitGroup
+	// The probes run concurrently, so the count of finished probes is what the panel shows:
+	// the number is exact and the order is whatever finished first.
+	var finished atomic.Int64
 	for i, p := range probes {
 		wg.Add(1)
 		go func(i int, p probe) {
@@ -208,6 +217,9 @@ func (d *Detector) Check(ctx context.Context, ids ...string) []Result {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			results[i] = d.run(ctx, p)
+			if d.progress != nil {
+				d.progress(int(finished.Add(1)), len(probes), results[i].Name)
+			}
 		}(i, p)
 	}
 	wg.Wait()

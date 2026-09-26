@@ -39,6 +39,28 @@ type Options struct {
 	// Clock is the only source of "now" for tools that measure elapsed time, so a test
 	// can drive them deterministically.
 	Clock func() time.Time
+	// Progress receives one call per finished step of a run that can count its work, from
+	// the goroutine doing the work. It must not block; nil discards the calls.
+	Progress func(Progress)
+}
+
+// Progress is how far a counted run has got. A tool that cannot count its remaining work —
+// a benchmark of unknown length, a transfer in flight — reports nothing, and the panel shows
+// elapsed time instead of inventing a percentage.
+type Progress struct {
+	// Done is the number of steps finished, Total the number the tool knows about.
+	Done, Total int
+	// Label is what the step being finished was, e.g. a target city or a server name.
+	Label string
+}
+
+// ReportProgress announces one finished step out of a known total. It is safe to call with no
+// listener and with a total of zero (a run that cannot count says nothing).
+func (o Options) ReportProgress(done, total int, label string) {
+	if o.Progress == nil || total <= 0 {
+		return
+	}
+	o.Progress(Progress{Done: done, Total: total, Label: label})
 }
 
 // HTTPDoer is the part of an HTTP client the toolbox needs.

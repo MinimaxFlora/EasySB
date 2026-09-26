@@ -22,6 +22,7 @@ import (
 	"github.com/MinimaxFlora/EasySB/internal/theme"
 	"github.com/MinimaxFlora/EasySB/internal/toolbox"
 	"github.com/MinimaxFlora/EasySB/internal/toolbox/tools"
+	"github.com/MinimaxFlora/EasySB/internal/ui"
 	"github.com/MinimaxFlora/EasySB/internal/user"
 )
 
@@ -76,21 +77,6 @@ func TestDashboardFitsTerminal(t *testing.T) {
 		a.push(buildNode())
 		if lines := strings.Count(a.dashboard(), "\n") + 1; lines > h {
 			t.Fatalf("height %d: node dashboard drew %d lines", h, lines)
-		}
-	}
-}
-
-func TestMenuViewportKeepsCursorVisible(t *testing.T) {
-	a := New("test", i18n.Chinese)
-	a.width, a.height = 100, 10
-	a.sized = true
-	a.status = sysinfo.Collect("test")
-	a.ready = true
-	for i := range a.current().nodes {
-		a.index = i
-		frame := a.dashboard()
-		if !strings.Contains(frame, a.current().nodes[i].label(i18n.Chinese)) {
-			t.Fatalf("frame at index %d hides the selected row:\n%s", i, frame)
 		}
 	}
 }
@@ -265,6 +251,11 @@ func TestToolboxMenuEntries(t *testing.T) {
 // toolbox is that each measurement is reachable on its own.
 func TestToolboxGroupEntriesFollowTheRegistry(t *testing.T) {
 	a := newTestApp(t)
+	// The panel enters the section first; a stack assembled without it would be a stack the
+	// panel never builds, and the page would be drawn as the main menu.
+	if !a.enterSection("toolbox") {
+		t.Fatal("the toolbox section should be reachable")
+	}
 	for _, group := range tools.Groups() {
 		a.push(buildToolGroup(group))
 		entries := tools.InGroup(group)
@@ -285,6 +276,122 @@ func TestToolboxGroupEntriesFollowTheRegistry(t *testing.T) {
 			}
 		}
 		a.pop()
+	}
+}
+
+// Every menu in the panel has to fit the box the layout gives it. The boxes are fixed at the
+// main menu's size and no page scrolls, so a menu with more entries than rows would hide the
+// last ones with no way to reach them — which is the failure this test exists to catch.
+func TestEveryMenuFitsItsBox(t *testing.T) {
+	a := newTestApp(t)
+	l := a.bodyLayout()
+	room := boxRows(l.menu)
+	if room < 5 {
+		t.Fatalf("the menu slot holds %d rows, too few for the panel's menus", room)
+	}
+	var walk func(m *menu, path string, depth int)
+	walk = func(m *menu, path string, depth int) {
+		rows := len(a.menuCells(m.nodes, 0, ui.InnerWidth(a.style(), a.frameWidth())))
+		if depth > 1 {
+			rows++ // the row that leads back out
+		}
+		if rows > room {
+			t.Errorf("%s draws %d rows of entries, its box holds %d", path, rows, room)
+		}
+		for _, n := range m.nodes {
+			if n.sub != nil {
+				walk(n.sub, path+"/"+n.id, depth+1)
+			}
+		}
+	}
+	walk(a.stack[0], "main", 1)
+}
+
+// Every page draws its boxes in the same rows, at the same sizes. This is the test for the
+// complaint that started the fixed layout: moving from the main menu into a section used to
+// resize the boxes, and a page whose 看板 was taller than its room dropped the 看板 entirely.
+func TestEveryPageKeepsTheSameBoxes(t *testing.T) {
+	boxes := func(view string) [][2]int {
+		var out [][2]int
+		open := -1
+		for i, line := range strings.Split(view, "\n") {
+			switch {
+			case open < 0 && strings.Contains(line, "╭"):
+				open = i
+			case open >= 0 && strings.Contains(line, "╰"):
+				out = append(out, [2]int{open, i})
+				open = -1
+			}
+		}
+		return out
+	}
+
+	a := newTestApp(t)
+	main := boxes(a.View().Content)
+	if len(main) != 3 {
+		t.Fatalf("the main page should draw the 看板, the menu and the hints, got %d boxes", len(main))
+	}
+
+	pages := map[string]string{"主菜单": a.View().Content}
+	a.enterSection("toolbox")
+	pages["工具箱"] = a.View().Content
+	a.push(buildToolGroup(tools.GroupHardware))
+	pages["硬件与性能"] = a.View().Content
+	a.pop()
+	a.pop()
+	a.enterSection("users")
+	pages["账号管理"] = a.View().Content
+	a.pop()
+
+	for name, view := range pages {
+		got := boxes(view)
+		if len(got) != len(main) {
+			t.Errorf("%s draws %d boxes, the main page draws %d", name, len(got), len(main))
+			continue
+		}
+		for i := range got {
+			if got[i] != main[i] {
+				t.Errorf("%s draws box %d at rows %v, the main page draws it at %v", name, i, got[i], main[i])
+			}
+		}
+	}
+}
+
+// A running task and a finished report use the two slots as one box: same rows, same place, so
+// the screen does not change shape when the work starts or ends either.
+func TestTaskAndReportFillBothSlots(t *testing.T) {
+	a := newTestApp(t)
+	l := a.bodyLayout()
+	want := [2]int{2, 2 + l.span() - 1}
+	boxes := func(view string) [][2]int {
+		var out [][2]int
+		open := -1
+		for i, line := range strings.Split(view, "\n") {
+			switch {
+			case open < 0 && strings.Contains(line, "╭"):
+				open = i
+			case open >= 0 && strings.Contains(line, "╰"):
+				out = append(out, [2]int{open, i})
+				open = -1
+			}
+		}
+		return out
+	}
+
+	p := newProgress("三网回程", func(context.Context, *taskReporter) error { return nil })
+	p.resize(a.width, a.height, l.span())
+	a.task = p
+	running := boxes(a.View().Content)
+	if len(running) != 2 || running[0] != want {
+		t.Fatalf("the running screen should fill both slots at %v, got %v", want, running)
+	}
+
+	outcome := previewToolOutcome()
+	a.task = nil
+	a.report = &outcome
+	report := boxes(a.View().Content)
+	if len(report) != 2 || report[0] != want {
+		t.Fatalf("the report should fill both slots at %v, got %v", want, report)
 	}
 }
 
@@ -332,7 +439,7 @@ func TestToolboxReportAndBoard(t *testing.T) {
 	if a.report != nil {
 		t.Fatal("esc should close the report")
 	}
-	board := a.toolboxBody(88)
+	board := a.toolboxBody(88, 6)
 	joined := strings.Join(board, "\n")
 	if !strings.Contains(joined, i18n.Chinese.T("toolbox_unlock-ai")) || !strings.Contains(joined, "未知 1") {
 		t.Fatalf("board does not report the last run:\n%s", joined)
@@ -344,7 +451,7 @@ func TestToolboxReportAndBoard(t *testing.T) {
 			t.Errorf("the board leaked the raw token %q:\n%s", token, joined)
 		}
 	}
-	if !strings.Contains(joined, i18n.Chinese.Format("toolbox_board_pending", len(tools.All())-1)) {
+	if !strings.Contains(joined, i18n.Chinese.Format("toolbox_board_ran", 1, len(tools.All())-1)) {
 		t.Fatalf("board does not count what has not run:\n%s", joined)
 	}
 }
@@ -352,7 +459,7 @@ func TestToolboxReportAndBoard(t *testing.T) {
 // Before anything runs the board says so instead of showing an empty table.
 func TestToolboxBoardBeforeAnyRun(t *testing.T) {
 	a := newTestApp(t)
-	board := strings.Join(a.toolboxBody(88), "\n")
+	board := strings.Join(a.toolboxBody(88, 6), "\n")
 	if !strings.Contains(board, i18n.Chinese.T("toolbox_board_empty_hint")) {
 		t.Fatalf("empty board should invite a run:\n%s", board)
 	}
@@ -525,16 +632,28 @@ func TestDashboardShowsLogoAndMenuDescriptions(t *testing.T) {
 	if split < 0 {
 		t.Fatalf("the menu is not in a box of its own after the 看板:\n%s", view)
 	}
-	// The hints follow the menu instead of being pinned to the bottom, which is
-	// what leaves the gap the user asked to close: the menu card's bottom border
-	// and the explanation line are all that sit between them.
+	// The hints are part of the fixed tail: the menu box closes, one description line, and
+	// then the hint box — the same three rows on every page, which is what the layout
+	// reserves for them. They are not pinned to the bottom of the terminal, so the gap the
+	// user asked to close stays closed.
 	hint := at(i18n.Chinese.T("panel_hints"))
 	last := at("[ 10 ]")
 	if hint < 0 || last < 0 {
 		t.Fatalf("hints %d, last entry %d:\n%s", hint, last, view)
 	}
-	if hint-last > 4 {
-		t.Fatalf("hints at line %d, last entry at %d — they are not right under the menu:\n%s", hint, last, view)
+	menuBottom := -1
+	for i := last; i < len(lines); i++ {
+		if strings.Contains(lines[i], "╰") {
+			menuBottom = i
+			break
+		}
+	}
+	if menuBottom < 0 {
+		t.Fatalf("the menu box has no bottom border:\n%s", view)
+	}
+	if hint-menuBottom != 2 {
+		t.Fatalf("hints at line %d, menu box ends at %d — the tail is not the one row the layout reserves:\n%s",
+			hint, menuBottom, view)
 	}
 	if hint+3 >= len(lines)-1 {
 		t.Fatalf("hints at line %d of %d lines — they are pinned to the bottom:\n%s", hint, len(lines), view)
@@ -551,7 +670,7 @@ func TestEverySectionHasItsOwnPanel(t *testing.T) {
 		a := newTestApp(t)
 		a.width, a.height = 100, 40
 		a.section = id
-		title, rows := a.sectionPanel(a.width)
+		title, rows := a.sectionPanel(a.width, 6)
 		if strings.TrimSpace(title) == "" {
 			t.Errorf("section %q has no 看板 title", id)
 		}
@@ -820,7 +939,7 @@ func TestNoScreenCapturesTheMouse(t *testing.T) {
 		t.Fatalf("dashboard should not capture the mouse, got %v", got)
 	}
 	p := newProgress("qr", func(context.Context, *taskReporter) error { return nil })
-	p.resize(a.width, a.height)
+	p.resize(a.width, a.height, a.bodyLayout().span())
 	a.task = p
 	if got := a.View().MouseMode; got != tea.MouseModeNone {
 		t.Fatalf("task screen should not capture the mouse, got %v", got)
@@ -1055,7 +1174,7 @@ func TestRootEntriesOpenPages(t *testing.T) {
 		// The page is the same two boxes as every other: its 看板 on top, its own
 		// entries below, titled with the page.
 		view := a.View().Content
-		title, rows := a.sectionPanel(a.frameWidth())
+		title, rows := a.sectionPanel(a.frameWidth(), 6)
 		if title == "" || len(rows) == 0 {
 			t.Fatalf("%s: the page has no 看板", id)
 		}
@@ -1187,10 +1306,9 @@ func TestMenuCursorKeepsUniformWidth(t *testing.T) {
 
 	inner := a.width - 4
 	descCol := a.menuDescColumn(inner, a.menuLabelColumn())
-	cursorWidth := a.menuCursorWidth(inner)
-	if cursorWidth != inner {
-		t.Fatalf("cursor width = %d, want inner %d", cursorWidth, inner)
-	}
+	// A selected row's bar spans the column it sits in, so the cursor does not change
+	// length as it moves through the menu.
+	cursorWidth := inner
 	for i, n := range a.current().nodes {
 		bar := a.menuRow(true, i, n, inner, descCol, cursorWidth)
 		if got := lipgloss.Width(bar); got != cursorWidth {
@@ -1199,6 +1317,9 @@ func TestMenuCursorKeepsUniformWidth(t *testing.T) {
 	}
 }
 
+// A page inside a section shows what its entries do: the label and the description sit in the
+// same cell, and the row the cursor is on repeats its description in full under the box, which
+// is where a description too wide for a column can be read to the end.
 func TestSubmenuShowsDescriptions(t *testing.T) {
 	a := New("test", i18n.Chinese)
 	a.width, a.height = 100, 46
@@ -1209,10 +1330,25 @@ func TestSubmenuShowsDescriptions(t *testing.T) {
 	a.push(buildSubscribe())
 	view := a.View().Content
 	for _, key := range []string{"desc_sub_url", "desc_sub_qr", "desc_sub_links", "desc_sub_svc_install"} {
-		if !strings.Contains(view, i18n.Chinese.T(key)) {
-			t.Fatalf("subscription submenu missing description %q:\n%s", key, view)
+		desc := i18n.Chinese.T(key)
+		if !strings.Contains(view, descPrefix(desc)) {
+			t.Fatalf("subscription submenu missing description %q (looked for %q):\n%s", key, descPrefix(desc), view)
 		}
 	}
+	// The hovered entry's description is repeated in full on the line under the box.
+	if first := i18n.Chinese.T("desc_sub_url"); !strings.Contains(view, first) {
+		t.Fatalf("the hovered entry's description is not shown in full:\n%s", view)
+	}
+}
+
+// descPrefix is the part of a description a menu column is guaranteed to have room for: a
+// column is half the frame, and a Chinese description is two columns per character.
+func descPrefix(desc string) string {
+	runes := []rune(desc)
+	if len(runes) > 6 {
+		runes = runes[:6]
+	}
+	return string(runes)
 }
 
 func TestPaletteFollowsTerminalBackground(t *testing.T) {

@@ -183,6 +183,11 @@ func unlockTool(groups ...string) func(context.Context, toolbox.Options) (toolbo
 		detector := unlock.New(unlock.Options{
 			Client:  opts.HTTP(),
 			Timeout: opts.Duration(),
+			// The run is counted so the panel can show a bar: one step per service, named
+			// after the service that just finished.
+			Progress: func(done, total int, name string) {
+				opts.ReportProgress(done, total, name)
+			},
 		})
 		report := detector.Report(ctx, ids...)
 

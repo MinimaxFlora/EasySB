@@ -90,6 +90,41 @@ editing.
 | `internal/icons` | single-column Unicode symbol palette, `EASYSB_ICONS=ascii` falls back to ASCII |
 | `internal/theme` | dark / light color palettes and frame/column layout helpers |
 
+## The fixed layout
+
+Every page draws the same two boxes, in the same rows, at the same sizes. The rows come from
+the main page, which is the page an operator sees first:
+
+```
+┌ 看板 ┐   the section's summary, or the welcome board on the main page
+          one blank row
+┌ 菜单 ┐   the entries of the page the operator is standing in
+· 说明    the description of the hovered entry
+┌ 提示 ┐   the keys that work on this page
+```
+
+`internal/tui/layout.go` owns the slots. `layoutFor` measures the top box from the main page's
+own board and the bottom box from the panel's tallest menu, and `fit` shrinks them only when
+the terminal is too short — the 看板 first, because the entries are what an operator came for.
+Every page renders into those slots with `boxAt`, which pads a box with blank rows rather than
+letting it shrink, so a page with four entries and a page with nine still line up.
+
+Two consequences are deliberate:
+
+- **Nothing scrolls.** `clipRows` cuts content to the rows a box has and ends on a line that
+  says how many rows were left out, and the toolbox 看板 is written as a summary — a count of
+  what has been measured, then the newest results it can show — instead of a table it could not
+  fit. A measurement that does not fit its box is counted on screen, never hidden behind a key.
+- **The bottom box is sized for the panel's tallest menu** (the account detail page's twelve
+  entries plus the way back), not for the main menu alone. A menu taller than its box would hide
+  its last entries with no key able to reach them, so the slot has to hold the worst case; the
+  main menu then fills five of its seven rows.
+
+A running task and a finished report draw **one** box over both slots — the same rows in the
+same place, so the screen does not change shape when work starts or ends. Destination screens
+(the system screen, the link panel, the forms) keep the whole body: their content is the page,
+and they take over the frame instead of listing entries in it.
+
 ## Program flow
 
 ```mermaid

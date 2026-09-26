@@ -33,6 +33,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/MinimaxFlora/EasySB/internal/toolbox"
@@ -259,6 +260,9 @@ func (r Runner) probeAll(ctx context.Context, p Prober, targets []Target, opts t
 	out := make([]outcome, len(targets))
 	sem := make(chan struct{}, r.concurrency())
 	var wg sync.WaitGroup
+	// The targets are traced concurrently, so the count of finished targets is what the panel
+	// shows: the number is exact and the order is whatever finished first.
+	var finished atomic.Int64
 	for i, t := range targets {
 		wg.Add(1)
 		go func(i int, t Target) {
@@ -272,6 +276,7 @@ func (r Runner) probeAll(ctx context.Context, p Prober, targets []Target, opts t
 			opts.Logf("三网回程：%s %s", t.Name, t.IP)
 			path, err := p.Trace(ctx, t.IP)
 			out[i] = outcome{target: t, path: path, err: err}
+			opts.ReportProgress(int(finished.Add(1)), len(targets), t.Name)
 		}(i, t)
 	}
 	wg.Wait()

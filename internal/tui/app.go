@@ -242,7 +242,7 @@ func (a *App) Snapshot(width, height int) string {
 	a.ready = true
 	if a.task != nil {
 		// A task owns the screen while it runs, so a rendered frame is the task's.
-		return a.task.View(a.width, a.height, a.statusStrip(a.frameWidth()), a.style(), a.lang, a.iconSet)
+		return a.task.View(a.width, a.height, a.statusStrip(a.frameWidth()), a.style(), a.lang, a.iconSet, a.bodyLayout())
 	}
 	if a.report != nil {
 		// A report owns the screen once a tool has finished, so a rendered frame
@@ -290,7 +290,7 @@ func (a *App) SnapshotScreen(screen string, width, height int) string {
 			p.appendLog(line)
 		}
 		p.setDownload(previewDownload())
-		p.resize(a.width, a.height)
+		p.resize(a.width, a.height, a.bodyLayout().span())
 		a.task = p
 	case "toolbox-report":
 		// The report screen is the one a finished tool leaves behind: entering the
@@ -524,7 +524,7 @@ func (a *App) enter() tea.Cmd {
 
 func (a *App) startTask(title string, fn taskFunc) tea.Cmd {
 	p := newProgress(title, fn)
-	p.resize(a.width, a.height)
+	p.resize(a.width, a.height, a.bodyLayout().span())
 	a.task = p
 	return p.Init()
 }
@@ -534,7 +534,7 @@ func (a *App) startTask(title string, fn taskFunc) tea.Cmd {
 func (a *App) startTaskQR(title string, fn taskFunc) tea.Cmd {
 	p := newProgress(title, fn)
 	p.noCopy = true
-	p.resize(a.width, a.height)
+	p.resize(a.width, a.height, a.bodyLayout().span())
 	a.task = p
 	return p.Init()
 }
@@ -601,7 +601,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.width, a.height = msg.Width, msg.Height
 		a.sized = true
 		if a.task != nil {
-			a.task.resize(msg.Width, msg.Height)
+			a.task.resize(msg.Width, msg.Height, a.bodyLayout().span())
 		}
 		if a.form != nil {
 			a.form.resize(msg.Width)
@@ -769,7 +769,7 @@ func (a *App) View() tea.View {
 	case a.form != nil:
 		content = a.formScreen()
 	case a.task != nil:
-		content = a.task.View(a.width, a.height, a.statusStrip(a.frameWidth()), a.style(), a.lang, a.iconSet)
+		content = a.task.View(a.width, a.height, a.statusStrip(a.frameWidth()), a.style(), a.lang, a.iconSet, a.bodyLayout())
 	case a.links != nil:
 		content = a.links.View(a.width, a.height, a.palette, a.lang, a.iconSet)
 	case a.report != nil:
@@ -847,35 +847,6 @@ func (a *App) menuDescColumn(inner, labelCol int) int {
 
 // menuViewport renders at most limit menu rows, keeping the cursor visible, and
 // reports how many items are currently out of view.
-func (a *App) menuViewport(limit, inner, descCol, cursorWidth int) ([]string, int) {
-	nodes := a.current().nodes
-	n := len(nodes)
-	if n == 0 {
-		return nil, 0
-	}
-	top := 0
-	if n > limit {
-		top = a.index - limit/2
-		if a.onNavRow() {
-			top = n - limit
-		}
-		if top < 0 {
-			top = 0
-		}
-		if top > n-limit {
-			top = n - limit
-		}
-	}
-	end := top + limit
-	if end > n {
-		end = n
-	}
-	rows := make([]string, 0, end-top)
-	for i := top; i < end; i++ {
-		rows = append(rows, a.menuRow(i == a.index, i, nodes[i], inner, descCol, cursorWidth))
-	}
-	return rows, n - len(rows)
-}
 
 // menuRowParts lays out one entry's static text: the label padded out to the
 // description column (or truncated on compact submenu rows) and the description
@@ -883,7 +854,8 @@ func (a *App) menuViewport(limit, inner, descCol, cursorWidth int) ([]string, in
 func (a *App) menuRowParts(i int, n *node, inner, descCol int) (string, string) {
 	label := a.numberedLabel(i, n)
 	desc := ""
-	if n.desc != nil {
+	// A nil node is the row that leads back out: it has a label but no description.
+	if n != nil && n.desc != nil {
 		desc = n.desc(a.lang)
 	}
 	if desc != "" {
@@ -901,9 +873,6 @@ func (a *App) menuRowParts(i int, n *node, inner, descCol int) (string, string) 
 
 // menuCursorWidth returns the length every selection bar is padded to. The bar
 // spans the full inner width so the cursor keeps one size while moving.
-func (a *App) menuCursorWidth(inner int) int {
-	return inner
-}
 
 // menuRow renders one menu entry. The main menu pads its labels into a column
 // and follows them with a short one-line description; submenus stay compact.
@@ -940,18 +909,6 @@ func (a *App) numberedLabel(i int, n *node) string {
 		name = n.label(a.lang)
 	}
 	return a.numberTag(i) + name
-}
-
-func (a *App) rowLine(selected bool, label string, inner, cursorWidth int) string {
-	marker := "  "
-	if selected {
-		marker = "▌ "
-	}
-	line := " " + marker + theme.Truncate(label, inner-3)
-	if selected {
-		return a.palette.SelectedRow(theme.Pad(line, cursorWidth))
-	}
-	return a.palette.Value(line)
 }
 
 func (a *App) renderToast(w int) string {

@@ -273,6 +273,12 @@ return route or a benchmark is not something a navigation key should start.
 | IP and ports | IP quality (several databases plus DNS blocklists), mail ports (could this host run mail?) |
 | Hardware and performance | System information, disks, CPU benchmark, memory test, sequential and random 4K disk IO, every mounted disk |
 
+The interface uses one fixed layout: every page draws the same two boxes in the same rows,
+sized from the main page, and a page with more content than its box holds is clipped with a
+count of what was left out — **nothing scrolls**. A running task and a report use both boxes as
+one, and a run that can count its steps shows a real percentage. The keys are one rule too:
+**Q leaves the panel from any page**, Esc goes back, Enter only enters or confirms.
+
 A verdict is one of three words — **unlocked / blocked / unknown** — beside the region the
 service itself reported, one service per row:
 

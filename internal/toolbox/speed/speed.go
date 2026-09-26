@@ -180,6 +180,9 @@ func execute(ctx context.Context, opts toolbox.Options, r runner, p plan) (toolb
 		}
 		opts.Logf("%s：正在测试 %s（%d/%d）…", p.title, nodeName(srv), i+1, len(targets))
 		s := measureOne(rctx, r, srv, perNode)
+		// The step is counted whether or not the node produced a reading: the bar reports
+		// how far the run has got through the list, and a skipped node is still done.
+		opts.ReportProgress(i+1, len(targets), nodeLabel(srv))
 		if s.err != nil {
 			skipped++
 			res.Note("跳过 %s：%s。", nodeLabel(srv), s.err)

@@ -15,9 +15,13 @@ import (
 	"github.com/MinimaxFlora/EasySB/internal/theme"
 )
 
+// testLayout is the layout a task screen is drawn into: the same two slots a page uses, so
+// the screen can be tested without an App to measure the main page with.
+func testLayout() layout { return layout{board: 6, gap: 1, menu: 8, tail: 4} }
+
 func TestProgressDoneScrolls(t *testing.T) {
 	p := newProgress("qr", func(context.Context, *taskReporter) error { return nil })
-	p.resize(80, 30)
+	p.resize(80, 30, 20)
 	for i := 0; i < 200; i++ {
 		p.logs = append(p.logs, "line")
 	}
@@ -41,7 +45,7 @@ func TestProgressDoneScrolls(t *testing.T) {
 
 func TestProgressFollowsTailWhileRunning(t *testing.T) {
 	p := newProgress("t", func(context.Context, *taskReporter) error { return nil })
-	p.resize(80, 20)
+	p.resize(80, 20, 20)
 	for i := 0; i < 100; i++ {
 		p.appendLog("x")
 	}
@@ -52,7 +56,7 @@ func TestProgressFollowsTailWhileRunning(t *testing.T) {
 
 func TestProgressArrowsScrollFinishedLog(t *testing.T) {
 	p := newProgress("qr", func(context.Context, *taskReporter) error { return nil })
-	p.resize(80, 20)
+	p.resize(80, 20, 20)
 	for i := 0; i < 100; i++ {
 		p.appendLog("line")
 	}
@@ -77,7 +81,7 @@ func TestProgressArrowsScrollFinishedLog(t *testing.T) {
 
 func TestProgressCopiesLogToClipboard(t *testing.T) {
 	p := newProgress("url", func(context.Context, *taskReporter) error { return nil })
-	p.resize(80, 20)
+	p.resize(80, 20, 20)
 	p.appendLog("sing-box: https://example.com/a")
 	p.appendLog("v2rayN: https://example.com/c")
 	p.done = true
@@ -99,7 +103,7 @@ func TestProgressCopiesLogToClipboard(t *testing.T) {
 
 func TestProgressIgnoresMouseToggleKey(t *testing.T) {
 	p := newProgress("t", func(context.Context, *taskReporter) error { return nil })
-	p.resize(80, 20)
+	p.resize(80, 20, 20)
 	if _, closed := p.handleKey(press('m'), i18n.Chinese); closed {
 		t.Fatal("a stray key must not close the task")
 	}
@@ -117,7 +121,7 @@ func TestProgressFitsTerminal(t *testing.T) {
 		}
 		for _, done := range []bool{false, true} {
 			p.done = done
-			out := p.View(w, h, "host  service  node", theme.DefaultSkin().Style(true), i18n.Chinese, icons.Symbols())
+			out := p.View(w, h, "host  service  node", theme.DefaultSkin().Style(true), i18n.Chinese, icons.Symbols(), testLayout())
 			lines := strings.Split(out, "\n")
 			if len(lines) != h {
 				t.Fatalf("%dx%d done=%v: drew %d lines, want %d", w, h, done, len(lines), h)
@@ -134,14 +138,14 @@ func TestProgressFitsTerminal(t *testing.T) {
 func TestProgressNoCopyHidesAndIgnoresCopy(t *testing.T) {
 	p := newProgress("qr", func(context.Context, *taskReporter) error { return nil })
 	p.noCopy = true
-	p.resize(80, 20)
+	p.resize(80, 20, 20)
 	p.appendLog("QR")
 	p.done = true
 
 	if cmd, closed := p.handleKey(press('c'), i18n.Chinese); cmd != nil || closed {
 		t.Fatalf("a picture task must ignore copy, cmd=%v closed=%v", cmd != nil, closed)
 	}
-	view := p.View(80, 20, "", theme.DefaultSkin().Style(true), i18n.Chinese, icons.Symbols())
+	view := p.View(80, 20, "", theme.DefaultSkin().Style(true), i18n.Chinese, icons.Symbols(), testLayout())
 	if strings.Contains(view, i18n.Chinese.T("task_copy")) {
 		t.Fatal("the hint must not offer copy on a picture task")
 	}
@@ -163,11 +167,11 @@ func TestProgressDrawsDownloadBar(t *testing.T) {
 	for _, size := range [][2]int{{40, 6}, {80, 12}, {100, 24}, {160, 40}} {
 		w, h := size[0], size[1]
 		p := newProgress("安装 sing-box", func(context.Context, *taskReporter) error { return nil })
-		p.resize(w, h)
+		p.resize(w, h, 15)
 		p.appendLog("GET https://github.com/SagerNet/sing-box/releases/download/v1.14.1/sing-box-1.14.1-linux-amd64.tar.gz")
 		for _, dl := range cases {
 			p.dl = dl
-			out := p.View(w, h, "host  service  node", theme.DefaultSkin().Style(true), i18n.Chinese, icons.Symbols())
+			out := p.View(w, h, "host  service  node", theme.DefaultSkin().Style(true), i18n.Chinese, icons.Symbols(), testLayout())
 			lines := strings.Split(out, "\n")
 			if len(lines) != h {
 				t.Fatalf("%dx%d: drew %d lines, want %d", w, h, len(lines), h)
@@ -198,7 +202,7 @@ func TestProgressDrawsDownloadBar(t *testing.T) {
 // no longer moving on screen: the bar belongs to the moment, not to the result.
 func TestProgressBarClearsWhenTaskEnds(t *testing.T) {
 	p := newProgress("t", func(context.Context, *taskReporter) error { return nil })
-	p.resize(100, 24)
+	p.resize(100, 24, 20)
 	p.setDownload("sing-box-1.14.1-linux-amd64.tar.gz", 1, 2)
 	if got := p.reading(); !got.live {
 		t.Fatal("a reading should be live when it arrives")
@@ -206,5 +210,59 @@ func TestProgressBarClearsWhenTaskEnds(t *testing.T) {
 	p.handle(taskDoneMsg{})
 	if got := p.reading(); got.live {
 		t.Fatalf("the bar should be dropped when the task ends, got %+v", got)
+	}
+}
+
+// A run that can count its steps gets a bar with the count and the step it just finished. One
+// that cannot gets how long it has been going and what it is doing, because a percentage
+// nobody measured would be an invented number.
+func TestTaskScreenShowsCountedAndUncountedRuns(t *testing.T) {
+	style := theme.DefaultSkin().Style(true)
+	draw := func(p *progressModel) string {
+		p.resize(100, 32, testLayout().span())
+		view := p.View(100, 32, "host", style, i18n.Chinese, icons.Symbols(), testLayout())
+		return ansiSGR.ReplaceAllString(view, "")
+	}
+
+	counted := newProgress("三网回程", func(context.Context, *taskReporter) error { return nil })
+	counted.setSteps(2, 4, "Mogadishu")
+	view := draw(counted)
+	if !strings.Contains(view, "2/4") || !strings.Contains(view, "Mogadishu") {
+		t.Fatalf("a counted run should show its count and its step:\n%s", view)
+	}
+
+	uncounted := newProgress("CPU 跑分", func(context.Context, *taskReporter) error { return nil })
+	uncounted.appendLog("bench/cpu: single core, 3 workloads")
+	view = draw(uncounted)
+	if !strings.Contains(view, i18n.Chinese.T("task_elapsed")) {
+		t.Fatalf("a run that cannot count should show elapsed time:\n%s", view)
+	}
+	if !strings.Contains(view, "single core") {
+		t.Fatalf("a run that cannot count should show what it is doing:\n%s", view)
+	}
+
+	// A finished run fills its bar: the screen is swapped for the report a moment later, and
+	// a bar left at 2/4 would look like the run was cut short.
+	counted.markComplete()
+	if got := counted.stepState(); got.done != got.total || got.total != 4 {
+		t.Fatalf("a finished run should fill its bar, got %d/%d", got.done, got.total)
+	}
+}
+
+// A tool's progress callback reaches the screen through the reporter the panel hands it.
+func TestTaskReporterCarriesSteps(t *testing.T) {
+	p := newProgress("解锁检测", func(context.Context, *taskReporter) error { return nil })
+	r := &taskReporter{steps: p.setSteps}
+	r.Steps(1, 3, "Netflix")
+	r.Steps(2, 3, "Disney+")
+	got := p.stepState()
+	if !got.live || got.done != 2 || got.total != 3 || got.label != "Disney+" {
+		t.Fatalf("steps did not reach the screen: %+v", got)
+	}
+	// A tool run with nowhere to report changes nothing.
+	quiet := &taskReporter{}
+	quiet.Steps(3, 3, "Claude")
+	if st := p.stepState(); st.done != 2 || st.label != "Disney+" {
+		t.Fatalf("a reporter with no listener changed the reading: %+v", st)
 	}
 }
