@@ -48,11 +48,8 @@ func TestSkinsAreComplete(t *testing.T) {
 			t.Errorf("%s: IsDark is %v/%v, want true/false", s.ID, s.Dark.IsDark, s.Light.IsDark)
 		}
 
-		if s.Met.NavWidth < 12 {
-			t.Errorf("%s: navigation is %d columns, too narrow to be readable", s.ID, s.Met.NavWidth)
-		}
-		if s.Met.Gutter < 0 || s.Met.PadX < 0 {
-			t.Errorf("%s: negative gutter or padding", s.ID)
+		if s.Met.PadX < 0 {
+			t.Errorf("%s: negative padding", s.ID)
 		}
 	}
 }

@@ -106,9 +106,6 @@ type progressModel struct {
 	vp     viewport.Model
 	done   bool
 	err    error
-	// afterLinks swaps the finished log for the copyable link grid. It is used
-	// by subscription tasks, whose only interesting output is the endpoints.
-	afterLinks bool
 	// noCopy hides the copy key on tasks whose output is a picture, such as the
 	// subscription QR codes.
 	noCopy bool
