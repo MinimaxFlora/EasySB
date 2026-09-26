@@ -120,6 +120,13 @@ drops the quote, then the tagline, then the wordmark itself, and keeps its live 
 other page's board is written into the same rows. `boxAt` pads a box with blank rows rather than
 letting it shrink, so a page with four entries and a page with nine line up.
 
+The line above the key hints belongs to the main menu, whose rows carry only their number and
+name: that is where the hovered entry is explained in full. Every page under it puts the
+description in the row itself, so the line is blank there — and still a row, because the hints
+are pinned to the same place on every page. One screen scrolls: a finished report is read with
+↑/↓, PageUp/PageDown and Home/End inside its box, with the top row number on the line under it,
+because a measurement is read in full rather than counted.
+
 `dashboard.go` lays the entries out: the main menu keeps the two columns and the bare
 number-and-name rows it has always had, and every other page lists one entry per line with the
 description beside the label — that is what the line after the box repeats in full, so a

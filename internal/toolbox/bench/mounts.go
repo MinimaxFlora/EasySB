@@ -115,6 +115,7 @@ func RunDisksWith(ctx context.Context, opts toolbox.Options, s Scale, src MountS
 	}
 	res.Note("Nothing is left behind: every test file is deleted before this returns. Files are written to the mount points themselves, so the run needs write permission there - a failure is reported per row rather than aborting the rest.")
 	res.Summary = fmt.Sprintf("%d disks measured, %d mounts skipped", len(testable), len(skipped))
+	res.Board = fmt.Sprintf("%d 块盘 · 跳过 %d 个挂载点", len(testable), len(skipped))
 	if len(testable) == 0 {
 		res.Summary = fmt.Sprintf("no writable block device, %d mounts skipped", len(skipped))
 	}

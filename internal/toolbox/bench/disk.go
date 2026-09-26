@@ -320,6 +320,10 @@ func diskResult(path string, written, writeBytes, readBytes int64, s Scale, writ
 	}
 	res.Note("Options.ScratchDir is where this runs. It is the system temporary directory by default, which on many VPS images is a tmpfs in RAM: to measure a real disk, point the scratch directory at it.")
 	res.Summary = fmt.Sprintf("write %s, read %s", rate(mibPerSec(writeBytes, writeDur+syncDur), unitMBps), rate(mibPerSec(readBytes, readDur), unitMBps))
+	// The board leaves the 4K random pair to the report: two throughput figures are what an
+	// operator compares between hosts, and the four-number summary is a row, not a line.
+	res.Board = fmt.Sprintf("写 %s · 读 %s",
+		rate(mibPerSec(writeBytes, writeDur+syncDur), unitMBps), rate(mibPerSec(readBytes, readDur), unitMBps))
 	if random != nil {
 		res.Summary += fmt.Sprintf(", 4K random %s write / %s read",
 			rate(random.writeIOPS, "IOPS"), rate(random.readIOPS, "IOPS"))

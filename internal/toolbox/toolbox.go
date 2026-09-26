@@ -121,6 +121,11 @@ type Result struct {
 	Notes []string `json:"notes,omitempty"`
 	// Summary is one short line for the toolbox board, e.g. "解锁 12 · 屏蔽 3".
 	Summary string `json:"summary,omitempty"`
+	// Board is the shorter form the 看板 shows in place of Summary: the one number an
+	// operator scans for, without the parts a full report row would carry. A tool whose
+	// Summary is already that short leaves it empty, and the board falls back to the
+	// summary. Nothing else reads this field.
+	Board string `json:"board,omitempty"`
 }
 
 // Add appends a label/value row.

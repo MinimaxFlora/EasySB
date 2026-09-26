@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"image/color"
 	"os"
 	"path/filepath"
@@ -220,13 +221,18 @@ func TestToolboxMenuEntries(t *testing.T) {
 	a := newTestApp(t)
 	a.push(buildToolbox())
 	groups := tools.Groups()
-	if got := len(a.current().nodes); got != len(groups) {
-		t.Fatalf("toolbox menu has %d entries, want %d groups", got, len(groups))
+	if got, want := len(a.current().nodes), len(groups)+1; got != want {
+		t.Fatalf("toolbox menu has %d entries, want %d groups and the board settings", got, len(groups))
 	}
 	for i, group := range groups {
 		if got := a.current().nodes[i].id; got != "toolbox-"+group {
 			t.Fatalf("toolbox entry %d = %s, want toolbox-%s", i, got, group)
 		}
+	}
+	// The board is the page's own summary, so what belongs on it is the last entry of the
+	// section rather than the property of any one tool.
+	if got := a.current().nodes[len(groups)].id; got != "board-settings" {
+		t.Fatalf("last toolbox entry = %s, want board-settings", got)
 	}
 	if !a.hasNavRow() {
 		t.Fatalf("toolbox menu should show a navigation row")
@@ -451,17 +457,85 @@ func TestToolboxReportAndBoard(t *testing.T) {
 			t.Errorf("the board leaked the raw token %q:\n%s", token, joined)
 		}
 	}
-	if !strings.Contains(joined, i18n.Chinese.Format("toolbox_board_ran", 1, len(tools.All())-1)) {
-		t.Fatalf("board does not count what has not run:\n%s", joined)
+	// The head counts the entries the board shows, so an operator can tell a board with one
+	// result on it from one that is still waiting for its first run.
+	if !strings.Contains(joined, i18n.Chinese.Format("toolbox_board_head", 1, len(tools.BoardDefault()))) {
+		t.Fatalf("board does not count what it shows:\n%s", joined)
+	}
+	// An entry that is on the board and has not run says so, rather than leaving a gap.
+	if !strings.Contains(joined, i18n.Chinese.T("toolbox_undetected")) {
+		t.Fatalf("board does not mark what has not run:\n%s", joined)
 	}
 }
 
-// Before anything runs the board says so instead of showing an empty table.
+// Before anything runs the board shows the entries it is meant to show and marks them as not
+// run: an operator reading it knows what will appear there, and that the host has not answered
+// yet. Only a board with nothing selected falls back to an invitation.
 func TestToolboxBoardBeforeAnyRun(t *testing.T) {
 	a := newTestApp(t)
 	board := strings.Join(a.toolboxBody(88, 6), "\n")
-	if !strings.Contains(board, i18n.Chinese.T("toolbox_board_empty_hint")) {
-		t.Fatalf("empty board should invite a run:\n%s", board)
+	if !strings.Contains(board, i18n.Chinese.Format("toolbox_board_head", 0, len(tools.BoardDefault()))) {
+		t.Fatalf("board head should count the entries it shows:\n%s", board)
+	}
+	for _, id := range tools.BoardDefault() {
+		if !strings.Contains(board, i18n.Chinese.T("toolbox_"+id)) {
+			t.Fatalf("board is missing the default entry %s:\n%s", id, board)
+		}
+	}
+	a.setBoardAll(false)
+	board = strings.Join(a.toolboxBody(88, 6), "\n")
+	if !strings.Contains(board, i18n.Chinese.T("toolbox_board_none")) {
+		t.Fatalf("a board with nothing selected should say so:\n%s", board)
+	}
+}
+
+// The board settings page is where the board's contents are chosen, and the choice is written
+// down with the rest of the interface preferences.
+func TestBoardSettingsChooseWhatTheBoardShows(t *testing.T) {
+	a := newTestApp(t)
+	a.push(buildToolbox())
+	// Walking into the settings entry has to leave the toolbox menu behind.
+	a.push(a.buildBoardSettings())
+	ids := tools.InGroup(tools.GroupHardware)
+	if on, total := a.boardGroupState(tools.GroupHardware); total != len(ids) {
+		t.Fatalf("hardware group counts %d of %d entries", on, total)
+	}
+	a.push(a.buildBoardGroup(tools.GroupHardware))
+	before := a.boardSelected(ids[0].ID)
+	m, _ := a.Update(press(tea.KeyEnter))
+	a = m.(*App)
+	if a.boardSelected(ids[0].ID) == before {
+		t.Fatalf("enter left %s at %v", ids[0].ID, before)
+	}
+	// The row shows the state it is in, so the page can be read without remembering it.
+	want := "[x] "
+	if before {
+		want = "[ ] "
+	}
+	if !strings.Contains(a.View().Content, want+i18n.Chinese.T("toolbox_"+ids[0].ID)) {
+		t.Fatalf("the row does not show %q:\n%s", want+ids[0].ID, a.View().Content)
+	}
+	// The choice survives a restart: it is read back from the preferences file.
+	stored := boardFromPrefs(prefs.Load(a.prefsPath))
+	if stored[ids[0].ID] == before {
+		t.Fatalf("the choice was not written down: %v", stored)
+	}
+	// Turning it back is the same key.
+	m, _ = a.Update(press(tea.KeyEnter))
+	a = m.(*App)
+	if a.boardSelected(ids[0].ID) != before {
+		t.Fatalf("enter should have put %s back to %v", ids[0].ID, before)
+	}
+	// The two whole-board rows are choices too, and the board follows them.
+	a.setBoardAll(true)
+	if on, total := a.boardGroupState(tools.GroupHardware); on != total {
+		t.Fatalf("select all left the hardware group at %d/%d", on, total)
+	}
+	a.setBoardAll(false)
+	if !a.boardSelected(tools.BoardDefault()[0]) {
+		// Nothing is selected, so a default entry must be off as well.
+	} else {
+		t.Fatalf("clear all should have turned every entry off")
 	}
 }
 
@@ -1410,5 +1484,54 @@ func TestCoreStatsLabel(t *testing.T) {
 				t.Fatalf("coreSummary = %q, want it to name %q", summary, tc.want)
 			}
 		})
+	}
+}
+
+// A report taller than its box is scrolled with the arrow keys: the table is read in full
+// rather than cut off with a count of what did not fit, which is what a detection page needs —
+// the last rows of a system or disk report are the ones an operator came for.
+func TestReportScrollsTallTables(t *testing.T) {
+	a := newTestApp(t)
+	rows := make([][]string, 0, 30)
+	for i := 0; i < 30; i++ {
+		rows = append(rows, []string{fmt.Sprintf("项目 %d", i+1), fmt.Sprintf("值 %d", i+1)})
+	}
+	outcome := toolOutcome{
+		id:     "hw-info",
+		when:   time.Now(),
+		result: toolbox.Result{Headers: []string{"项目", "值"}, Rows: rows, Summary: "短结论"},
+	}
+	a.toolResults = map[string]toolOutcome{"hw-info": outcome}
+	a.report = &outcome
+
+	first := ansiSGR.ReplaceAllString(a.View().Content, "")
+	if a.scrollMax == 0 {
+		t.Fatalf("a report of %d rows should be scrollable:\n%s", len(rows), first)
+	}
+	if !strings.Contains(first, i18n.Chinese.T("task_scroll")) {
+		t.Fatalf("a scrollable report should say so in its hints:\n%s", first)
+	}
+	if !strings.Contains(first, i18n.Chinese.Format("box_scroll_at", 1, a.scrollMax+boxRows(a.bodyLayout().span()))) {
+		t.Fatalf("the report should say which line it starts at:\n%s", first)
+	}
+	m, _ := a.Update(press(tea.KeyDown))
+	a = m.(*App)
+	if a.scroll != 1 {
+		t.Fatalf("down moved the report to %d, want 1", a.scroll)
+	}
+	second := ansiSGR.ReplaceAllString(a.View().Content, "")
+	if second == first {
+		t.Fatalf("down did not move the visible rows:\n%s", second)
+	}
+	// The end key lands on the last window, and Esc leaves the screen from the top.
+	m, _ = a.Update(press(tea.KeyEnd))
+	a = m.(*App)
+	if a.scroll != a.scrollMax {
+		t.Fatalf("end left the report at %d, want %d", a.scroll, a.scrollMax)
+	}
+	m, _ = a.Update(press(tea.KeyEsc))
+	a = m.(*App)
+	if a.report != nil || a.scroll != 0 || a.scrollMax != 0 {
+		t.Fatalf("esc should close the report and drop its scroll: %v %d %d", a.report != nil, a.scroll, a.scrollMax)
 	}
 }

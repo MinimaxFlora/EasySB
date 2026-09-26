@@ -156,6 +156,7 @@ func (h *diskHost) collect(ctx context.Context) toolbox.Result {
 	res.Note("数据来源：%s/*（容量、rotational、型号、厂商）、%s（挂载点）、statfs(挂载点)（剩余空间，等于 df 的 size/avail）。",
 		pathSysBlock, pathProcMounts)
 	res.Summary = diskSummary(len(devices), virtual, smartRead, smartTried, h)
+	res.Board = boardDiskLine(len(devices), h)
 	return res
 }
 
@@ -509,6 +510,20 @@ func diskSummary(devices, virtual, smartRead, smartTried int, h *diskHost) strin
 		parts = append(parts, fmt.Sprintf("通电时长读不到（0/%d）", smartTried))
 	default:
 		parts = append(parts, fmt.Sprintf("通电时长可读 %d/%d", smartRead, smartTried))
+	}
+	return strings.Join(parts, " · ")
+}
+
+// boardDiskLine is the disk entry's one line on the 看板: how many devices the host has and how
+// full the root mount is, which is the pair an operator acts on. The SMART reading and the
+// virtual-device count are rows in the report.
+func boardDiskLine(devices int, h *diskHost) string {
+	if devices == 0 {
+		return "未发现块设备"
+	}
+	parts := []string{fmt.Sprintf("%d 个块设备", devices)}
+	if total, available, err := h.env.FS.Statfs("/"); err == nil && total > 0 {
+		parts = append(parts, fmt.Sprintf("根挂载已用 %d%%", percentUsed(total, available)))
 	}
 	return strings.Join(parts, " · ")
 }

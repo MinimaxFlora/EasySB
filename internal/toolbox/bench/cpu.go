@@ -92,6 +92,10 @@ func RunCPUWith(ctx context.Context, opts toolbox.Options, s Scale) (toolbox.Res
 	res.Note("Every pass prints a checksum; two runs that disagree on one were not measuring the same work.")
 	res.Summary = fmt.Sprintf("single %s, multi %s (x%.1f)",
 		rate(singleScore, "Mops/s"), rate(multiScore, "Mops/s"), scaling)
+	// The board keeps the two scores and drops the note about the scaling: the ratio is what
+	// the report table is for.
+	res.Board = fmt.Sprintf("单核 %s · 多核 %s",
+		rate(singleScore, "Mops/s"), rate(multiScore, "Mops/s"))
 	return res, nil
 }
 

@@ -57,23 +57,29 @@ func (a *App) dashboard() string {
 	return ui.Fit(lines, w, h)
 }
 
-// contextLine is the explanation of the highlighted entry, and the font note on the
-// system screen where there is no cursor to explain.
+// contextLine is what the row above the key hints says. That row belongs to the main menu,
+// whose entries carry only their number and name: it is where the hovered entry can be
+// explained in full. Every page under it puts the description in the row itself, so the line
+// is left empty there — the row is still reserved, so the hints do not move between pages.
+// The system screen has its own note: it has no cursor to explain, and the note is about the
+// screen rather than about an entry.
 func (a *App) contextLine(w int) string {
 	if a.system != nil {
 		return a.style().Faint("· " + theme.Truncate(a.lang.T("font_check_hint"), maxInt(0, w-2)))
 	}
+	if a.sectionID() != "" {
+		return ""
+	}
 	return a.itemDescription(w)
 }
 
-// tailLines is what follows the content on every screen: the explanation of the
-// highlighted entry, then the key hints.
+// tailLines is what follows the content on every screen: the line above the hints, then the
+// key hints themselves. The first row is always there, even when it is blank.
 func (a *App) tailLines(w, h int) []string {
-	out := []string{}
-	if line := a.contextLine(w); line != "" && h >= 3 {
-		out = append(out, line)
+	if h < 3 {
+		return nil
 	}
-	return append(out, a.dashboardHintLines(w, hintHeight(h-len(out)))...)
+	return append([]string{a.contextLine(w)}, a.dashboardHintLines(w, hintHeight(h-1))...)
 }
 
 // hintHeight is how many lines the hints need: their own box when the screen has

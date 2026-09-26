@@ -124,6 +124,9 @@ func (h *systemHost) collect(ctx context.Context) toolbox.Result {
 	res.Add(labelCollected, h.opts.Now().Format("2006-01-02 15:04:05 MST"))
 
 	res.Summary = systemSummary(cpu, parseMemInfo(readFile(fsys, pathMemInfo).text).total, h.virt)
+	// The board line is the machine in three facts: what it is, how many cores, how much
+	// memory. The virtualization verdict and the DMI identity are rows in the report.
+	res.Board = boardSystemLine(cpu, parseMemInfo(readFile(fsys, pathMemInfo).text).total)
 	res.Note("数据来源：/proc/cpuinfo、/sys/devices/system/cpu/cpu0/cache、/proc/meminfo、/proc/uptime、/proc/loadavg、/proc、/etc/os-release、/proc/sys/kernel/*、/sys/class/dmi/id/*。")
 	return res
 }
@@ -855,6 +858,28 @@ func systemSummary(cpu cpuInfo, mem uint64, virt string) string {
 	const maxRunes = 120
 	if runes := []rune(strings.Join(parts, " · ")); len(runes) > maxRunes {
 		return string(runes[:maxRunes]) + "…"
+	}
+	return strings.Join(parts, " · ")
+}
+
+// boardSystemLine is the system entry's one line on the 看板: the processor, the core count and
+// the memory, in that order, because that is what an operator compares between two hosts. The
+// virtualization verdict stays in the report, where the tool that answered is named beside it.
+func boardSystemLine(cpu cpuInfo, mem uint64) string {
+	parts := nonEmpty(cpu.model)
+	if cpu.physical > 0 || cpu.logical > 0 {
+		switch {
+		case cpu.physical > 0 && cpu.logical > 0:
+			parts = append(parts, fmt.Sprintf("%d 核 / %d 线程", cpu.physical, cpu.logical))
+		case cpu.logical > 0:
+			parts = append(parts, fmt.Sprintf("%d 线程", cpu.logical))
+		}
+	}
+	if mem > 0 {
+		parts = append(parts, humanBytes(mem))
+	}
+	if len(parts) == 0 {
+		return "未能读取系统信息"
 	}
 	return strings.Join(parts, " · ")
 }

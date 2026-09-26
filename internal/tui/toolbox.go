@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	"sort"
 	"strings"
 	"time"
 
@@ -32,7 +31,7 @@ type toolOutcome struct {
 // benchmark or a traceroute is not something a navigation key should start. The board
 // therefore reports what the last run found, and the entries start a new one.
 func buildToolbox() *menu {
-	nodes := make([]*node, 0, len(tools.Groups()))
+	nodes := make([]*node, 0, len(tools.Groups())+1)
 	for _, group := range tools.Groups() {
 		nodes = append(nodes, &node{
 			id:    "toolbox-" + group,
@@ -41,7 +40,58 @@ func buildToolbox() *menu {
 			sub:   buildToolGroup(group),
 		})
 	}
+	// The board is the page's summary of what has been measured, so what belongs on it is a
+	// choice about this menu rather than about any one tool. The page is built by the App,
+	// because its rows carry the selection that is stored with the interface preferences.
+	nodes = append(nodes, &node{
+		id:     "board-settings",
+		label:  tk("board_settings"),
+		desc:   tk("desc_board_settings"),
+		action: func(a *App) tea.Cmd { a.push(a.buildBoardSettings()); return nil },
+	})
 	return &menu{id: "toolbox", title: tk("toolbox_title"), nodes: nodes}
+}
+
+// buildBoardSettings is the 看板 settings page: which entries the board shows. It is grouped
+// the way the toolbox itself is, which keeps every page inside the panel's fixed box — a group
+// page lists six entries at most, and the row that leads back out.
+func (a *App) buildBoardSettings() *menu {
+	nodes := make([]*node, 0, len(tools.Groups())+3)
+	for _, group := range tools.Groups() {
+		group := group
+		nodes = append(nodes, &node{
+			id: "board-" + group,
+			label: func(l i18n.Lang) string {
+				on, total := a.boardGroupState(group)
+				return a.boardMark(on == total) + l.T("toolbox_group_"+group)
+			},
+			desc: tk("desc_board_group_" + group),
+			sub:  a.buildBoardGroup(group),
+		})
+	}
+	nodes = append(nodes,
+		leaf("board-all", "board_all", "desc_board_all", func(app *App) tea.Cmd { return app.setBoardAll(true) }),
+		leaf("board-none", "board_none", "desc_board_none", func(app *App) tea.Cmd { return app.setBoardAll(false) }),
+	)
+	return &menu{id: "board-settings", title: tk("board_settings"), nodes: nodes}
+}
+
+// buildBoardGroup lists one group's entries as checkboxes. Enter turns one on or off and the
+// page stays where it is: choosing what belongs on the board is a run of small decisions, not
+// a menu to walk through.
+func (a *App) buildBoardGroup(group string) *menu {
+	entries := tools.InGroup(group)
+	nodes := make([]*node, 0, len(entries))
+	for _, tool := range entries {
+		id := tool.ID
+		nodes = append(nodes, &node{
+			id:     "board-" + id,
+			label:  func(l i18n.Lang) string { return a.boardMark(a.boardSelected(id)) + l.T("toolbox_"+id) },
+			desc:   tk("desc_toolbox_" + id),
+			action: func(app *App) tea.Cmd { return app.toggleBoard(id) },
+		})
+	}
+	return &menu{id: "board-group-" + group, title: tk("board_settings"), nodes: nodes}
 }
 
 // buildToolGroup lists one group's entries in registry order, so the menu and the board
@@ -100,6 +150,7 @@ func (a *App) adoptTaskResult() {
 	}
 	a.toolResults[outcome.id] = outcome
 	a.report = &outcome
+	a.scroll, a.scrollMax = 0, 0
 	a.saveBoard()
 	// A counted run fills its bar to the end before the report takes the screen, so a finished
 	// run looks finished rather than vanishing at 8/12.
@@ -118,13 +169,14 @@ func (a *App) rerunReport() tea.Cmd {
 	}
 	id := a.report.id
 	a.report = nil
+	a.scroll, a.scrollMax = 0, 0
 	return toolAction(id)(a)
 }
 
-// reportScreen draws one finished run in the space a page's two boxes would have used: one
-// box, the same rows, in the same place, with the table inside it. The notes underneath are
-// the lines that fit — no page of the panel scrolls, so a note with no room left is counted
-// instead of hidden.
+// reportScreen draws one finished run in the space a page's two boxes would have used: one box,
+// the same rows, in the same place, with the table inside it. A table taller than the box is
+// scrolled with the arrow keys — a measurement is read in full, not cut off with a count of
+// what did not fit — and the line under the box says where in the table the operator is.
 func (a *App) reportScreen() string {
 	w, h := a.frameWidth(), a.height
 	if h <= 0 {
@@ -135,21 +187,34 @@ func (a *App) reportScreen() string {
 	if a.report == nil {
 		return ui.Fit(append([]string{a.statusStrip(w), ""}, keyTail(a.palette, a.lang, "", a.lang.T("hint_back"), w, l.tail)...), w, h)
 	}
+	room := boxRows(l.span())
+	full := a.reportBody(*a.report, inner)
+	// Only the drawing knows how tall the table came out, so the offset the keys move within
+	// is measured here, and a window shorter than it would have been re-clamped against a
+	// stale maximum.
+	a.scrollMax = maxInt(0, len(full)-room)
+	a.scrollBy(0)
 	title := a.lang.T("toolbox_" + a.report.id)
 	out := []string{a.statusStrip(w), ""}
-	out = append(out, a.boxAt(title, a.reportBody(*a.report, inner, boxRows(l.span())), w, l.span())...)
+	out = append(out, a.boxAt(title, windowRows(full, a.scroll, room), w, l.span())...)
 	desc := a.lang.T("toolbox_ran_at") + " " + a.report.when.Format("2006-01-02 15:04:05")
+	if a.scrollMax > 0 {
+		desc = a.lang.Format("box_scroll_at", a.scroll+1, len(full)) + " · " + desc
+	}
 	hint := a.lang.T("toolbox_rerun") + "  " + a.lang.T("hint_back") + "  " + a.lang.T("hint_quit")
+	if a.scrollMax > 0 {
+		hint = a.lang.T("task_scroll") + "  " + hint
+	}
 	out = append(out, keyTail(a.palette, a.lang, desc, hint, w, l.tail)...)
 	return ui.Fit(out, w, h)
 }
 
-// reportBody lays one run out in the rows the box has. The table comes first because it is
-// what the operator asked for, then as many notes as fit, then the summary and the time: a
-// measurement that cannot be shown in full still shows what it was.
-func (a *App) reportBody(outcome toolOutcome, inner int, room int) []string {
+// reportBody lays one run out: the table the operator asked for, then the notes that carry
+// what a cell cannot, then the summary. It hands over every row rather than the rows that fit,
+// because the report screen scrolls — the alternative was a note that could not be read.
+func (a *App) reportBody(outcome toolOutcome, inner int) []string {
 	s := a.style()
-	lines := make([]string, 0, room)
+	lines := make([]string, 0, 16)
 	if outcome.err != nil {
 		for _, line := range wrapText(a.lang.T("toolbox_failed")+": "+outcome.err.Error(), inner) {
 			lines = append(lines, s.Colored(s.Err, line))
@@ -165,35 +230,18 @@ func (a *App) reportBody(outcome toolOutcome, inner int, room int) []string {
 		foot = append(foot, "", s.Bold(s.OK, a.localizeText(outcome.result.Summary)))
 	}
 
-	// The notes fill the room between the table and the summary. They carry what a cell
-	// cannot, so the last line says how many were left out rather than dropping them
-	// without a word.
 	noteLines := make([]string, 0, len(outcome.result.Notes))
 	for _, note := range outcome.result.Notes {
 		noteLines = append(noteLines, wrapText("· "+a.localizeText(note), inner)...)
 	}
 	if len(noteLines) > 0 {
-		roomForNotes := room - len(lines) - len(foot) - 1
-		shown, hidden := noteLines, 0
-		switch {
-		case roomForNotes >= 2 && len(shown) > roomForNotes-1:
-			hidden = len(shown) - (roomForNotes - 1)
-			shown = shown[:roomForNotes-1]
-		case roomForNotes < 2:
-			hidden, shown = len(shown), nil
-		}
-		if len(shown) > 0 {
-			lines = append(lines, "")
-			for _, line := range shown {
-				lines = append(lines, s.Faint(line))
-			}
-		}
-		if hidden > 0 {
-			lines = append(lines, s.Faint(a.lang.Format("toolbox_notes_hidden", hidden)))
+		lines = append(lines, "")
+		for _, line := range noteLines {
+			lines = append(lines, s.Faint(line))
 		}
 	}
 	lines = append(lines, foot...)
-	return a.clipRows(lines, room)
+	return lines
 }
 
 // localizeText words the verdict tokens inside a sentence a tool built out of them, such as
@@ -283,63 +331,43 @@ func (a *App) toolboxBody(w int, limit int) []string {
 	lang := a.lang
 	inner := ui.InnerWidth(s, w)
 
-	type measured struct {
-		tool    string
-		outcome toolOutcome
-	}
-	ran := make([]measured, 0, len(tools.All()))
+	// The board shows the entries the operator picked, in the order the toolbox lists them:
+	// a stable board is one that can be read at a glance, and the pick is what keeps it short
+	// enough to fit the fixed box. An entry that has never run says so — 未检测 is a fact, and
+	// a board that showed nothing at all would look broken instead of empty.
+	selected := make([]string, 0, len(tools.All()))
+	ran := 0
 	for _, group := range tools.Groups() {
 		for _, tool := range tools.InGroup(group) {
-			outcome, ok := a.toolResults[tool.ID]
-			if !ok {
+			if !a.boardSelected(tool.ID) {
 				continue
 			}
-			ran = append(ran, measured{tool: tool.ID, outcome: outcome})
+			selected = append(selected, tool.ID)
+			if _, ok := a.toolResults[tool.ID]; ok {
+				ran++
+			}
 		}
 	}
-	if len(ran) == 0 {
+	if len(selected) == 0 {
 		return []string{
 			s.Faint(lang.T("toolbox_board_empty")),
 			"",
-			s.Faint(lang.T("toolbox_board_empty_hint")),
+			s.Faint(lang.T("toolbox_board_none")),
 		}
 	}
-	// The board is a summary, not a table: the box has a fixed number of rows and no page of
-	// the panel scrolls, so what is shown is the newest runs and how many were left out. The
-	// full table lives on the entry's own report, one key away.
-	sort.Slice(ran, func(i, j int) bool { return ran[i].outcome.when.After(ran[j].outcome.when) })
-	head := ""
-	switch pending := len(tools.All()) - len(ran); {
-	case pending == 0:
-		head = lang.Format("toolbox_board_ran_all", len(ran))
-	default:
-		head = lang.Format("toolbox_board_ran", len(ran), pending)
-	}
-	room := limit - 1
-	if room < 1 {
-		room = 1
-	}
-	hidden := 0
-	if len(ran) > room {
-		hidden = len(ran) - room
-		ran = ran[:room]
-		if hidden == 1 {
-			room--
-			ran = ran[:room]
+	rows := make([][2]string, 0, len(selected))
+	for _, id := range selected {
+		outcome, ok := a.toolResults[id]
+		if !ok {
+			rows = append(rows, a.kv("toolbox_"+id, s.Faint(lang.T("toolbox_undetected")), ui.KindOK))
+			continue
 		}
+		value, kind := a.outcomeLine(outcome)
+		rows = append(rows, a.kv("toolbox_"+id, value, kind))
 	}
-	rows := make([][2]string, 0, len(ran))
-	for _, m := range ran {
-		value, kind := a.outcomeLine(m.outcome)
-		rows = append(rows, a.kv("toolbox_"+m.tool, value, kind))
-	}
-	out := make([]string, 0, limit)
-	out = append(out, s.Faint(head))
-	out = append(out, ui.KV(s, rows, inner)...)
-	if hidden > 0 {
-		out = append(out, s.Faint(lang.Format("toolbox_board_more", hidden)))
-	}
-	return out
+	out := make([]string, 0, len(rows)+1)
+	out = append(out, s.Faint(lang.Format("toolbox_board_head", ran, len(selected))))
+	return append(out, ui.KV(s, rows, inner)...)
 }
 
 // outcomeLine is the board's rendering of an outcome: its summary and how long ago it ran,
@@ -351,7 +379,13 @@ func (a *App) outcomeLine(o toolOutcome) (string, ui.Kind) {
 	if o.err != nil {
 		return a.lang.T("toolbox_failed") + " · " + sinceText(a.lang, o.when), ui.KindErr
 	}
-	summary := a.localizeText(o.result.Summary)
+	// A tool that has a short form for the board uses it: the board is a summary, and a cell
+	// that lists every number a measurement produced is a table with the table left out.
+	summary := o.result.Board
+	if summary == "" {
+		summary = o.result.Summary
+	}
+	summary = a.localizeText(summary)
 	if summary == "" {
 		summary = a.lang.Format("toolbox_rows", len(o.result.Rows))
 	}

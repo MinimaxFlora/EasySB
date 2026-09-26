@@ -42,6 +42,16 @@ type App struct {
 	status        sysinfo.Status
 	ready         bool
 	sized         bool
+	// board is the toolbox 看板's selection: the tool ids whose results the board shows. nil
+	// means the panel has never been asked, so tools.BoardDefault() decides (see board.go).
+	board map[string]bool
+
+	// scroll is the first row a scrollable screen shows, and scrollMax is how far it can go.
+	// The screen measures scrollMax while it draws, because only the drawing knows how many
+	// rows the table came out as; the keys then move within that.
+	scroll    int
+	scrollMax int
+
 	// toolResults is the last outcome of every toolbox entry that has run, keyed by tool
 	// id. A tool leaves the process (a probe run, a traceroute, a benchmark), so the panel
 	// keeps what the run it started found instead of running it again on every visit.
@@ -91,6 +101,7 @@ func New(scriptVersion string, lang i18n.Lang) *App {
 		stack:         []*menu{buildRoot()},
 		quote:         lang.Hitokoto(),
 		prefsPath:     prefs.Path(),
+		board:         boardFromPrefs(prefs.Load(prefs.Path())),
 		boardPath:     boardPath(),
 	}
 	a.setSkin(skin, dark)
@@ -164,6 +175,7 @@ func (a *App) remember() {
 		Theme: theme,
 		Icons: a.iconSet.ID,
 		Lang:  string(a.lang),
+		Board: a.boardStored(),
 	}.Save(a.prefsPath)
 }
 
@@ -690,8 +702,21 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			// Esc is the way back; Enter is not, because Enter means "enter or
 			// confirm" everywhere else and a report has nothing to enter.
 			a.report = nil
+			a.scroll, a.scrollMax = 0, 0
 		case "r":
 			return a, a.rerunReport()
+		case "up", "k":
+			a.scrollBy(-1)
+		case "down", "j":
+			a.scrollBy(1)
+		case "pgup":
+			a.scrollBy(-a.screenRows())
+		case "pgdown", " ", "right":
+			a.scrollBy(a.screenRows())
+		case "home":
+			a.scroll = 0
+		case "end":
+			a.scroll = a.scrollMax
 		}
 		return a, nil
 	}
@@ -918,4 +943,41 @@ func (a *App) dashboardHint() string {
 		a.lang.T("hint_lang"),
 		a.lang.T("hint_quit"),
 	), "  ")
+}
+
+// scrollBy moves a scrollable screen, staying inside the rows it drew. A table taller than its
+// box is read with the arrow keys instead of being cut off with a count of what was left out.
+func (a *App) scrollBy(delta int) {
+	a.scroll += delta
+	if a.scroll < 0 {
+		a.scroll = 0
+	}
+	if a.scroll > a.scrollMax {
+		a.scroll = a.scrollMax
+	}
+}
+
+// screenRows is one page of a scrollable screen: the rows its box shows, which is how far
+// PageUp and PageDown move.
+func (a *App) screenRows() int {
+	rows := boxRows(a.bodyLayout().span())
+	if rows < 1 {
+		rows = 1
+	}
+	return rows
+}
+
+// windowRows is the slice of rows a scrollable screen shows from an offset. It never grows the
+// box: what is past the last row is reached with the arrow keys, and the hint bar says so.
+func windowRows(rows []string, offset, n int) []string {
+	if n <= 0 || len(rows) <= n {
+		return rows
+	}
+	if offset > len(rows)-n {
+		offset = len(rows) - n
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	return rows[offset : offset+n]
 }

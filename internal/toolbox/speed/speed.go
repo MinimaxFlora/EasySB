@@ -232,6 +232,10 @@ func execute(ctx context.Context, opts toolbox.Options, r runner, p plan) (toolb
 		summary += "（超时）"
 	}
 	res.Summary = summary
+	// The board already labels the row with the tool's name, so its line carries the numbers
+	// an operator compares: the averages, and how many nodes they came from.
+	res.Board = fmt.Sprintf("下行 %s · 上行 %s · %s · %d 节点",
+		total.download.String(), total.upload.String(), latencyCell(total.latency), len(got))
 	return res, nil
 }
 

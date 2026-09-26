@@ -337,6 +337,8 @@ func (r Report) Result() toolbox.Result {
 	out.Notes = append(out.Notes, r.PTRNotes...)
 	out.Notes = append(out.Notes, r.blocklistNotes()...)
 	out.Summary = r.summary()
+	// The board's row already carries the entry's name, so its line starts at the verdict.
+	out.Board = strings.TrimPrefix(r.summary(), "IP 质量：")
 	return out
 }
 

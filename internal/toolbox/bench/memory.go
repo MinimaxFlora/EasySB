@@ -129,6 +129,10 @@ func RunMemoryWith(ctx context.Context, opts toolbox.Options, s Scale) (toolbox.
 	res.Note("Each phase is reported as its fastest of %d rounds, which is what removes the first pass' page faults from a freshly allocated buffer. A phase that is slow on every round is the host, not the allocator.", s.MemRounds)
 	res.Note("The buffers are allocated before the timers start, and each timed loop leaves an accumulator that reaches this result, so no part of it can be optimised away. Accumulators: write %#x, read %#x, copy %#x.", writeCheck, readCheck, copyCheck)
 	res.Note("A small VPS pays for its memory bandwidth in cache misses: with a buffer larger than the last-level cache, the number is main-memory bandwidth, and a host that overcommits memory or is swapping scores much lower here than its CPU score suggests.")
+	res.Board = fmt.Sprintf("写 %s · 读 %s · 拷贝 %s",
+		rate(mibPerSec(int64(n)*int64(writeRuns), writeDur), unitMBps),
+		rate(mibPerSec(int64(n)*int64(readRuns), readDur), unitMBps),
+		rate(mibPerSec(int64(n)*2*int64(copyRuns), copyDur), unitMBps))
 	res.Summary = fmt.Sprintf("write %s, read %s, copy %s",
 		rate(mibPerSec(int64(n)*int64(writeRuns), writeDur), unitMBps),
 		rate(mibPerSec(int64(n)*int64(readRuns), readDur), unitMBps),

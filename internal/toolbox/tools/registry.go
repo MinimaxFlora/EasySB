@@ -42,6 +42,14 @@ const (
 	UnlockRegion = "unlock-region"
 )
 
+// BoardDefault is the board selection a panel that has never been asked shows: the entries
+// whose answer an operator wants on the first screen — whether the node unlocks the services
+// it is for, how it reaches the three networks, and what the host is. Everything else is one
+// key away in its own report, and the 看板 settings page can turn any of them on.
+func BoardDefault() []string {
+	return []string{UnlockMedia, UnlockAI, UnlockRegion, backtrace.ID, ipquality.ToolID, hw.ToolInfoID}
+}
+
 // Groups returns the group ids in menu order.
 func Groups() []string {
 	return []string{GroupUnlock, GroupNetwork, GroupIP, GroupHardware}

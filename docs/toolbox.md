@@ -30,32 +30,42 @@ disk benchmark is not something a navigation key should start.
 
 ## How a result is shown
 
-A tool returns a table (headers, rows) plus notes. The panel draws the table, wraps the
-notes under it and puts one summary line on the board. Words the panel defined — the
-verdicts `unlocked`, `blocked`, `unknown` — are worded by the panel, in whichever language
-the interface is running; everything else is left exactly as the tool wrote it, because a
-tool is the only thing that knows what its numbers mean.
+A run draws its log while it works and its table when it ends. The table is drawn in the box a
+page's two slots would have used, in the same rows, so the screen does not change shape when
+work starts or ends.
 
-The verdict words are deliberately short:
+- **A table taller than its box scrolls.** ↑/↓ move a row, PageUp/PageDown a page, Home/End go
+  to either end, and the line under the box says which row of how many is at the top. A
+  detection page is read in full: the last rows of a system report are usually the ones an
+  operator came for, and a count of what did not fit was not enough.
+- **The short line comes first on the board.** A tool may set `Result.Board`, the one-line form
+  of its result for the 看板 (`磁盘 IO  写 458 MB/s · 读 3045 MB/s`); a tool whose `Summary` is
+  already that short leaves it empty and the board falls back to the summary. The full table is
+  always one key away, and the board never shows a number the tool did not measure.
+- **Notes are kept.** Every note a tool wrote is on the report, under the table, because the
+  notes say where a number came from and what was skipped.
 
-| Token | 中文 | English | Meaning |
-| :--- | :--- | :--- | :--- |
-| `unlocked` | 解锁 | unlocked | the service answered, and its own answer says this address is served |
-| `blocked` | 不解锁 | blocked | the service refused this address, or offered it only partly (a half-working service is not a working one) |
-| `unknown` | 未知 | unknown | the answer could not be read — a Cloudflare challenge, a timeout, a page with no verdict in it |
+## The 看板, and what belongs on it
 
-`unknown` is the one that matters: a probe that cannot read an answer says so instead of
-guessing, and the note under the table says what it saw.
+The 看板 is the box above the entries on every page of the section: the last run of each entry
+it shows, and how long ago, and 未检测 for an entry that is on it and has not run yet.
 
-### The board is stored
+`工具箱 → 看板设置` is where its contents are chosen, one group at a time or all at once, and
+the chosen set is written down with the rest of the interface preferences (`BOARD=` in
+`easysb-ui.conf`). A panel that has never been asked shows the entries that are worth a board
+row by default — whether the node unlocks the services it exists for, how it reaches the three
+networks, what IP quality the host has, and what the machine is (`tools.BoardDefault()`).
 
-Every finished run is written to `/etc/sing-box/easysb-toolbox.json` (override with
-`EASYSB_TOOLBOX_BOARD`), so the 看板 still shows the last result of each entry after the panel
-is closed and reopened — a traceroute or a disk benchmark is not something an operator should
-have to repeat to see yesterday's reading. The file is a cache of measurements and never a
-source of truth: an unreadable or truncated one loads as an empty board, an entry with no
-stored result still says 尚未检测, and a run that could not be written down still shows its
-table on screen.
+Two rules make the board readable:
+
+- **One line per entry, in registry order.** A board ordered by "most recently run" moves under
+  the operator's eyes; a fixed console shows the same entry in the same place every time.
+- **A short form, not a table in a cell.** The board is a summary of a summary. Anything more
+  belongs in the entry's own report.
+
+Turn every entry off and the board says so rather than showing an empty table: an empty board
+and a board with nothing selected look the same, and only one of them means the operator asked
+for it.
 
 ## Where the numbers come from
 
