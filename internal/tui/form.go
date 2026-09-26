@@ -67,6 +67,9 @@ func (f *formModel) View(w int, pal theme.Palette, lang i18n.Lang) string {
 		b.WriteString(" " + pal.Colored(pal.Err, f.err) + "\n\n")
 	}
 	hint := lang.T("form_confirm") + "  " + lang.T("form_cancel")
+	if f.hint != "" {
+		hint = f.hint + "    " + hint
+	}
 	b.WriteString(" " + pal.Dim(hint))
 	return b.String()
 }
