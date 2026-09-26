@@ -30,6 +30,13 @@ func WriteUnit() error {
 	return writeUnit(UnitPath(), exe, service.Detect())
 }
 
+// daemonReload is the reload the init system needs after a unit changes. It is a variable so
+// that a test can write a unit file without touching the machine it runs on: what such a test
+// is about is the file, and on a CI runner there is no systemd at PID 1 to answer — the
+// command comes back with an authentication error that has nothing to do with the unit that
+// was written.
+var daemonReload = service.DaemonReload
+
 func writeUnit(path, exe string, manager service.Manager) error {
 	if manager == service.OpenRC {
 		unit := fmt.Sprintf(`#!/sbin/openrc-run
@@ -63,7 +70,7 @@ WantedBy=multi-user.target
 	if err := os.WriteFile(path, []byte(unit), 0o644); err != nil {
 		return err
 	}
-	return service.DaemonReload()
+	return daemonReload()
 }
 
 // RemoveUnit deletes the unit and forgets the service.
