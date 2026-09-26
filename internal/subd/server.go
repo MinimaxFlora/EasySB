@@ -110,9 +110,15 @@ func (o Options) Run(ctx context.Context) error {
 // transport picks the listen address and, when the node holds a real
 // certificate for its domain, the files that serve the endpoint over TLS. A
 // self-signed certificate is never used: clients would reject it, so plain HTTP
-// is the honest fallback and the panel warns about it.
+// is the honest fallback and the panel warns about it. The question is asked
+// through cert.Usable, the same call subscribe.Endpoint and the panel's own
+// warning use, so the protocol the listener speaks and the scheme the printed URL
+// promises can never disagree.
 func (o Options) transport(cfg state.Config) (addr, certFile, keyFile string) {
 	addr = fmt.Sprintf("0.0.0.0:%d", cfg.SubPort())
+	if !cert.Usable(cfg.Domain) {
+		return addr, "", ""
+	}
 	fullchain, key, ok := cert.Paths(cfg.Domain)
 	if !ok {
 		return addr, "", ""

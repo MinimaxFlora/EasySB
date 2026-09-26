@@ -37,7 +37,7 @@ timeout 300 "$BIN" --unlock || echo "  (--unlock 退出码 $?)"
 line "4. TUI 首页看板（应显示 5.0.0 与内核版本·带流量统计）"
 snap '1,12p'
 
-line "5. 打开「服务解锁状态」（主菜单第 1 项）"
+line "5. 打开「工具箱」（主菜单第 1 项），进入解锁检测"
 keys 1 Enter
 sleep 1
 snap '1,22p'

@@ -207,9 +207,28 @@ func (s *Store) Save() error {
 		return err
 	}
 	data = append(data, '\n')
-	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+	// A fresh temporary name per write, not s.path+".tmp": the panel and the
+	// subscription service both persist this file, and two writers sharing one
+	// temporary path can interleave into a truncated document that is then renamed
+	// into place. CreateTemp already applies 0600, so the key material never lands
+	// under the umask of the invoking shell.
+	f, err := os.CreateTemp(filepath.Dir(s.path), filepath.Base(s.path)+".tmp-*")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, s.path)
+	tmp := f.Name()
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, s.path); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return nil
 }

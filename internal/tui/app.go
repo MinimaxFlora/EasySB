@@ -734,10 +734,6 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch key {
-	case "q":
-		// On the menu tree q quits; inside the task/link panels it steps back.
-		// Upper-case Q quits from anywhere (handled above).
-		return a, quit()
 	case "esc", "backspace":
 		if len(a.stack) > 1 {
 			a.pop()
@@ -841,59 +837,6 @@ func (a *App) menuLabelColumn() int {
 		}
 	}
 	return width + 3
-}
-
-// menuDescColumn returns the column where the root menu descriptions start.
-// The label column stays pinned to the left; the description block is centered
-// in the panel so the free space is balanced on both sides of it.
-func (a *App) menuDescColumn(inner, labelCol int) int {
-	min := labelCol + 3
-	if a.current().id != "root" {
-		return min
-	}
-	maxDesc := 0
-	for _, n := range a.current().nodes {
-		if n.desc == nil {
-			continue
-		}
-		if w := lipgloss.Width(n.desc(a.lang)); w > maxDesc {
-			maxDesc = w
-		}
-	}
-	if maxDesc == 0 {
-		return min
-	}
-	col := (inner - maxDesc) / 2
-	if col < min {
-		col = min
-	}
-	return col
-}
-
-// menuViewport renders at most limit menu rows, keeping the cursor visible, and
-// reports how many items are currently out of view.
-
-// menuRowParts lays out one entry's static text: the label padded out to the
-// description column (or truncated on compact submenu rows) and the description
-// itself. The selection marker is added by menuRow.
-func (a *App) menuRowParts(i int, n *node, inner, descCol int) (string, string) {
-	label := a.numberedLabel(i, n)
-	desc := ""
-	// A nil node is the row that leads back out: it has a label but no description.
-	if n != nil && n.desc != nil {
-		desc = n.desc(a.lang)
-	}
-	if desc != "" {
-		gap := descCol - 3 - lipgloss.Width(label)
-		if gap < 2 {
-			gap = 2
-		}
-		descWidth := inner - 3 - lipgloss.Width(label) - gap
-		if descWidth >= 4 {
-			return label + strings.Repeat(" ", gap), theme.Truncate(desc, descWidth)
-		}
-	}
-	return theme.Truncate(label, inner-3), ""
 }
 
 // numberTag is the bracket in front of every menu entry: entries are picked by

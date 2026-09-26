@@ -34,7 +34,10 @@ import (
 )
 
 var (
-	version = "4.2.2"
+	// The release build injects the value from VERSION with -X main.version; this
+	// default is only what a bare `go build` reports, and it is kept equal to VERSION
+	// so the two never tell different stories.
+	version = "5.0.0"
 	commit  = ""
 )
 

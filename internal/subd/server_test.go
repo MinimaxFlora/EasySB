@@ -6,12 +6,14 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/MinimaxFlora/EasySB/internal/cert"
 	"github.com/MinimaxFlora/EasySB/internal/state"
 	"github.com/MinimaxFlora/EasySB/internal/user"
 )
@@ -369,6 +371,32 @@ func TestTransportUsesPlainHTTPWithoutCertificate(t *testing.T) {
 	}
 	if certFile != "" || keyFile != "" {
 		t.Fatalf("no certificate should be used without a domain: %q %q", certFile, keyFile)
+	}
+}
+
+// TestTransportIgnoresTheSelfSignedPlaceholder keeps the listener and the printed
+// URL in step: cert.Usable answers "does the endpoint have a certificate a client
+// accepts", and a self-signed placeholder answers no, so serving TLS with it would
+// hand clients an https:// address the listener could not honor.
+func TestTransportIgnoresTheSelfSignedPlaceholder(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv(cert.DirEnv, dir)
+	pairDir := filepath.Join(dir, "example.com")
+	if err := os.MkdirAll(pairDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := cert.GenerateSelfSigned(filepath.Join(pairDir, "fullchain.cer"), filepath.Join(pairDir, "private.key"), "example.com"); err != nil {
+		t.Fatalf("GenerateSelfSigned: %v", err)
+	}
+
+	cfg := nodeConfig()
+	cfg.Domain = "example.com"
+	addr, certFile, keyFile := Options{}.transport(cfg)
+	if !strings.HasSuffix(addr, ":8443") {
+		t.Fatalf("addr = %q, want the default subscription port", addr)
+	}
+	if certFile != "" || keyFile != "" {
+		t.Fatalf("a self-signed placeholder must not serve TLS: %q %q", certFile, keyFile)
 	}
 }
 

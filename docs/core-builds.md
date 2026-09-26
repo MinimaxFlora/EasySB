@@ -27,12 +27,16 @@ build detail. They live in `release/TAGS` — one line, read by
 `.github/workflows/easysb-go-release.yml` and by `install.sh` when it builds from source:
 
 ```
-with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_acme,with_clash_api,with_tailscale,with_ccm,with_ocm,with_cloudflared,with_naive_outbound,with_usbip,with_openvpn,with_openconnect,badlinkname,tfogo_checklinkname0,with_v2ray_api
+with_quic,with_utls,with_v2ray_api
 ```
 
-That is upstream's own `release/DEFAULT_BUILD_TAGS` plus one tag of our own,
-`with_v2ray_api`. The list is the same one the previous release shipped its downloaded
-cores with, so the feature set of a node is unchanged by moving the core inside.
+The panel is a server, and its node configuration is exactly the five inbounds, the
+certificate and the counters, so the tag set names only what those carry: `with_quic`
+for Hysteria2 and TUIC, `with_utls` for the Reality inbound, and `with_v2ray_api` for
+the per-account byte counters. Upstream's `release/DEFAULT_BUILD_TAGS` is deliberately
+not copied verbatim: it pulls in outbound features the panel never emits and, through
+`with_naive_outbound`, the cronet/Chromium libraries that have no build for four of the
+six release architectures (see `docs/pitfalls.md`).
 
 **`with_v2ray_api` is the tag that matters.** It is the only way sing-box counts bytes per
 account, which is what the traffic columns of 账号与流量 read. A tag cannot be probed at run
@@ -57,7 +61,8 @@ one (`QUIC is not included in this build, rebuild with -tags with_quic`) — the
 logs the core's own words and stops, which is the honest failure but not a working node.
 `release/TAGS` carries it, so this only affects a hand-rolled build; `internal/deploy`'s
 tests are split the same way, with the five-protocol document behind `with_quic` and a
-three-protocol one that every build accepts (`deploy_quic_test.go`).
+document that every build accepts (`deploy_test.go`), alongside the tagged acceptance test
+(`deploy_release_test.go`).
 
 ## What an operator sees
 
@@ -71,20 +76,10 @@ every page), and it reads
 
 where `带流量统计` / `无流量统计` is `StatsCapable()` — the same fact the deploy path uses,
 so the label cannot disagree with what the node does. The menu entry that used to open
-内核管理 now opens 服务解锁状态, which answers a question a VPS operator actually has: which
-services this IP can use.
+内核管理 now opens 工具箱, the measurement toolbox, which answers a question a VPS operator
+actually has: which services this IP can use, how the routes look, and how fast the box is.
 
 `internal/sbcore.Version` prefers the release stamp
 (`-X github.com/sagernet/sing-box/constant.Version=…`) and falls back to the module
 version of the requirement, which is why a local build reports the same number as the
 released one.
-
-## The rebuild workflow (legacy)
-
-`.github/workflows/singbox-v2ray-api.yml` rebuilds upstream sing-box with `with_v2ray_api`
-and publishes the archives as the rolling releases `singbox-stable` / `singbox-alpha`. It
-existed to feed 内核管理, which no longer consumes anything: the panel compiles the core in
-and takes the sing-box version from `go.mod`. The workflow, its `prune` job and
-`scripts/build_singbox_v2ray_api.sh` are therefore unused by the panel and are kept only
-until a decision is made about the channel they maintain. Removing them changes nothing in
-the binary.

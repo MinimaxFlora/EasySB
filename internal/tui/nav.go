@@ -6,12 +6,11 @@ import (
 	"github.com/MinimaxFlora/EasySB/internal/theme"
 )
 
-// The grouped navigation lives here. It is no longer drawn as a left column: every
-// page of the panel uses the same two-box frame (the page's 看板 over its entries), and
-// a section is left with Esc the way a submenu is. sectionID and padLines are still on
-// the hot path; navRows, navColumn and renderNav are kept for reference and can be
-// dropped with the skin grouping they read (theme.Metrics.Groups) once the removal is
-// confirmed.
+// What is left of the former left-hand navigation lives here. Every page of the
+// panel now uses the same two-box frame (the page's 看板 over its entries), and a
+// section is left with Esc the way a submenu is, so only two helpers remain:
+// sectionID, which says which root entry the panel is inside, and padLines, which
+// clips and fills a box.
 
 // sectionID is the root entry the panel is currently inside, or "" on the main
 // menu. The section is recorded when a root entry is entered; a stack that was

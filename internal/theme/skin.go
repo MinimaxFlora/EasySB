@@ -39,13 +39,8 @@ type Metrics struct {
 	CardTint   bool
 	CardFrame  bool
 	CardHeader HeaderStyle
-	// Gutter is the number of blank columns between the navigation and the
-	// content column.
-	Gutter int
 	// PadX is the number of blank columns between a card frame and its body.
 	PadX int
-	// NavWidth is the preferred width of the left navigation column.
-	NavWidth int
 	// Compact drops the blank line between cards.
 	Compact bool
 	// StripSep is the glyph drawn between status-strip items. Empty means the
@@ -175,9 +170,7 @@ func jadeSkin() Skin {
 			CardTint:   true,
 			CardFrame:  true,
 			CardHeader: HeaderBar,
-			Gutter:     3,
 			PadX:       2,
-			NavWidth:   27,
 			StripSep:   "┃",
 		},
 	}
@@ -232,9 +225,7 @@ func auroraSkin() Skin {
 			CardTint:   true,
 			CardFrame:  true,
 			CardHeader: HeaderBar,
-			Gutter:     2,
 			PadX:       2,
-			NavWidth:   26,
 		},
 	}
 }
@@ -288,9 +279,7 @@ func emberSkin() Skin {
 			CardTint:   true,
 			CardFrame:  true,
 			CardHeader: HeaderRule,
-			Gutter:     1,
 			PadX:       2,
-			NavWidth:   28,
 		},
 	}
 }
@@ -344,9 +333,7 @@ func graphiteSkin() Skin {
 			CardTint:   false,
 			CardFrame:  false,
 			CardHeader: HeaderPlain,
-			Gutter:     2,
 			PadX:       1,
-			NavWidth:   24,
 			Compact:    true,
 		},
 	}
