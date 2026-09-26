@@ -25,12 +25,16 @@ REPO='MinimaxFlora/EasySB'
 RELEASE_TAG="v${VERSION}"
 PREFIX="${PREFIX:-/usr/local}"
 BIN_NAME='easysb'
-# 源码构建必须带这些标签：with_v2ray_api 是账号流量统计的前提，缺了它面板会照常
-# 部署节点，但流量无法计数。release/TAGS 是唯一的标签来源，工作流读同一个文件。
-# A source build needs these tags: with_v2ray_api is what makes per-account traffic
-# counting possible, and without it the panel still deploys a working node but can
-# count nothing. release/TAGS is the single source of truth; the workflow reads it too.
-DEFAULT_TAGS='with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_acme,with_clash_api,with_tailscale,with_ccm,with_ocm,with_cloudflared,with_naive_outbound,with_usbip,with_openvpn,with_openconnect,badlinkname,tfogo_checklinkname0,with_v2ray_api'
+# 源码构建必须带这些标签：with_quic 是 Hysteria2 / TUIC，with_utls 是 Reality，
+# with_v2ray_api 是账号流量统计；缺了 with_v2ray_api 面板会照常部署可用节点，只是
+# 不计流量。release/TAGS 是唯一的标签来源，工作流读同一个文件；这份常量只在这份
+# 脚本离开源码树、读不到 release/TAGS 时兜底，因此必须与它保持一致。
+# A source build needs these tags: with_quic for Hysteria2 / TUIC, with_utls for
+# Reality, and with_v2ray_api for per-account counters (without it the panel still
+# deploys a working node, it just cannot count). release/TAGS is the single source of
+# truth and the workflow reads the same file; this constant is only the fallback for
+# when this script runs outside the source tree, so it has to match it.
+DEFAULT_TAGS='with_quic,with_utls,with_v2ray_api'
 
 LANG_MODE='C'
 FROM_SOURCE=0

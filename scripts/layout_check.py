@@ -13,7 +13,7 @@ import sys
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 SCREENS = [
-    "", "kernel", "kernel-switch", "node", "domain", "subscribe", "service", "bbr",
+    "", "node", "domain", "subscribe", "service", "bbr",
     "bbr-qdisc", "bbr-versions", "script-update", "uninstall", "system",
     "node-protocols", "params", "ports", "sni",
 ]
