@@ -56,9 +56,9 @@ Nothing in the toolbox downloads a program. Every tool is Go code in this binary
 | the unlock entries | one to three HTTP requests per service, parsed by `internal/unlock` |
 | `backtrace` | ICMP probes from this host (needs root, which the panel has), then ip-api.com for the ASN of the hops |
 | `speed-near`, `speed-cn` | speedtest.net, through `github.com/showwin/speedtest-go` — the same library 融合怪 uses, in-process |
-| `ipquality` | the keyless endpoints of ip-api.com, ipinfo.io, ipapi.is, ipwho.is and ip.sb, plus DNS blocklist lookups |
+| `ipquality` | nine keyless databases (ip-api.com, ipinfo.io, ipapi.is, ipwho.is, ip.sb, ip2location.io, ipwhois.app, db-ip.com, ipapi.co) plus twelve DNS blocklists |
 | `portcheck` | TCP connects to this host's own public address, and PTR/FCrDNS lookups |
-| `hw-info`, `hw-disk` | `/proc`, `/sys` and `df`; `smartctl` only if it is installed, otherwise the power-on hours are reported as unreadable |
+| `hw-info`, `hw-disk` | `/proc` and `/sys`, with `statfs` on the mount points (the numbers `df` prints); `systemd-detect-virt`, `timedatectl` and `smartctl` only if they are installed, otherwise those cells say what could not be read |
 | the benchmarks | the panel's own workloads, measured with the standard library clock |
 
 Two consequences are worth stating plainly, because the numbers look like other tools'
