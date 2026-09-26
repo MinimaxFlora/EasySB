@@ -2,6 +2,7 @@ package unlock
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -203,8 +204,16 @@ func probeYouTubePremium(ctx context.Context, d *Detector, s Service) Result {
 
 var amazonTerritory = regexp.MustCompile(`"currentTerritory":"([^"]+)"`)
 
+// primeVideoHome is the storefront the reference script reads. It redirects to the
+// non-prime homepage, and the geo block travels with the page either way.
+const primeVideoHome = "https://www.primevideo.com"
+
+// probePrimeVideo reads the storefront page the reference script reads, following it to
+// its geo block instead of stopping at the default cap: the page is served in two shapes,
+// a ~500 KB one whose block sits about 170 KB in and a multi-megabyte one whose block sits
+// further, and cutting the read at a megabyte turned a served country into "failed".
 func probePrimeVideo(ctx context.Context, d *Detector, s Service) Result {
-	r, err := d.get(ctx, "https://www.primevideo.com", nil)
+	r, err := d.getDeep(ctx, primeVideoHome, nil, deepBody, "currentTerritory", "isServiceRestricted")
 	if err != nil {
 		return s.result(StatusFailed, "", ReasonNetwork, err.Error())
 	}
@@ -214,7 +223,11 @@ func probePrimeVideo(ctx context.Context, d *Detector, s Service) Result {
 	blocked := r.has("isServiceRestricted")
 	region := firstGroup(amazonTerritory, r.body)
 	if !blocked && region == "" {
-		return s.result(StatusFailed, "", ReasonBody, "the storefront served no geo block within the first megabyte")
+		if strings.TrimSpace(r.body) == "" {
+			return s.result(StatusFailed, "", ReasonBody, "the storefront returned an empty page")
+		}
+		return s.result(StatusFailed, "", ReasonBody,
+			fmt.Sprintf("no geo block in the first %d KB the storefront served", len(r.body)/1024))
 	}
 	if blocked {
 		return s.result(StatusBlocked, region, "", "Amazon Prime Video is not offered here")

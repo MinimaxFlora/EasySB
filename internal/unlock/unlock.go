@@ -20,7 +20,9 @@
 package unlock
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -307,6 +309,12 @@ type request struct {
 	url     string
 	headers map[string]string
 	body    string
+
+	// limit and markers replace the default capped read when a probe has to
+	// follow a page further: the read stops at the limit or at the first marker,
+	// whichever comes first. A request with no limit keeps the maxBody cap.
+	limit   int64
+	markers []string
 }
 
 // reply is a response with the body already read.
@@ -337,6 +345,52 @@ func (r reply) statusText() string { return fmt.Sprintf("HTTP %d", r.status) }
 // new marker belongs below this line and near the top of the document.
 const maxBody = 1 << 20
 
+// deepBody is the cap for the one probe that has to follow a page further than
+// that: the Prime Video storefront has served a variant whose geo block sits
+// past a megabyte, and cutting the read there turned a served country into a
+// failed check. The probe names the markers it is looking for, so the extra room
+// costs nothing when the marker arrives early — which it did in every reading of
+// the current variant, about 170 KB in.
+const deepBody = 8 << 20
+
+// readUntil reads at most limit bytes, stopping as soon as one of the markers
+// has arrived. Markers are matched against a window that overlaps the previous
+// chunk, so a marker split across a read boundary is still found.
+func readUntil(r io.Reader, limit int64, markers []string) (string, error) {
+	var (
+		buf     []byte
+		chunk   = make([]byte, 32<<10)
+		overlap int
+	)
+	for _, m := range markers {
+		if len(m) > overlap {
+			overlap = len(m)
+		}
+	}
+	for int64(len(buf)) < limit {
+		n, err := r.Read(chunk)
+		if n > 0 {
+			buf = append(buf, chunk[:n]...)
+			window := buf
+			if len(window) > n+overlap {
+				window = window[len(window)-(n+overlap):]
+			}
+			for _, m := range markers {
+				if bytes.Contains(window, []byte(m)) {
+					return string(buf), nil
+				}
+			}
+		}
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return string(buf), err
+		}
+	}
+	return string(buf), nil
+}
+
 func (d *Detector) do(ctx context.Context, r request) (reply, error) {
 	method := r.method
 	if method == "" {
@@ -363,9 +417,18 @@ func (d *Detector) do(ctx context.Context, r request) (reply, error) {
 		return reply{status: resp.StatusCode, header: resp.Header, finalURL: r.url}, nil
 	}
 	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxBody))
-	if err != nil {
-		return reply{}, err
+	var data []byte
+	if r.limit > 0 {
+		text, err := readUntil(resp.Body, r.limit, r.markers)
+		if err != nil {
+			return reply{}, err
+		}
+		data = []byte(text)
+	} else {
+		data, err = io.ReadAll(io.LimitReader(resp.Body, maxBody))
+		if err != nil {
+			return reply{}, err
+		}
 	}
 	out := reply{
 		status:   resp.StatusCode,
@@ -383,6 +446,13 @@ func (d *Detector) do(ctx context.Context, r request) (reply, error) {
 
 func (d *Detector) get(ctx context.Context, url string, headers map[string]string) (reply, error) {
 	return d.do(ctx, request{method: http.MethodGet, url: url, headers: headers})
+}
+
+// getDeep reads a page past the default cap, stopping at the first marker it was
+// told to look for. It is for the one probe that has to follow a storefront to
+// its geo block; everything else stays on the capped read.
+func (d *Detector) getDeep(ctx context.Context, url string, headers map[string]string, limit int64, markers ...string) (reply, error) {
+	return d.do(ctx, request{method: http.MethodGet, url: url, headers: headers, limit: limit, markers: markers})
 }
 
 func (d *Detector) post(ctx context.Context, url, contentType, body string, headers map[string]string) (reply, error) {

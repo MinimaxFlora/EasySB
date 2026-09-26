@@ -275,6 +275,13 @@ HTTP requests per service, then a read of the body, no login and no extra data f
 | Where to run it | The panel page (whole catalogue or one service, results land in the task screen and stay on the board) and `sb --unlock` for a plain-text report without a terminal |
 | Core | None of this needs a core binary: the checks are the panel's own HTTP client, and so is the sing-box engine the node runs |
 
+The region column is **the service's own answer**, not something the panel computes: the services sit in front of different geolocation databases, and one machine being seen as two different countries is normal. On a Zenixcloud address we measured, Cloudflare, Netflix and Gemini said `US` while TikTok and DAZN reported `SC` — both are shown as given, because the question the panel answers is "how does this service see you", not "where are you".
+
+Two verdicts that invite a second look:
+
+- **Prime Video** serves its storefront in two shapes: a ~500 KB one whose geo block sits about 170 KB in, and a multi-megabyte one whose block sits further. The probe reads until it finds the marker (cap 8 MB), so a served country is no longer reported as failed; when nothing is found, the failure says how many KB were read.
+- **Claude** answers a datacenter address with a Cloudflare challenge (HTTP 403). The reference script would call that "yes" because the URL never changed, which is a guess; the panel reports a failed check and attaches the region read from `claude.ai/cdn-cgi/trace`, because a challenge says Cloudflare distrusts the address — it says nothing about the country.
+
 ## The core inside the panel
 
 | Item | Description |

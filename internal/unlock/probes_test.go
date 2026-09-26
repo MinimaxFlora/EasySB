@@ -312,6 +312,7 @@ func TestProbeYouTubePremium(t *testing.T) {
 
 func TestProbePrimeVideo(t *testing.T) {
 	const url = "https://www.primevideo.com"
+	filler := strings.Repeat("<div>storefront</div>", 1)
 	cases := []struct {
 		name   string
 		body   string
@@ -321,6 +322,19 @@ func TestProbePrimeVideo(t *testing.T) {
 		{name: "offered", body: `<html>"currentTerritory":"GB"</html>`, status: StatusUnlocked, region: "GB"},
 		{name: "restricted", body: `<html>"isServiceRestricted":true,"currentTerritory":"CN"</html>`, status: StatusBlocked, region: "CN"},
 		{name: "no territory at all", body: `<html>hello</html>`, status: StatusFailed},
+		{
+			// The variant that produced the failed checks: a page whose geo block sits
+			// past the default one megabyte cap.
+			name:   "geo block past the default cap",
+			body:   filler + strings.Repeat("x", maxBody) + `<html>"currentTerritory":"US"</html>`,
+			status: StatusUnlocked,
+			region: "US",
+		},
+		{
+			name:   "empty storefront",
+			body:   "   ",
+			status: StatusFailed,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -333,6 +347,67 @@ func TestProbePrimeVideo(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("the failed text names what was read", func(t *testing.T) {
+		got := runProbe(t, "primevideo", route{url: url, status: 200, body: filler + strings.Repeat("x", 4096)})
+		if got.Status != StatusFailed || !strings.Contains(got.Text, "KB") {
+			t.Fatalf("got %q (%s), want a failure that says how much was read", got.Status, got.Text)
+		}
+	})
+}
+
+// TestReadUntil covers the read the Prime Video probe uses: it must stop at the first
+// marker, keep a marker that straddles a chunk boundary, and never read past its limit.
+func TestReadUntil(t *testing.T) {
+	const limit = 1 << 16
+	marker := `"currentTerritory":"US"`
+
+	t.Run("stops at the marker", func(t *testing.T) {
+		body := strings.Repeat("a", 100) + marker + strings.Repeat("b", 1<<20)
+		got, err := readUntil(strings.NewReader(body), limit, []string{marker})
+		if err != nil {
+			t.Fatalf("readUntil: %v", err)
+		}
+		if !strings.Contains(got, marker) {
+			t.Fatalf("the marker was dropped: %d bytes, tail %q", len(got), tail(got, 40))
+		}
+		// The granularity is one 32 KB read, so "stopped early" means the megabyte
+		// behind the marker was never read.
+		if len(got) > 64<<10 {
+			t.Fatalf("read %d bytes for a marker 100 bytes in", len(got))
+		}
+	})
+
+	t.Run("finds a marker split across chunks", func(t *testing.T) {
+		body := strings.Repeat("a", 32<<10-5) + marker + strings.Repeat("b", 4096)
+		got, err := readUntil(strings.NewReader(body), limit, []string{marker})
+		if err != nil {
+			t.Fatalf("readUntil: %v", err)
+		}
+		if !strings.Contains(got, marker) {
+			t.Fatalf("a marker on a chunk boundary was missed: %d bytes", len(got))
+		}
+	})
+
+	t.Run("honours the limit", func(t *testing.T) {
+		body := strings.Repeat("a", 4*limit)
+		got, err := readUntil(strings.NewReader(body), limit, []string{marker})
+		if err != nil {
+			t.Fatalf("readUntil: %v", err)
+		}
+		if int64(len(got)) != limit {
+			t.Fatalf("read %d bytes, want the limit %d", len(got), limit)
+		}
+	})
+}
+
+// tail is the last n bytes of s, for failure messages that would otherwise dump a
+// megabyte into the test log.
+func tail(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[len(s)-n:]
 }
 
 func TestProbeSteam(t *testing.T) {
@@ -544,42 +619,93 @@ func TestProbeGemini(t *testing.T) {
 	})
 }
 
+// TestProbeClaude drives the app page and the trace endpoint: every verdict carries the
+// region the trace reports, including the inconclusive one a Cloudflare challenge
+// produces, because a challenge says nothing about the country.
+//
+// The trace route comes first in every case: the fake client answers on the first prefix
+// match, and "https://claude.ai/" is a prefix of the trace path.
 func TestProbeClaude(t *testing.T) {
-	const url = "https://claude.ai/"
+	const (
+		home          = "https://claude.ai/"
+		trace         = "https://claude.ai/cdn-cgi/trace"
+		anthropicPath = "https://www.anthropic.com/cdn-cgi/trace"
+	)
+	withTrace := func(homeRoute route, traceRoute route) []route {
+		return []route{traceRoute, homeRoute}
+	}
+	traceUS := route{url: trace, status: 200, body: "fl=1\nip=203.0.113.7\nloc=US\n"}
 	cases := []struct {
 		name   string
-		route  route
+		routes []route
 		status Status
+		region string
 	}{
 		{
 			name:   "available",
-			route:  route{url: url, status: 200, body: "<html><title>Claude</title></html>"},
+			routes: withTrace(route{url: home, status: 200, body: "<html><title>Claude</title></html>"}, traceUS),
 			status: StatusUnlocked,
+			region: "US",
 		},
 		{
 			name:   "region unavailable",
-			route:  route{url: url, status: 200, body: "<html>Anthropic</html>", final: "https://www.anthropic.com/app-unavailable-in-region"},
+			routes: withTrace(route{url: home, status: 200, body: "<html>Anthropic</html>", final: "https://www.anthropic.com/app-unavailable-in-region"}, traceUS),
 			status: StatusBlocked,
+			region: "US",
 		},
 		{
 			name:   "no app page",
-			route:  route{url: url, status: 200, body: "<html>hello</html>"},
+			routes: withTrace(route{url: home, status: 200, body: "<html>hello</html>"}, traceUS),
 			status: StatusFailed,
+			region: "US",
 		},
 		{
 			name:   "503",
-			route:  route{url: url, status: 503, body: "unavailable"},
+			routes: withTrace(route{url: home, status: 503, body: "unavailable"}, traceUS),
 			status: StatusFailed,
+			region: "US",
+		},
+		{
+			// What a datacenter address gets, and why the reference script's "yes" is a
+			// guess: the country is readable, the app is not.
+			name: "cloudflare challenge",
+			routes: withTrace(
+				route{url: home, status: 403, body: "<html><title>Just a moment...</title><div id=\"challenge-platform\"></div></html>"},
+				route{url: trace, status: 200, body: "fl=1\nip=203.0.113.7\nloc=SC\n"}),
+			status: StatusFailed,
+			region: "SC",
+		},
+		{
+			name: "challenge without a readable trace",
+			routes: []route{
+				{url: anthropicPath, status: 403, body: ""},
+				{url: trace, status: 403, body: ""},
+				{url: home, status: 403, body: "<title>Just a moment...</title>"},
+			},
+			status: StatusFailed,
+			region: "",
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := runProbe(t, "claude", tc.route)
+			got := runProbe(t, "claude", tc.routes...)
 			if got.Status != tc.status {
 				t.Fatalf("status = %q (%s), want %q", got.Status, got.Text, tc.status)
 			}
+			if got.Region != tc.region {
+				t.Errorf("region = %q, want %q", got.Region, tc.region)
+			}
 		})
 	}
+
+	t.Run("a challenge never reads as unlocked", func(t *testing.T) {
+		got := runProbe(t, "claude", withTrace(
+			route{url: home, status: 403, body: "<title>Just a moment...</title>"},
+			route{url: trace, status: 200, body: "loc=US\n"})...)
+		if got.OK() {
+			t.Fatalf("a Cloudflare challenge reported %q", got.Status)
+		}
+	})
 }
 
 func TestProbeBahamut(t *testing.T) {

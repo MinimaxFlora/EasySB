@@ -78,8 +78,15 @@ func probeChatGPT(ctx context.Context, d *Detector, s Service) Result {
 // error message instead of the region when no endpoint could be read, and an
 // empty region when an endpoint answered without a loc= line.
 func chatGPTRegion(ctx context.Context, d *Detector) (string, string) {
+	return traceRegion(ctx, d, chatGPTTrace)
+}
+
+// traceRegion asks each trace endpoint in turn and returns the country
+// Cloudflare classifies the connection as, plus the last problem when none of
+// them answered with a loc=.
+func traceRegion(ctx context.Context, d *Detector, endpoints []string) (string, string) {
 	var lastErr string
-	for _, url := range chatGPTTrace {
+	for _, url := range endpoints {
 		r, err := d.get(ctx, url, nil)
 		if err != nil {
 			lastErr = url + ": " + err.Error()
@@ -124,26 +131,38 @@ func probeGemini(ctx context.Context, d *Detector, s Service) Result {
 // unreadable rather than guessing.
 var claudeChallenge = regexp.MustCompile(`(?i)Just a moment|challenge-platform|cf_chl`)
 
-// Claude is judged by where claude.ai sends the visitor: an available region
-// stays on the domain, an unavailable one is redirected to a marketing page.
+// Claude is judged by where claude.ai sends the visitor: an available region stays on
+// the domain, an unavailable one is redirected to a marketing page. claudeTraces are the
+// trace endpoints the same edge serves — the app page answers a datacenter address with a
+// Cloudflare challenge, but the trace path still names the country Cloudflare classifies
+// the connection as, so even an inconclusive verdict can carry a region.
+var claudeTraces = []string{
+	"https://claude.ai/cdn-cgi/trace",
+	"https://www.anthropic.com/cdn-cgi/trace",
+}
+
 func probeClaude(ctx context.Context, d *Detector, s Service) Result {
 	const home = "https://claude.ai/"
 	r, err := d.get(ctx, home, nil)
 	if err != nil {
 		return s.result(StatusFailed, "", ReasonNetwork, err.Error())
 	}
-	if strings.Contains(r.finalURL, "app-unavailable-in-region") {
-		return s.result(StatusBlocked, "", "", "redirected to "+r.finalURL)
+	// One extra small request, for the region every verdict can then carry.
+	region, _ := traceRegion(ctx, d, claudeTraces)
+	switch {
+	case strings.Contains(r.finalURL, "app-unavailable-in-region"):
+		return s.result(StatusBlocked, region, "", "redirected to "+r.finalURL)
+	case r.status == 200 && r.hasFold("claude"):
+		return s.result(StatusUnlocked, region, "", "")
+	case claudeChallenge.MatchString(r.body):
+		// A challenge is Cloudflare turning away an address it does not trust, which says
+		// nothing about the country: the reference script reads the unchanged URL as
+		// "yes", which is exactly the guess this package refuses to make.
+		return s.result(StatusFailed, region, ReasonUnknown,
+			"claude.ai answered a Cloudflare challenge ("+r.statusText()+"); the app cannot be judged from this IP")
+	case !r.ok():
+		return s.result(StatusFailed, region, ReasonHTTP, "claude.ai answered "+r.statusText())
+	default:
+		return s.result(StatusFailed, region, ReasonBody, "claude.ai did not return the app page")
 	}
-	if r.status != 200 {
-		if claudeChallenge.MatchString(r.body) {
-			return s.result(StatusFailed, "", ReasonUnknown,
-				"claude.ai answered a Cloudflare challenge ("+r.statusText()+"); no region verdict")
-		}
-		return s.result(StatusFailed, "", ReasonHTTP, "claude.ai answered "+r.statusText())
-	}
-	if !r.hasFold("claude") {
-		return s.result(StatusFailed, "", ReasonBody, "claude.ai did not return the app page")
-	}
-	return s.result(StatusUnlocked, "", "", "")
 }
