@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -99,13 +98,10 @@ func New(scriptVersion string, lang i18n.Lang) *App {
 	return a
 }
 
-// boardPath is where the toolbox 看板 is written down. The env override exists for the tests
-// and for a second panel on the same host, the way the preferences file has its own.
+// boardPath is where the toolbox 看板 is written down: the registry owns the path, because
+// `--tool` writes to the same file.
 func boardPath() string {
-	if path := os.Getenv(toolbox.BoardEnv); path != "" {
-		return path
-	}
-	return filepath.Join(sysinfo.WorkDir, "easysb-toolbox.json")
+	return tools.BoardPath()
 }
 
 // loadBoard reads the stored outcomes so the section's 看板 shows the last run of every tool

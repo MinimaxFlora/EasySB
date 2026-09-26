@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -91,8 +92,48 @@ func TestLookupFindsWhatAllLists(t *testing.T) {
 	}
 }
 
-// The verdict tokens are the panel's own vocabulary, so they have to survive a round trip
-// through the wording in both languages.
+// The board is written by whoever ran the tool: `--tool` records its run so a measurement
+// taken without a terminal still shows up in the panel's 看板.
+func TestRecordWritesTheBoardReadByBothReaders(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "easysb-toolbox.json")
+	t.Setenv(toolbox.BoardEnv, path)
+	if got := BoardPath(); got != path {
+		t.Errorf("BoardPath() = %q, want the override %q", got, path)
+	}
+
+	if err := Record("unlock-ai", toolbox.Result{Summary: "解锁 2 · 不解锁 1 (3)"}, nil); err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+	if err := Record("backtrace", toolbox.Result{}, errors.New("需要 root")); err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+	board := toolbox.LoadBoard(path)
+	if got := board["unlock-ai"].Result.Summary; got != "解锁 2 · 不解锁 1 (3)" {
+		t.Errorf("stored summary = %q", got)
+	}
+	if got := board["backtrace"].Error; got != "需要 root" {
+		t.Errorf("stored error = %q, want the reason the run failed", got)
+	}
+	if board["backtrace"].When.IsZero() {
+		t.Error("a stored run needs the time it ran")
+	}
+
+	// Running the same entry again replaces its record: the board holds the last run, not a
+	// history of every run.
+	if err := Record("unlock-ai", toolbox.Result{Summary: "全解锁 (3)"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	board = toolbox.LoadBoard(path)
+	if len(board) != 2 {
+		t.Errorf("board holds %d records, want one per entry", len(board))
+	}
+	if got := board["unlock-ai"].Result.Summary; got != "全解锁 (3)" {
+		t.Errorf("the second run should have replaced the first, got %q", got)
+	}
+}
+
+// Verdict wording is the panel's vocabulary, so it has to survive a round trip through
+// both languages.
 func TestVerdictWording(t *testing.T) {
 	for _, token := range []string{"unlocked", "blocked", "unknown"} {
 		if !IsVerdict(token) {

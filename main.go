@@ -234,6 +234,12 @@ func runToolboxTool(id string, lang i18n.Lang) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	result, err := tool.Run(ctx, toolbox.Options{Log: func(line string) { fmt.Fprintln(os.Stderr, "  "+line) }})
+	// The run is written down whatever it produced, so a result measured without a terminal
+	// shows up in the panel's 看板 as well. A board that cannot be written is not a failed
+	// run: the table below is what the caller asked for, and it is printed either way.
+	if recordErr := tools.Record(id, result, err); recordErr != nil {
+		fmt.Fprintf(os.Stderr, "board: %v\n", recordErr)
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", lang.T("toolbox_failed"), err)
 		os.Exit(1)

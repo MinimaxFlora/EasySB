@@ -9,10 +9,14 @@ package tools
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/MinimaxFlora/EasySB/internal/i18n"
+	"github.com/MinimaxFlora/EasySB/internal/sysinfo"
 	"github.com/MinimaxFlora/EasySB/internal/toolbox"
 	"github.com/MinimaxFlora/EasySB/internal/toolbox/backtrace"
 	"github.com/MinimaxFlora/EasySB/internal/toolbox/bench"
@@ -108,6 +112,32 @@ func Lookup(id string) (toolbox.Tool, bool) {
 		}
 	}
 	return toolbox.Tool{}, false
+}
+
+// BoardPath is where the toolbox 看板 is written down. The registry owns the path because
+// both readers of the board — the panel and `--tool` — have to agree on which file it is; the
+// environment override exists for the tests and for a second panel on the same host, the way
+// the interface preferences file has its own.
+func BoardPath() string {
+	if path := strings.TrimSpace(os.Getenv(toolbox.BoardEnv)); path != "" {
+		return path
+	}
+	return filepath.Join(sysinfo.WorkDir, "easysb-toolbox.json")
+}
+
+// Record stores one finished run in the board, so a run started from the command line shows
+// up in the panel's 看板 too. A board that cannot be written is a degraded convenience, not a
+// failed run: the caller has the table either way, so the error is returned rather than
+// turned into an interruption.
+func Record(id string, result toolbox.Result, runErr error) error {
+	path := BoardPath()
+	board := toolbox.LoadBoard(path)
+	record := toolbox.Record{ID: id, When: time.Now(), Result: result}
+	if runErr != nil {
+		record.Error = runErr.Error()
+	}
+	board[id] = record
+	return toolbox.SaveBoard(path, board)
 }
 
 // Verdict words one of the verdict tokens this package defines. The registry owns the
