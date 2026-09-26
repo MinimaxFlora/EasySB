@@ -4,6 +4,25 @@
 
 程序的版本号与构建提交在编译期注入，内核版本独立于程序版本，由官方 `SagerNet/sing-box` Releases 提供。
 
+## [Unreleased]
+
+### 修复
+
+- **自签占位证书不再被当成已签发**：`Paths` 为了让内核在首次签发前有证书可服务，会解析自签占位对，但 `dueForRenewal` 曾把它的十年有效期当作真实证书，导致第一次签发 `Issue` 直接返回成功、其实什么都没签。现在自签占位一律视为到期，`Issue` / `Renew` 会真正走 ACME。
+- **订阅服务的 TLS 判定与打印的 URL 一致**：监听端改用 `cert.Usable`（与 `subscribe.Endpoint`、面板告警同一个判断），自签占位存在时改为明文 HTTP，不再出现「用自签证书提供 TLS、却打印 `http://` 地址」的不可用订阅。
+- **流量记账基线只在落盘后推进**：采样基线原先在 `Apply` / `Save` 之前前进，任何一次失败都会让那一轮增量在下一轮被减掉、永久丢失；现在只有 `Save` 成功后才推进。
+- **账号文件并发写不再互相踩踏**：`Store.Save` 改用每次唯一的临时文件名（`os.CreateTemp`），面板进程与订阅服务的记账循环同时写 `easysb-users.json` 时不会再交错出截断的 JSON。
+- **表单的字段提示重新显示**：`formModel.hint` 一直被赋值却从不渲染，账号配额 / 到期时间等输入框的「示例 50GB」「示例 2026-12-31 或 30d」提示因此丢失，现已在按键提示行前显示。
+
+### 移除
+
+- 删除已无用的 sing-box 重编译链路：`.github/workflows/singbox-v2ray-api.yml`（含 `prune` job）、`scripts/build_singbox_v2ray_api.sh`、`scripts/verify_singbox_arches.sh`、`scripts/prune_release_assets.py`、`scripts/plan_check.py`，以及只验证已删除内核管理的 `scripts/vps/verify-kernel-*.sh` / `verify-source-switch.sh`。内核已编译进面板，这些脚本维护的 `singbox-stable` / `singbox-alpha` 通道不再被任何代码消费。
+
+### 变更
+
+- `install.sh` 的源码构建兜底 `DEFAULT_TAGS` 与 `release/TAGS` 对齐为 `with_quic,with_utls,with_v2ray_api`；`main.go` 的默认版本号由过期的 `4.2.2` 改为与 `VERSION` 一致的 `5.0.0`。
+- 清理死代码：TUI 不可达的 `q` 分支、未使用的 `menuDescColumn` / `menuRowParts`、`progressModel.afterLinks` 字段，以及主题里已随左侧导航移除的 `Metrics.Gutter` / `Metrics.NavWidth`。
+
 ## [5.0.0] - 2026-09-26
 
 ### 破坏性变更

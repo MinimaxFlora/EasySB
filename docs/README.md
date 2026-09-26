@@ -7,7 +7,9 @@ EasySB without reading the whole tree. Keep it short, factual, and current.
 | :--- | :--- |
 | [architecture.md](architecture.md) | Where the code lives, what each module owns, how data flows |
 | [design.md](design.md) | Why the project is shaped this way |
-| [user-management.md](user-management.md) | Accounts, the subscription service and usage accounting (the v4 model) |
+| [core-builds.md](core-builds.md) | The sing-box core compiled into the panel, the build tag set, `core run` / `core check` |
+| [user-management.md](user-management.md) | Accounts, the subscription service and usage accounting (the v5 model) |
+| [toolbox.md](toolbox.md) | The measurement tools: what each one measures and where its numbers come from |
 | [conventions.md](conventions.md) | Naming, versioning, commit, and release preferences |
 | [pitfalls.md](pitfalls.md) | Traps already hit and how to avoid them |
 

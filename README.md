@@ -2,9 +2,9 @@
 
 <img src="assets/easysb-banner-en.webp" alt="EasySB" width="950">
 
-**5-in-1 sing-box deployment script · readable config templates · one-click core management**
+**5-in-1 sing-box deployment script · readable config templates · the core compiled in**
 
-[![sing-box](https://img.shields.io/badge/sing--box-%E2%89%A5%201.12.0-3B82F6?style=for-the-badge&logo=go&logoColor=white)](https://sing-box.sagernet.org/)
+[![sing-box](https://img.shields.io/badge/sing--box-compiled%20in-3B82F6?style=for-the-badge&logo=go&logoColor=white)](https://sing-box.sagernet.org/)
 ![License](https://img.shields.io/badge/License-GPL--3.0-22C55E?style=for-the-badge)
 [![Protocols](https://img.shields.io/badge/Protocols-5-8B5CF6?style=for-the-badge)](#supported-protocols)
 [![Platform](https://img.shields.io/badge/Platform-Linux-F59E0B?style=for-the-badge)](#quick-start)
