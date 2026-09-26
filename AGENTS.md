@@ -20,16 +20,19 @@ Read `docs/` first, then the package you need:
 ## Commands
 
 ```bash
-go build -o easysb .
-go vet ./...
-go test ./...
-gofmt -l .
+make            # build ./easysb with the tags from release/TAGS
+make check      # gofmt -l + go vet + go test, the pre-commit gate
+make dist       # cross-compile every release architecture into dist/
 ```
+
+`make help` lists every target. The bare Go commands still work; `make build` only
+adds `-trimpath`, the tags from `release/TAGS` and the commit stamp.
 
 Render one TUI frame without a TTY (good for layout checks):
 
 ```bash
-./easysb --render --width 100 --height 40
+make render     # or: ./easysb --render --width 100 --height 40
+make screens    # render every screen and assert the layout (python3)
 ```
 
 ## Rules that are easy to get wrong

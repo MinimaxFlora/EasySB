@@ -16,6 +16,7 @@ panel's own release (`internal/update`) and the optional BBR kernel packages
 ├── VERSION                         # program version, single source of truth
 ├── release/TAGS                    # the one definition of the build tag set
 ├── install.sh                      # one-click installer (binary or source)
+├── Makefile                        # build / test / dist entry points (see `make help`)
 ├── go.mod / go.sum                 # module github.com/MinimaxFlora/EasySB, Go 1.27.1
 ├── templates/                      # readable JSONC samples and subscription template
 │   ├── anytls/
