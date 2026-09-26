@@ -49,7 +49,10 @@ const (
 )
 
 // PanelPaths are the candidate locations of the panel binary, most preferred first.
-var PanelPaths = []string{PanelPath, "/usr/local/bin/sb", "/usr/bin/sb"}
+// A deb installs to /usr/bin, so that copy is listed here too: without it a package
+// install would have no stable path to name in a unit and would fall back to wherever
+// the running process happens to live.
+var PanelPaths = []string{PanelPath, "/usr/local/bin/sb", "/usr/bin/easysb", "/usr/bin/sb"}
 
 type Status struct {
 	ScriptVersion string

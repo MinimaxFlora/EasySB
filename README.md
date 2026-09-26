@@ -23,6 +23,7 @@
 - [Repository Layout](#repository-layout)
 - [Supported Protocols](#supported-protocols)
 - [Quick Start](#quick-start)
+- [Debian / Ubuntu Packages](#debian--ubuntu-packages)
 - [Capabilities](#capabilities)
 - [Interactive Menu](#interactive-menu)
 - [Command Line](#command-line)
@@ -60,6 +61,7 @@ EasySB is a 5-in-1 sing-box deployment tool for Linux VPS. It brings protocol de
 .
 ├── main.go                       # Go entrypoint (TUI)
 ├── install.sh                    # One-click installer (deps / binary)
+├── packaging/deb/                # .deb lifecycle scripts (postinst / postrm)
 ├── VERSION                       # Single source of truth for the release tag
 ├── AGENTS.md                     # Guide for AI agents and contributors
 ├── go.mod                        # Go module definition
@@ -124,6 +126,71 @@ Supports Debian / Ubuntu (systemd) and Alpine (OpenRC); run as root.
 
 ---
 
+## Debian / Ubuntu Packages
+
+Debian and Ubuntu get two ways in from the same release: a `.deb` for `dpkg -i`, and an apt repository for `apt install` and `apt upgrade`.
+
+The package carries the panel and the core together — the core is compiled into the binary — so installing it is the whole installation:
+
+| Path | Contents |
+| :--- | :--- |
+| `/usr/bin/easysb` | The panel, with the sing-box core compiled in |
+| `/usr/bin/sb` | Shortcut for `easysb` |
+| `/usr/lib/systemd/system/sing-box.service` | Node unit: `easysb core run -c /etc/sing-box/config.json` |
+| `/usr/lib/systemd/system/easysb.service` | Subscription service unit: `easysb --serve` |
+| `/usr/share/licenses/easysb/LICENSE` | License text |
+
+The units come from the binary itself (`sb --print-unit node|sub`), which is the same code the panel writes a unit from at runtime, so the packaged copy and the runtime copy cannot drift. The package deliberately does not enable or start either service: a fresh install has no node configuration yet, so run `sb`, configure the node, and the panel enables and starts the service.
+
+### dpkg
+
+Download the `.deb` for this host's architecture and install it:
+
+```bash
+# architectures: amd64, arm64, armhf, i386, riscv64, s390x
+sudo dpkg -i easysb_5.0.0_amd64.deb
+```
+
+### apt repository
+
+The apt index and the `.deb` files live on the release tag `debian`, so one sources entry covers every later version. Pick the form that matches how the index was published.
+
+Unsigned (the default until a signing key is configured):
+
+```bash
+sudo tee /etc/apt/sources.list.d/easysb.sources >/dev/null <<'EOF'
+Types: deb
+URIs: https://github.com/MinimaxFlora/EasySB/releases/download/debian
+Suites: ./
+Trusted: yes
+EOF
+
+sudo apt-get update
+sudo apt-get install easysb
+```
+
+Signed, once the repository has a `GPG_PRIVATE_KEY` secret (see below):
+
+```bash
+sudo mkdir -p /etc/apt/keyrings
+sudo curl -fsSL https://github.com/MinimaxFlora/EasySB/releases/download/debian/easysb.gpg -o /etc/apt/keyrings/easysb.asc
+sudo chmod a+r /etc/apt/keyrings/easysb.asc
+
+sudo tee /etc/apt/sources.list.d/easysb.sources >/dev/null <<'EOF'
+Types: deb
+URIs: https://github.com/MinimaxFlora/EasySB/releases/download/debian
+Suites: ./
+Signed-By: /etc/apt/keyrings/easysb.asc
+EOF
+
+sudo apt-get update
+sudo apt-get install easysb
+```
+
+To publish a signed index, add an armored, passphrase-free private key as the repository secret `GPG_PRIVATE_KEY`. The release workflow then signs `Release` and publishes `InRelease` plus the public key as `easysb.gpg` on the `debian` tag. Without the secret the index is published unsigned, and the `Trusted: yes` form is the one to use.
+
+---
+
 ## Capabilities
 
 | Capability | Description |
@@ -180,6 +247,8 @@ Files: server config `/etc/sing-box/config.json`, state `/etc/sing-box/easysb.co
 | `--remove-renew-timer` | Remove the renewal timer |
 | `--render --width N --height N` | Render the dashboard once and exit (debug; add `--screen system` to draw a subpage) |
 | `--serve` | Run the subscription service and the usage accounting loop (backs `easysb.service`) |
+| `--print-unit node\|sub` | Print a service unit body to stdout; the `.deb` is assembled from this exact text |
+| `--unit-exec PATH` | Executable path `--print-unit` writes into the unit (default `/usr/bin/easysb`) |
 | `--version` | Print the version and build hash |
 | `--help` | Print usage |
 
@@ -311,10 +380,11 @@ numbers come from — including why there is no geekbench or fio — is in
 | Item | Description |
 | :--- | :--- |
 | Source | `github.com/sagernet/sing-box` as a `go.mod` requirement (currently `v1.14.2`); installing the panel installs the core |
-| Node | `ExecStart=/usr/local/bin/easysb core run -c /etc/sing-box/config.json`; `/etc/sing-box/sing-box` no longer exists |
+| Node | `ExecStart=<panel> core run -c /etc/sing-box/config.json`, where `<panel>` is `/usr/local/bin/easysb` from `install.sh` or `/usr/bin/easysb` from the `.deb`; `/etc/sing-box/sing-box` no longer exists |
 | Validation | `easysb core check -c <config>` builds the configuration with the same engine that would serve it, which is what the deploy path runs before restarting |
 | Counters | `with_v2ray_api` (`release/TAGS`) is compiled in, and the deploy path writes `experimental.v2ray_api` only when `sbcore.StatsCapable()` says so, because a core without the API rejects the whole document |
 | Release | `.github/workflows/easysb-go-release.yml` reads the architecture list and every build flag from the `Makefile` (`make release-matrix` / `make dist-asset`, which read `release/TAGS`) and publishes the binaries under the `v<VERSION>` tag |
+| Packages | `make deb` wraps the same `dist/` binaries with fpm, reading the arch names and unit text from one place (`DEBARCH_*` and `sb --print-unit`); `make apt-index` turns those `.deb` files into the `debian` apt repository |
 
 ---
 
@@ -328,6 +398,10 @@ Go implementation (primary, requires Go 1.27.1; `go.mod` declares `go 1.27.1`, a
 make
 make check
 make dist
+
+# Package the .deb files, then build the apt index the repository publishes
+make deb
+make apt-index
 
 # Render the dashboard once without interaction (preview / screenshot / debug)
 make render

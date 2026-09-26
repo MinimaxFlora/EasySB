@@ -17,6 +17,7 @@ panel's own release (`internal/update`) and the optional BBR kernel packages
 ├── release/TAGS                    # the one definition of the build tag set
 ├── install.sh                      # one-click installer (binary or source)
 ├── Makefile                        # build / test / dist entry points (see `make help`)
+├── packaging/deb/                  # .deb lifecycle scripts: postinst / postrm
 ├── go.mod / go.sum                 # module github.com/MinimaxFlora/EasySB, Go 1.27.1
 ├── templates/                      # readable JSONC samples and subscription template
 │   ├── anytls/
@@ -54,6 +55,27 @@ editing.
 | `/etc/sysctl.d/99-easysb-bbr.conf`, `/etc/modules-load.d/easysb-bbr.conf` | `internal/bbr` | BBR settings EasySB writes itself, so they never collide with the kernel project's own drop-in; the sysctl file carries a comment recording the values it replaced, which is what the clear action restores. The installed kernel packages (`minimaxflora-bbrv3`) belong to dpkg and are removed through apt |
 | `/etc/sing-box/easysb-ui.conf` | `internal/prefs` | interface choices (skin, palette, marker set, language), `0644`, overridable with `EASYSB_UI_CONF` |
 | `/etc/systemd/system/easysb-acme.timer` or `/etc/init.d/easysb-acme` | `internal/cert` | certificate renewal: the panel issues and renews through lego in process, so this unit is the only thing that renews, and `--renew-certs` reloads the services afterwards. The unit names the path of the binary that wrote it, so it is installed from inside the panel (or with `--install-renew-timer`) rather than copied between hosts |
+
+## Packaging
+
+The `.deb` and the apt repository are built from the same `dist/` binaries as the
+release, so nothing is compiled twice and no arch list is repeated:
+
+| Piece | Where it comes from |
+| :--- | :--- |
+| Binary and shortcut | `dist/easysb-linux-<asset>` → `/usr/bin/easysb`, symlinked as `/usr/bin/sb` |
+| `sing-box.service` | `easysb --print-unit node --unit-exec /usr/bin/easysb`, the same `internal/service.UnitBody` the panel writes at runtime |
+| `easysb.service` | `easysb --print-unit sub --unit-exec /usr/bin/easysb`, the same `internal/subd.UnitBody` |
+| Debian architecture | `DEBARCH_<asset>` in the `Makefile` (armv7 → `armhf`, 386 → `i386`) |
+| apt index | `make apt-index` runs `apt-ftparchive` over `dist/*.deb`, signing when `GPG_KEY_ID` is set |
+
+The package ships the units but does not enable or start them: a fresh host has no
+node configuration, so the panel enables and starts the service once the user has
+configured it. Because the packaged unit lives in `/usr/lib/systemd/system` and the
+panel writes its own to `/etc/systemd/system`, the panel's copy wins while it exists
+and the packaged one is the fallback — the two never fight over one path. The apt
+index and the `.deb` files publish to the fixed `debian` release tag, because apt
+needs a stable URI; the binaries keep publishing to `v<VERSION>`.
 
 ## Packages
 

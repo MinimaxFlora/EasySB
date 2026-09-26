@@ -23,6 +23,7 @@
 - [仓库结构](#仓库结构)
 - [支持的协议](#支持的协议)
 - [快速开始](#快速开始)
+- [Debian / Ubuntu 软件包](#debian--ubuntu-软件包)
 - [EasySB 能力](#easysb-能力)
 - [交互菜单](#交互菜单)
 - [命令参数](#命令参数)
@@ -60,6 +61,7 @@ EasySB 是一个面向 Linux VPS 的 sing-box 五合一部署工具，把协议�
 .
 ├── main.go                       # Go 入口（TUI 主程序）
 ├── install.sh                    # 一键安装脚本（依赖 / 二进制）
+├── packaging/deb/                # .deb 生命周期脚本（postinst / postrm）
 ├── VERSION                       # 发布 tag 的唯一来源
 ├── AGENTS.md                     # 面向 AI Agent 与协作者的说明
 ├── go.mod                        # Go module 定义
@@ -126,6 +128,71 @@ sb --language E
 
 ---
 
+## Debian / Ubuntu 软件包
+
+Debian 与 Ubuntu 有两种安装方式，产物来自同一个 release：`dpkg -i` 直接装 `.deb`，或添加 apt 软件源后用 `apt install` / `apt upgrade`。
+
+包内同时带上面板和内核（内核已编译进二进制），装完即装好：
+
+| 路径 | 内容 |
+| :--- | :--- |
+| `/usr/bin/easysb` | 面板，sing-box 内核已编译在内 |
+| `/usr/bin/sb` | `easysb` 的快捷指令 |
+| `/usr/lib/systemd/system/sing-box.service` | 节点单元：`easysb core run -c /etc/sing-box/config.json` |
+| `/usr/lib/systemd/system/easysb.service` | 订阅服务单元：`easysb --serve` |
+| `/usr/share/licenses/easysb/LICENSE` | 许可证全文 |
+
+单元文件由二进制自己打印（`sb --print-unit node|sub`），与面板运行时写单元用的是同一段代码，所以包内的单元和运行时写下的单元不会各自漂移。安装时**不会**自动 enable 或 start：新装机器还没有节点配置，先运行 `sb` 配置节点，面板会自动 enable 并 start 服务。
+
+### dpkg
+
+按机器架构下载对应的 `.deb` 安装：
+
+```bash
+# 架构：amd64、arm64、armhf、i386、riscv64、s390x
+sudo dpkg -i easysb_5.0.0_amd64.deb
+```
+
+### apt 软件源
+
+apt 索引与 `.deb` 都放在固定标签 `debian` 上，所以一条软件源配置能一直用下去。按下述与实际发布状态相符的一种写法添加。
+
+未签名（在配置签名密钥之前，默认是这种）：
+
+```bash
+sudo tee /etc/apt/sources.list.d/easysb.sources >/dev/null <<'EOF'
+Types: deb
+URIs: https://github.com/MinimaxFlora/EasySB/releases/download/debian
+Suites: ./
+Trusted: yes
+EOF
+
+sudo apt-get update
+sudo apt-get install easysb
+```
+
+已签名（仓库配置了 `GPG_PRIVATE_KEY` 密钥之后）：
+
+```bash
+sudo mkdir -p /etc/apt/keyrings
+sudo curl -fsSL https://github.com/MinimaxFlora/EasySB/releases/download/debian/easysb.gpg -o /etc/apt/keyrings/easysb.asc
+sudo chmod a+r /etc/apt/keyrings/easysb.asc
+
+sudo tee /etc/apt/sources.list.d/easysb.sources >/dev/null <<'EOF'
+Types: deb
+URIs: https://github.com/MinimaxFlora/EasySB/releases/download/debian
+Suites: ./
+Signed-By: /etc/apt/keyrings/easysb.asc
+EOF
+
+sudo apt-get update
+sudo apt-get install easysb
+```
+
+要发布已签名的索引，把一份不带口令的 armored 私钥配置成仓库 secret `GPG_PRIVATE_KEY` 即可；发布工作流随后会签名 `Release`，并在 `debian` 标签上发布 `InRelease` 与公钥 `easysb.gpg`。没有该 secret 时索引保持未签名，使用上面的 `Trusted: yes` 写法。
+
+---
+
 ## EasySB 能力
 
 | 能力 | 说明 |
@@ -182,6 +249,8 @@ sb --language E
 | `--remove-renew-timer` | 移除证书续期定时器 |
 | `--render --width N --height N` | 渲染一次仪表盘后退出（调试用；加 `--screen system` 可渲染子页面） |
 | `--serve` | 运行订阅服务与流量统计循环（`easysb.service` 使用该模式） |
+| `--print-unit node\|sub` | 把服务单元文本输出到标准输出，发布时打 `.deb` 用的就是这段文本 |
+| `--unit-exec PATH` | `--print-unit` 写入单元的可执行文件路径（默认 `/usr/bin/easysb`） |
 | `--version` | 显示版本与构建短哈希 |
 | `--help` | 显示用法 |
 
@@ -297,10 +366,11 @@ sb --unlock             # 17 项解锁一次跑完的报告
 | 环节 | 说明 |
 | :--- | :--- |
 | 来源 | `github.com/sagernet/sing-box` 作为 `go.mod` 直接依赖（当前 `v1.14.2`）；装面板就等于装了内核 |
-| 节点 | `ExecStart=/usr/local/bin/easysb core run -c /etc/sing-box/config.json`；`/etc/sing-box/sing-box` 不再存在 |
+| 节点 | `ExecStart=<面板> core run -c /etc/sing-box/config.json`，`<面板>` 在 `install.sh` 安装下是 `/usr/local/bin/easysb`，在 `.deb` 安装下是 `/usr/bin/easysb`；`/etc/sing-box/sing-box` 不再存在 |
 | 校验 | `easysb core check -c <配置>` 用将来真正服务节点的同一套引擎构建配置，部署路径重启服务前跑的就是它 |
 | 流量统计 | `with_v2ray_api`（定义在 `release/TAGS`）已编入；部署路径只在 `sbcore.StatsCapable()` 为真时写 `experimental.v2ray_api`，因为不带该 API 的内核会整份拒绝配置 |
 | 程序发行 | `.github/workflows/easysb-go-release.yml` 从 `Makefile` 读取架构清单与全部构建参数（`make release-matrix` / `make dist-asset`，二者读的都是 `release/TAGS`），以 tag `v<VERSION>` 发布各架构二进制 |
+| 软件包 | `make deb` 用 fpm 把同一批 `dist/` 二进制打成 `.deb`，架构名与单元文本都只有一处来源（`DEBARCH_*` 与 `sb --print-unit`）；`make apt-index` 再把这些 `.deb` 变成 `debian` 标签上的 apt 源 |
 
 ---
 
@@ -313,6 +383,10 @@ Go 版（主实现，需要 Go 1.27.1，`go.mod` 已声明 `go 1.27.1`，启用 
 make
 make check
 make dist
+
+# 打 .deb，并生成仓库发布的 apt 索引
+make deb
+make apt-index
 
 # 无交互渲染一次仪表盘（用于预览 / 截图 / 排错）
 make render

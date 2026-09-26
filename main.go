@@ -68,6 +68,8 @@ func main() {
 	themeFlag := flag.String("theme", "", "配色方案 / color theme: auto, dark, light")
 	skinFlag := flag.String("skin", "", "界面皮肤 / UI skin: jade, aurora, ember, graphite (or a-d)")
 	showVersion := flag.Bool("version", false, "显示版本 / show version")
+	printUnit := flag.String("print-unit", "", "打印服务单元文本，供打包与脚本使用：node 或 sub / print a service unit body for packaging and scripts: node or sub")
+	unitExec := flag.String("unit-exec", "/usr/bin/easysb", "配合 --print-unit 指定 ExecStart 的路径 / executable path that --print-unit writes into the unit")
 	render := flag.Bool("render", false, "渲染一次仪表盘后退出 / render once and exit")
 	screen := flag.String("screen", "", "配合 --render 渲染指定界面：栏目 id（toolbox/node/domain/bbr…）、system、task、toolbox-report 或 bbr-versions / with --render, draw this screen by section id, or system, task, toolbox-report, bbr-qdisc, bbr-versions")
 	applyFirewall := flag.Bool("apply-firewall", false, "应用端口跳跃防火墙规则 / apply port-hopping firewall rules")
@@ -83,6 +85,11 @@ func main() {
 
 	if *showVersion {
 		fmt.Printf("EasySB %s\n", versionLine())
+		return
+	}
+
+	if *printUnit != "" {
+		runPrintUnit(*printUnit, *unitExec)
 		return
 	}
 
@@ -136,6 +143,21 @@ func main() {
 	if _, err := program.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
+	}
+}
+
+// runPrintUnit writes a service unit body to stdout. The .deb is assembled from this
+// output, so the unit shipped in the package is the same text the panel writes at
+// runtime and there is no second copy to drift.
+func runPrintUnit(kind, exe string) {
+	switch kind {
+	case "node":
+		fmt.Print(service.UnitBody(exe, service.Systemd))
+	case "sub":
+		fmt.Print(subd.UnitBody(exe))
+	default:
+		fmt.Fprintf(os.Stderr, "unknown unit %q: use node or sub\n", kind)
+		os.Exit(2)
 	}
 }
 

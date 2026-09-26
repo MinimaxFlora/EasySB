@@ -31,6 +31,9 @@
 - Release tags are `v<VERSION>`. The workflow, `install.sh`, and
   `internal/update` all derive the tag from the version; do not create a second
   naming scheme.
+- The apt repository is the one exception: it publishes to the fixed tag
+  `debian`, because apt needs a URI that never changes, and it carries only the
+  generated index and the `.deb` files. Binaries stay on `v<VERSION>`.
 
 ## Commits
 
@@ -59,6 +62,10 @@
 - `.github/workflows/easysb-go-release.yml` cross-compiles `linux/{amd64,arm64,armv7,386,riscv64,s390x}`,
   runs on push to `master` for changes under the watched paths, and publishes
   all assets to the `v<VERSION>` release.
+- The same binaries are wrapped into `.deb` files by `make deb` (fpm) and into the
+  apt index by `make apt-index` (`apt-ftparchive`). The Debian arch names live in
+  the Makefile's `DEBARCH_*`, and the packaged units come from
+  `easysb --print-unit`; do not hand-write a unit under `packaging/`.
 - After a force push, trigger the workflow with a normal push; force pushes do
   not reliably raise a `push` event for Actions.
 
