@@ -5,7 +5,9 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/lipgloss/v2"
 	"github.com/MinimaxFlora/EasySB/internal/state"
+
 	"github.com/MinimaxFlora/EasySB/internal/theme"
 	"github.com/MinimaxFlora/EasySB/internal/ui"
 )
@@ -133,7 +135,7 @@ func (a *App) rootSlots(w int, l layout) []string {
 	if !a.ready {
 		return append(a.boxAt(a.lang.T("card_welcome"), []string{s.Faint(a.lang.T("loading") + "…")}, w, l.span()), blankRows(l.tail)...)
 	}
-	out := a.boxAt(a.lang.T("card_welcome"), a.rootCardBody(w, heroLevels), w, l.board)
+	out := a.boxAt(a.lang.T("card_welcome"), a.rootCardBody(w, a.heroLevelFor(w, boxRows(l.board))), w, l.board)
 	out = append(out, blankRows(l.gap)...)
 	inner := ui.InnerWidth(s, w)
 	root := a.stack[0]
@@ -187,17 +189,66 @@ func (a *App) sectionPanel(w int, limit int) (string, []string) {
 // entry. Every menu is drawn the same way — the main menu and the pages under it — which is
 // what makes the box the same size on every page.
 func (a *App) menuContentRows(w int, height int) (string, []string) {
-	inner := ui.InnerWidth(a.style(), w)
-	nodes := a.current().nodes
-	if a.hasNavRow() {
-		cells := make([]*node, 0, len(nodes)+1)
-		cells = append(cells, nodes...)
-		// A nil node is the way back out: menuCells renders it from the navigation label,
-		// which is the same row the one-column layout used to append.
-		cells = append(cells, nil)
-		return a.current().title(a.lang), a.menuCells(cells, a.index, inner)
+	s := a.style()
+	inner := ui.InnerWidth(s, w)
+	cur := a.current()
+	if cur.id == "root" {
+		// The main menu is the box every page is measured against, and it keeps the
+		// two-column layout it has always had.
+		return cur.title(a.lang), a.menuCells(cur.nodes, a.index, inner)
 	}
-	return a.current().title(a.lang), a.menuCells(nodes, a.index, inner)
+	return cur.title(a.lang), a.entryRows(cur, inner, boxRows(height))
+}
+
+// entryRows lists a page's entries one per line, with the description beside the label, and
+// keeps the cursor in view. When a page has more entries than the box holds it says "+N" in the
+// last row instead of growing: the box is the size of the main menu's, and the entries left out
+// stay reachable by their number.
+func (a *App) entryRows(m *menu, inner, limit int) []string {
+	if limit < 1 {
+		limit = 1
+	}
+	total := len(m.nodes)
+	nav := a.hasNavRow()
+	if nav {
+		total++
+	}
+	if total > limit {
+		// More entries than the box holds one per line. They fall back to the panel's
+		// columns — the layout the main menu already uses — rather than disappearing behind
+		// the "+N" row: an entry nobody can see is an entry nobody can reach.
+		cells := make([]*node, 0, total)
+		cells = append(cells, m.nodes...)
+		if nav {
+			// A nil node is the row that leads back out.
+			cells = append(cells, nil)
+		}
+		return a.menuCells(cells, a.index, inner)
+	}
+	labelCol := a.menuLabelColumn()
+	rows := make([]string, 0, total)
+	for i, n := range m.nodes {
+		rows = append(rows, a.menuRow(i == a.index, i, n, inner, labelCol))
+	}
+	if nav {
+		// The row that leads back out of the page, numbered like the rest.
+		rows = append(rows, a.navRow(a.onNavRow(), total-1, inner))
+	}
+	return rows
+}
+
+// navRow renders the entry that leaves the page: the same numbering, the navigation label, and
+// the selection bar when the cursor is on it.
+func (a *App) navRow(selected bool, i int, inner int) string {
+	marker := "  "
+	if selected {
+		marker = "▌ "
+	}
+	line := " " + marker + theme.Truncate(a.numberedLabel(i, nil), maxInt(0, inner-3))
+	if selected {
+		return a.palette.SelectedRow(theme.Pad(line, inner))
+	}
+	return a.palette.Value(line)
 }
 
 // sectionMenuRows is the height the entries box is never squeezed below: three
@@ -409,13 +460,70 @@ func (a *App) menuCells(nodes []*node, cursor int, inner int) []string {
 	return rows
 }
 
-// menuCell renders one entry inside a column: its number and label, and the description
-// beside them whenever the column is wide enough to hold both. The description is what tells
-// an operator what an entry does, so it stays with the entry rather than moving to a line of
-// its own — which is what lets every page use the same two-column box the main menu uses.
+// menuCell renders one entry inside a column: its number and its name, nothing else. The main
+// menu has always been drawn this way, and it is the box every other page is sized from, so the
+// descriptions stay off these rows and the selected entry's description appears under the box
+// where it has always been (see the tail in layout.go).
 func (a *App) menuCell(selected bool, i int, n *node, cellW int) string {
-	descCol := a.menuDescColumn(cellW, a.menuLabelColumn())
-	return a.menuRow(selected, i, n, cellW, descCol, cellW)
+	marker := "  "
+	if selected {
+		marker = "▌ "
+	}
+	line := theme.Pad(" "+marker+theme.Truncate(a.numberedLabel(i, n), maxInt(0, cellW-3)), cellW)
+	if selected {
+		return a.palette.SelectedRow(line)
+	}
+	return a.palette.Bold(a.palette.Text, line)
+}
+
+// menuRow renders one entry of a page inside a section: the number and the name, then the
+// description beside them, truncated to whatever the row has left. These pages list one entry
+// per line, so the description has room that a column of the main menu does not.
+func (a *App) menuRow(selected bool, i int, n *node, inner int, labelCol int) string {
+	marker := "  "
+	if selected {
+		marker = "▌ "
+	}
+	line := " " + marker + theme.Truncate(a.numberedLabel(i, n), maxInt(0, inner-3))
+	desc := a.nodeDesc(n)
+	if desc != "" {
+		gap := labelCol - 3 - lipgloss.Width(a.numberedLabel(i, n))
+		if gap < 2 {
+			gap = 2
+		}
+		if room := inner - 3 - lipgloss.Width(a.numberedLabel(i, n)) - gap; room >= 4 {
+			line += strings.Repeat(" ", gap) + theme.Truncate(desc, room)
+		}
+	}
+	if selected {
+		// The bar spans the whole row so the cursor does not change length as it moves.
+		return a.palette.SelectedRow(theme.Pad(line, inner))
+	}
+	if desc == "" {
+		return a.palette.Bold(a.palette.Text, line)
+	}
+	return a.palette.Bold(a.palette.Text, " "+marker+theme.Truncate(a.numberedLabel(i, n), maxInt(0, inner-3))) +
+		a.palette.Dim(line[len(" "+marker+theme.Truncate(a.numberedLabel(i, n), maxInt(0, inner-3))):])
+}
+
+// nodeDesc is one entry's description in the current language, empty when it has none.
+func (a *App) nodeDesc(n *node) string {
+	if n == nil || n.desc == nil {
+		return ""
+	}
+	return n.desc(a.lang)
+}
+
+// heroLevelFor is the largest wordmark level whose card fits the rows the board slot has. The
+// slot is fixed now, so the welcome card adapts to it instead of the card deciding the slot:
+// on a short terminal the panel drops the quote, then the tagline, and keeps the live vitals.
+func (a *App) heroLevelFor(w, rows int) int {
+	for level := heroLevels; level > 0; level-- {
+		if len(a.rootCardBody(w, level)) <= rows {
+			return level
+		}
+	}
+	return 0
 }
 
 // heroBody is the wordmark block shown at the top of a tall main menu: the block

@@ -249,3 +249,43 @@ func mibPerSec(n int64, d time.Duration) float64 {
 	}
 	return float64(n) / (1 << 20) / d.Seconds()
 }
+
+// maxRepeatPasses bounds how many passes one reading may cover when the clock is too coarse to
+// time a single one.
+const maxRepeatPasses = 1024
+
+// timed runs a memory pass and reports how long it took, how many passes that was, and the last
+// accumulator. A pass faster than the clock's resolution would otherwise be measured as zero
+// nanoseconds, and a zero-nanosecond reading becomes a bandwidth of 0 MB/s — not a slow host,
+// just a clock that did not move. The pass is therefore repeated until the clock advances, and
+// the reading covers all of them.
+func timed(now func() time.Time, pass func() uint64) (time.Duration, int, uint64) {
+	start := now()
+	var acc uint64
+	for runs := 1; ; runs++ {
+		acc = pass()
+		elapsed := now().Sub(start)
+		if elapsed > 0 || runs >= maxRepeatPasses {
+			return elapsed, runs, acc
+		}
+	}
+}
+
+// timedIO is timed for IO that can fail: it runs a pass and reports how long it took and how
+// many bytes it moved, repeating it while the clock has not moved. A pass faster than the
+// clock's resolution would otherwise be timed as zero and printed as 0 MB/s or 0 IOPS — a clock
+// artefact where a measurement belongs. The reading covers every pass.
+func timedIO(now func() time.Time, pass func() (int64, error)) (time.Duration, int64, error) {
+	start := now()
+	var total int64
+	for runs := 1; ; runs++ {
+		n, err := pass()
+		if err != nil {
+			return 0, total, err
+		}
+		total += n
+		if elapsed := now().Sub(start); elapsed > 0 || runs >= maxRepeatPasses {
+			return elapsed, total, nil
+		}
+	}
+}

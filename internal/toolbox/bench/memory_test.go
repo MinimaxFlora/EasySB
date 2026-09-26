@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/MinimaxFlora/EasySB/internal/toolbox"
 )
@@ -128,4 +129,55 @@ func seedSum(n int, seed uint64) uint64 {
 		acc += uint64(byte(i))
 	}
 	return acc
+}
+
+// A reading that lands inside one clock tick still has to produce a rate. The platform this
+// panel is developed on has a coarse clock: a few megabytes are read and copied faster than it
+// moves, and the reading used to come out as 0 MB/s — a clock artefact printed where a
+// measurement belongs. The pass is repeated until the clock moves, and the reading covers all
+// of them.
+func TestMemoryMeasurementSurvivesACoarseClock(t *testing.T) {
+	stubMemoryProbe(t, 0, false)
+	// A clock that stands still for two of every three calls: a single pass is faster than
+	// one tick, so the measurement has to repeat the pass to have anything to divide by.
+	calls := 0
+	epoch := time.Now()
+	clock := func() time.Time {
+		calls++
+		return epoch.Add(time.Duration(calls/3) * time.Millisecond)
+	}
+	res, err := RunMemoryWith(context.Background(), toolbox.Options{Clock: clock}, smallScale())
+	if err != nil {
+		t.Fatalf("RunMemoryWith: %v", err)
+	}
+	for i, row := range res.Rows {
+		v, _ := scoreOf(t, row[1])
+		if v <= 0 {
+			t.Errorf("row %d (%s) bandwidth = %v under a coarse clock, want a positive rate", i, row[0], v)
+		}
+	}
+}
+
+// timed is the helper that keeps a fast pass from being timed as zero.
+func TestTimedRepeatsUntilTheClockMoves(t *testing.T) {
+	calls := 0
+	epoch := time.Now()
+	now := func() time.Time {
+		calls++
+		return epoch.Add(time.Duration(calls/4) * time.Millisecond)
+	}
+	passes := 0
+	d, runs, acc := timed(now, func() uint64 {
+		passes++
+		return uint64(passes)
+	})
+	if d <= 0 {
+		t.Fatalf("duration = %v, want a positive reading", d)
+	}
+	if runs < 2 {
+		t.Fatalf("runs = %d, want the pass repeated until the clock moved", runs)
+	}
+	if passes != runs || acc != uint64(runs) {
+		t.Fatalf("runs = %d with %d passes and accumulator %d", runs, passes, acc)
+	}
 }

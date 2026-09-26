@@ -103,22 +103,32 @@ the main page, which is the page an operator sees first:
 ┌ 提示 ┐   the keys that work on this page
 ```
 
-`internal/tui/layout.go` owns the slots. `layoutFor` measures the top box from the main page's
-own board and the bottom box from the panel's tallest menu, and `fit` shrinks them only when
-the terminal is too short — the 看板 first, because the entries are what an operator came for.
-Every page renders into those slots with `boxAt`, which pads a box with blank rows rather than
-letting it shrink, so a page with four entries and a page with nine still line up.
+`internal/tui/layout.go` owns the slots. `layoutFor` sizes them in one order and every page
+uses the result, so the frame never moves under the cursor:
 
-Two consequences are deliberate:
+- the tail (the hovered entry's description, then the key hints) is reserved first, because it
+  is part of every page;
+- the entries box is the tallest menu the panel lists one entry per line — the hardware group's
+  six tools plus the way back — which is nine rows at a hundred columns;
+- the 看板 takes what is left, up to the height of the main page's own welcome card. The blank
+  row between the boxes goes before the card loses a row, and on a terminal too short for
+  everything it is the 看板 that shrinks: it is the one slot whose content can say
+  "…还有 N 行未显示" and still be useful.
 
-- **Nothing scrolls.** `clipRows` cuts content to the rows a box has and ends on a line that
-  says how many rows were left out, and the toolbox 看板 is written as a summary — a count of
-  what has been measured, then the newest results it can show — instead of a table it could not
-  fit. A measurement that does not fit its box is counted on screen, never hidden behind a key.
-- **The bottom box is sized for the panel's tallest menu** (the account detail page's twelve
-  entries plus the way back), not for the main menu alone. A menu taller than its box would hide
-  its last entries with no key able to reach them, so the slot has to hold the worst case; the
-  main menu then fills five of its seven rows.
+The 看板's content adapts to the rows it was given rather than deciding them: the welcome card
+drops the quote, then the tagline, then the wordmark itself, and keeps its live vitals; every
+other page's board is written into the same rows. `boxAt` pads a box with blank rows rather than
+letting it shrink, so a page with four entries and a page with nine line up.
+
+`dashboard.go` lays the entries out: the main menu keeps the two columns and the bare
+number-and-name rows it has always had, and every other page lists one entry per line with the
+description beside the label — that is what the line after the box repeats in full, so a
+description too wide for the row can still be read to the end. A page that has outgrown one
+entry per line (the account detail page's twelve operations) falls back to the panel's columns
+instead of hiding half of itself behind a "+N" row: an entry nobody can see is an entry nobody
+can reach. Nothing scrolls — `clipRows` cuts content to the rows a box has and ends on a line
+that says how many rows were left out, and the toolbox 看板 is written as a summary, a count of
+what has been measured followed by the newest results it can show.
 
 A running task and a finished report draw **one** box over both slots — the same rows in the
 same place, so the screen does not change shape when work starts or ends. Destination screens

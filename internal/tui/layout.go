@@ -43,22 +43,25 @@ const (
 	minMenuRows  = 5
 )
 
-// menuSlotCells is the largest menu the panel builds: the account detail page lists twelve
-// entries, and a page inside a section adds the row that leads back out. The fixed slot is
-// sized for that, so no menu can ever be pushed out of its box — an entry the box cannot hold
-// would be unreachable, because no page of this panel scrolls.
-const menuSlotCells = 13
+// menuSlotCells is the tallest menu the panel lists one entry per line: the hardware group,
+// which is six tools and the row that leads back out of it. The fixed slot is sized for that,
+// because an entry the box cannot hold would be unreachable — no page of this panel scrolls.
+//
+// The account detail page lists twelve operations, which is taller on purpose: it is a page of
+// actions rather than a list of peers, and dashboard.go lays a page that has outgrown one entry
+// per line out in the panel's columns instead of hiding half of it behind the "+N" row. The
+// result is the shape of the main menu, which is the one layout an operator already knows.
+const menuSlotCells = 7
 
-// menuSlotRows is the height of the bottom box: the largest menu laid out in the panel's
-// columns, plus the box's own borders. The main menu has fewer entries than this and leaves
-// the extra rows blank, which is the price of every page having the same two boxes.
+// menuSlotRows is the height of the bottom box: that menu plus the box's own borders. The main
+// menu has fewer entries and leaves the extra rows blank, which is the price of every page
+// having the same two boxes.
 func (a *App) menuSlotRows(w int) int {
-	s := a.style()
-	inner := ui.InnerWidth(s, w)
 	cells := menuSlotCells
-	if colW := (inner - 1) / 2; colW >= 16 {
-		// Two columns: half the entries per row, rounded up.
-		cells = (menuSlotCells + 1) / 2
+	// On a narrow terminal the main menu is one column too, and it has ten entries: the box
+	// follows whichever of the two needs more rows.
+	if colW := (ui.InnerWidth(a.style(), w) - 1) / 2; colW < 16 {
+		cells = maxInt(cells, len(a.stack[0].nodes))
 	}
 	return cells + 2
 }
@@ -72,21 +75,37 @@ func (a *App) layoutFor(w, h int) layout {
 	if s.Met.Compact {
 		gap = 0
 	}
-	l := layout{
-		board: len(a.rootCard(w, heroLevels)),
-		gap:   gap,
-		menu:  a.menuSlotRows(w),
+	// The tail is not what gives way: the description line and the key hints are part of every
+	// page. On a short terminal it is the 看板 that shrinks — it is the one slot whose content
+	// can say "…还有 N 行" and still be useful — and the entries box only shrinks once the
+	// board is already at its floor.
+	tail := a.tailRows(h)
+	if max := h - gap - minBoardRows - minMenuRows; tail > max {
+		tail = maxInt(1, max)
 	}
-	// The tail gives way first. A terminal that is one row short of the full layout would
-	// otherwise cut a row off the 看板 — a measurement — to keep a hint box three rows tall,
-	// which is the wrong trade: the hint says the same thing in one line.
-	for tail := a.tailRows(h); tail > 1; tail-- {
-		if l.board+l.gap+l.menu+tail <= h {
-			l.tail = tail
-			return l
+	menu := a.menuSlotRows(w)
+	if max := h - gap - tail - minBoardRows; menu > max {
+		menu = maxInt(minMenuRows, max)
+	}
+	// The board never grows past the welcome card it was measured from: a taller terminal
+	// leaves the empty rows at the bottom rather than stretching the card, which is the look
+	// the panel has always had.
+	boardFor := func(gap int) int {
+		board := h - gap - menu - tail
+		if full := len(a.rootCard(w, heroLevels)); board > full {
+			board = full
 		}
+		if board < minBoardRows {
+			board = minBoardRows
+		}
+		return board
 	}
-	l.tail = 1
+	l := layout{board: boardFor(gap), gap: gap, menu: menu, tail: tail}
+	// The blank row between the boxes is only a spacer, so it is the first thing to go when it
+	// buys the 看板 a row it can use: a card that fits whole beats a gap.
+	if gap > 0 && boardFor(0) > l.board {
+		l.board, l.gap = boardFor(0), 0
+	}
 	return l.fit(h)
 }
 
@@ -100,6 +119,10 @@ func (l layout) fit(h int) layout {
 			l.board--
 		case l.menu > minMenuRows:
 			l.menu--
+		case l.tail > 1:
+			// Only once both boxes are at their floor: the hint then says the same thing
+			// in fewer rows.
+			l.tail--
 		case l.gap > 0:
 			l.gap--
 		default:

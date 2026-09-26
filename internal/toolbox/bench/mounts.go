@@ -141,68 +141,82 @@ func benchMount(ctx context.Context, opts toolbox.Options, s Scale, m Mount) (wr
 	}
 
 	opts.Logf("bench/disks: writing %s to %s", humanSize(size), path)
-	var written int64
-	start := opts.Now()
-	for written < size {
-		if err := checkCtx(ctx, "disks/write"); err != nil {
-			return 0, 0, err
+	// Both phases go through timedIO: on a fast device, or with the small size the tests use,
+	// one pass can finish inside a single tick of the clock, and a zero-nanosecond reading
+	// would be printed as "0 MB/s" — an artefact of the clock, not a measurement of the mount.
+	writePass := func() (int64, error) {
+		if _, err := f.Seek(0, io.SeekStart); err != nil {
+			return 0, fmt.Errorf("seek %s: %w", path, err)
 		}
-		n := int64(len(block))
-		if remaining := size - written; remaining < n {
-			n = remaining
+		var written int64
+		for written < size {
+			if err := checkCtx(ctx, "disks/write"); err != nil {
+				return written, err
+			}
+			n := int64(len(block))
+			if remaining := size - written; remaining < n {
+				n = remaining
+			}
+			w, werr := f.Write(block[:n])
+			written += int64(w)
+			if werr != nil {
+				return written, fmt.Errorf("writing %s failed after %s: %w", path, humanSize(written), werr)
+			}
+			if w == 0 {
+				return written, fmt.Errorf("writing %s stalled at %s", path, humanSize(written))
+			}
 		}
-		w, werr := f.Write(block[:n])
-		written += int64(w)
-		if werr != nil {
-			return 0, 0, fmt.Errorf("writing %s failed after %s: %w", path, humanSize(written), werr)
-		}
-		if w == 0 {
-			return 0, 0, fmt.Errorf("writing %s stalled at %s", path, humanSize(written))
-		}
+		return written, nil
 	}
-	writeDur := opts.Now().Sub(start)
+	writeDur, writeBytes, err := timedIO(opts.Now, writePass)
+	if err != nil {
+		return 0, 0, err
+	}
+	written := size
 	if err := f.Sync(); err != nil {
 		return 0, 0, fmt.Errorf("fsync of %s failed: %w", path, err)
 	}
-	if _, err := f.Seek(0, 0); err != nil {
-		return 0, 0, fmt.Errorf("seek %s: %w", path, err)
-	}
-	var (
-		got int64
-		sum = uint64(fnvOffset)
-	)
-	start = opts.Now()
-	for got < written {
-		if err := checkCtx(ctx, "disks/read"); err != nil {
-			return 0, 0, err
+	var sum = uint64(fnvOffset)
+	readDur, readBytes, err := timedIO(opts.Now, func() (int64, error) {
+		if _, err := f.Seek(0, io.SeekStart); err != nil {
+			return 0, fmt.Errorf("seek %s: %w", path, err)
 		}
-		n := int64(len(block))
-		if remaining := written - got; remaining < n {
-			n = remaining
-		}
-		r, rerr := f.Read(block[:n])
-		if r > 0 {
-			got += int64(r)
-			sum = foldBlock(sum, block[:r])
-		}
-		if rerr != nil {
-			if errors.Is(rerr, io.EOF) {
+		var got int64
+		for got < written {
+			if err := checkCtx(ctx, "disks/read"); err != nil {
+				return got, err
+			}
+			n := int64(len(block))
+			if remaining := written - got; remaining < n {
+				n = remaining
+			}
+			r, rerr := f.Read(block[:n])
+			if r > 0 {
+				got += int64(r)
+				sum = foldBlock(sum, block[:r])
+			}
+			if rerr != nil {
+				if errors.Is(rerr, io.EOF) {
+					break
+				}
+				return got, fmt.Errorf("reading %s: %w", path, rerr)
+			}
+			if r == 0 {
 				break
 			}
-			return 0, 0, fmt.Errorf("reading %s: %w", path, rerr)
 		}
-		if r == 0 {
-			break
+		if got < written {
+			// A short read is a failure of this mount, not a throughput of zero: the panel
+			// must not report "0 MB/s" as if it had measured something.
+			return got, fmt.Errorf("reading %s returned %s of %s", path, humanSize(got), humanSize(written))
 		}
+		return got, nil
+	})
+	if err != nil {
+		return 0, 0, err
 	}
-	if got < written {
-		// A short read is a failure of this mount, not a throughput of zero: the panel must
-		// not report "0 MB/s" as if it had measured something.
-		return 0, 0, fmt.Errorf("reading %s returned %s of %s", path, humanSize(got), humanSize(written))
-	}
-	readDur := opts.Now().Sub(start)
-	opts.Logf("bench/disks: %s: %s read back, checksum %#x", m.Point, humanSize(got), sum)
-	return mibPerSec(written, writeDur), mibPerSec(got, readDur), nil
+	opts.Logf("bench/disks: %s: %s read back, checksum %#x", m.Point, humanSize(readBytes), sum)
+	return mibPerSec(writeBytes, writeDur), mibPerSec(readBytes, readDur), nil
 }
 
 // Mounts reads the kernel's mount table, preferring mountinfo. A platform without /proc

@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/MinimaxFlora/EasySB/internal/toolbox"
 )
@@ -413,5 +414,37 @@ func TestMountsReadsTheRealTable(t *testing.T) {
 	t.Logf("%d mounts: %d testable, %d skipped", len(mounts), len(testable), len(skipped))
 	for _, sk := range skipped {
 		t.Logf("  skipped %s (%s, %s): %s", sk.Mount.Point, sk.Mount.Device, sk.Mount.FSType, sk.Reason)
+	}
+}
+
+// The per-disk smoke measurement has the same clock problem the memory pass has: a small file
+// on a fast device is written and read back before the clock moves, and the reading used to
+// come out as 0 MB/s. A clock that only advances every few calls pins the fix.
+func TestRunDisksWithSurvivesACoarseClock(t *testing.T) {
+	dir := t.TempDir()
+	source := func() ([]Mount, error) {
+		return []Mount{{Point: dir, Device: "/dev/vda1", FSType: "ext4", Options: []string{"rw"}}}, nil
+	}
+	calls := 0
+	epoch := time.Now()
+	clock := func() time.Time {
+		calls++
+		return epoch.Add(time.Duration(calls/3) * time.Millisecond)
+	}
+	res, err := RunDisksWith(context.Background(), toolbox.Options{Clock: clock}, smallScale(), source)
+	if err != nil {
+		t.Fatalf("RunDisksWith: %v", err)
+	}
+	if len(res.Rows) != 1 {
+		t.Fatalf("got %d rows, want one: %v", len(res.Rows), res.Rows)
+	}
+	for i, cell := range res.Rows[0][2:] {
+		v, unit := scoreOf(t, cell)
+		if v <= 0 {
+			t.Errorf("%s = %v under a coarse clock, want a positive rate", res.Headers[2+i], v)
+		}
+		if unit != unitMBps {
+			t.Errorf("%s unit = %q, want %q", res.Headers[2+i], unit, unitMBps)
+		}
 	}
 }

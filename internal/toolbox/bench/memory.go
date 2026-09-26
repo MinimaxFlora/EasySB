@@ -68,30 +68,25 @@ func RunMemoryWith(ctx context.Context, opts toolbox.Options, s Scale) (toolbox.
 
 	opts.Logf("bench/memory: %s buffers, best of %d rounds", humanSize(int64(n)), s.MemRounds)
 
-	writeDur, writeCheck := bestRound(s.MemRounds, func() (time.Duration, uint64) {
-		start := opts.Now()
+	writeDur, writeRuns, writeCheck := bestRound(s.MemRounds, opts.Now, func() uint64 {
 		memWritePass(src, seed)
-		elapsed := opts.Now().Sub(start)
 		// The read-back is outside the timer: it proves the stores landed (the compiler
 		// cannot drop a store it then has to read) without paying for a second traversal
 		// in the number.
-		return elapsed, memReadPass(src)
+		return memReadPass(src)
 	})
 	if err := checkCtx(ctx, "memory"); err != nil {
 		return toolbox.Result{}, err
 	}
 
-	readDur, readCheck := bestRound(s.MemRounds, func() (time.Duration, uint64) {
-		start := opts.Now()
-		check := memReadPass(src)
-		return opts.Now().Sub(start), check
+	readDur, readRuns, readCheck := bestRound(s.MemRounds, opts.Now, func() uint64 {
+		return memReadPass(src)
 	})
 	if err := checkCtx(ctx, "memory"); err != nil {
 		return toolbox.Result{}, err
 	}
 
-	copyDur, copyCheck := bestRound(s.MemRounds, func() (time.Duration, uint64) {
-		start := opts.Now()
+	copyDur, copyRuns, copyCheck := bestRound(s.MemRounds, opts.Now, func() uint64 {
 		for off := 0; off < n; off += memChunk {
 			end := off + memChunk
 			if end > n {
@@ -99,8 +94,7 @@ func RunMemoryWith(ctx context.Context, opts toolbox.Options, s Scale) (toolbox.
 			}
 			copy(dst[off:end], src[off:end])
 		}
-		elapsed := opts.Now().Sub(start)
-		return elapsed, memReadPass(dst)
+		return memReadPass(dst)
 	})
 	// The buffers must outlive the timers; without this the compiler is entitled to treat
 	// the second one as dead once the checksums are computed.
@@ -110,19 +104,19 @@ func RunMemoryWith(ctx context.Context, opts toolbox.Options, s Scale) (toolbox.
 	res := toolbox.Result{Headers: []string{"Item", "Bandwidth", "Notes"}}
 	res.Rows = append(res.Rows, []string{
 		"Sequential write",
-		rate(mibPerSec(int64(n), writeDur), unitMBps),
+		rate(mibPerSec(int64(n)*int64(writeRuns), writeDur), unitMBps),
 		fmt.Sprintf("%s written with 8-byte stores, best of %d in %s",
 			humanSize(int64(n)), s.MemRounds, dur(writeDur)),
 	})
 	res.Rows = append(res.Rows, []string{
 		"Sequential read",
-		rate(mibPerSec(int64(n), readDur), unitMBps),
+		rate(mibPerSec(int64(n)*int64(readRuns), readDur), unitMBps),
 		fmt.Sprintf("%s summed with 8-byte loads, best of %d in %s",
 			humanSize(int64(n)), s.MemRounds, dur(readDur)),
 	})
 	res.Rows = append(res.Rows, []string{
 		"Copy (read+write)",
-		rate(mibPerSec(int64(n)*2, copyDur), unitMBps),
+		rate(mibPerSec(int64(n)*2*int64(copyRuns), copyDur), unitMBps),
 		fmt.Sprintf("%s copied in %s; counted as %s moved, because a copy reads and writes",
 			humanSize(int64(n)), dur(copyDur), humanSize(int64(n)*2)),
 	})
@@ -136,35 +130,34 @@ func RunMemoryWith(ctx context.Context, opts toolbox.Options, s Scale) (toolbox.
 	res.Note("The buffers are allocated before the timers start, and each timed loop leaves an accumulator that reaches this result, so no part of it can be optimised away. Accumulators: write %#x, read %#x, copy %#x.", writeCheck, readCheck, copyCheck)
 	res.Note("A small VPS pays for its memory bandwidth in cache misses: with a buffer larger than the last-level cache, the number is main-memory bandwidth, and a host that overcommits memory or is swapping scores much lower here than its CPU score suggests.")
 	res.Summary = fmt.Sprintf("write %s, read %s, copy %s",
-		rate(mibPerSec(int64(n), writeDur), unitMBps),
-		rate(mibPerSec(int64(n), readDur), unitMBps),
-		rate(mibPerSec(int64(n)*2, copyDur), unitMBps))
+		rate(mibPerSec(int64(n)*int64(writeRuns), writeDur), unitMBps),
+		rate(mibPerSec(int64(n)*int64(readRuns), readDur), unitMBps),
+		rate(mibPerSec(int64(n)*2*int64(copyRuns), copyDur), unitMBps))
 	return res, nil
 }
 
-// bestRound runs one phase rounds times and returns the fastest duration with the last
-// round's accumulator. The fastest is reported because a single noisy round should not
-// decide the number; the accumulator is kept to prove the loop ran.
-func bestRound(rounds int, pass func() (time.Duration, uint64)) (time.Duration, uint64) {
+// bestRound runs one phase rounds times and returns the fastest reading, how many passes that
+// reading covered, and the last round's accumulator. The fastest is reported because a single
+// noisy round should not decide the number; the accumulator is kept to prove the loop ran.
+func bestRound(rounds int, now func() time.Time, pass func() uint64) (time.Duration, int, uint64) {
 	if rounds < 1 {
 		rounds = 1
 	}
 	var (
-		best  time.Duration
-		check uint64
+		best     time.Duration
+		bestRuns int
+		check    uint64
 	)
 	for i := 0; i < rounds; i++ {
-		d, c := pass()
+		d, runs, c := timed(now, pass)
 		check = c
 		if i == 0 || d < best {
-			best = d
+			best, bestRuns = d, runs
 		}
 	}
-	return best, check
+	return best, bestRuns, check
 }
 
-// memWritePass stores a deterministic pattern into buf, returning the sum of the values
-// written. The sum is what keeps the stores alive when the caller drops the buffer.
 func memWritePass(buf []byte, seed uint64) uint64 {
 	var acc uint64
 	i := 0

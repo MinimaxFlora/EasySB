@@ -871,29 +871,6 @@ func (a *App) menuRowParts(i int, n *node, inner, descCol int) (string, string) 
 	return theme.Truncate(label, inner-3), ""
 }
 
-// menuCursorWidth returns the length every selection bar is padded to. The bar
-// spans the full inner width so the cursor keeps one size while moving.
-
-// menuRow renders one menu entry. The main menu pads its labels into a column
-// and follows them with a short one-line description; submenus stay compact.
-func (a *App) menuRow(selected bool, i int, n *node, inner, descCol, cursorWidth int) string {
-	marker := "  "
-	if selected {
-		marker = "▌ "
-	}
-	head, desc := a.menuRowParts(i, n, inner, descCol)
-	line := " " + marker + head
-	if selected {
-		// The bar spans the whole row and is padded to the longest entry, so the
-		// cursor does not change length as it moves through the menu.
-		return a.palette.SelectedRow(theme.Pad(line+desc, cursorWidth))
-	}
-	if desc == "" {
-		return a.palette.Bold(a.palette.Text, line)
-	}
-	return a.palette.Bold(a.palette.Text, line) + a.palette.Dim(desc)
-}
-
 // numberTag is the bracket in front of every menu entry: entries are picked by
 // number as well as by cursor, which is how the entries stay countable once the
 // list is longer than a screen.

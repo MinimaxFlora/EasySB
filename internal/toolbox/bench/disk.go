@@ -82,27 +82,36 @@ func RunDiskWith(ctx context.Context, opts toolbox.Options, s Scale) (toolbox.Re
 	// Sequential write, then fsync. The fsync is timed separately so the row can say what
 	// the durability cost, rather than hiding it in the throughput or leaving it out.
 	opts.Logf("bench/disk: writing %s to %s", humanSize(size), path)
-	var written int64
-	start := opts.Now()
-	for written < size {
-		if err := checkCtx(ctx, "disk/write"); err != nil {
-			return toolbox.Result{}, err
+	writePass := func() (int64, error) {
+		if _, err := f.Seek(0, io.SeekStart); err != nil {
+			return 0, fmt.Errorf("bench: disk: seek %s: %w", path, err)
 		}
-		n := int64(len(block))
-		if remaining := size - written; remaining < n {
-			n = remaining
+		var written int64
+		for written < size {
+			if err := checkCtx(ctx, "disk/write"); err != nil {
+				return written, err
+			}
+			n := int64(len(block))
+			if remaining := size - written; remaining < n {
+				n = remaining
+			}
+			w, werr := f.Write(block[:n])
+			written += int64(w)
+			if werr != nil {
+				return written, fmt.Errorf("bench: disk: writing %s failed after %s (out of space, or not writable?): %w",
+					path, humanSize(written), werr)
+			}
+			if w == 0 {
+				return written, fmt.Errorf("bench: disk: writing %s stalled at %s", path, humanSize(written))
+			}
 		}
-		w, werr := f.Write(block[:n])
-		written += int64(w)
-		if werr != nil {
-			return toolbox.Result{}, fmt.Errorf("bench: disk: writing %s failed after %s (out of space, or not writable?): %w",
-				path, humanSize(written), werr)
-		}
-		if w == 0 {
-			return toolbox.Result{}, fmt.Errorf("bench: disk: writing %s stalled at %s", path, humanSize(written))
-		}
+		return written, nil
 	}
-	writeDur := opts.Now().Sub(start)
+	writeDur, writeBytes, err := timedIO(opts.Now, writePass)
+	if err != nil {
+		return toolbox.Result{}, err
+	}
+	written := size
 	syncStart := opts.Now()
 	if err := f.Sync(); err != nil {
 		return toolbox.Result{}, fmt.Errorf("bench: disk: fsync of %s failed: %w", path, err)
@@ -113,40 +122,42 @@ func RunDiskWith(ctx context.Context, opts toolbox.Options, s Scale) (toolbox.Re
 	// dependency to bypass the page cache, and the filesystems a VPS mounts (overlayfs,
 	// tmpfs, ZFS) frequently refuse it.
 	opts.Logf("bench/disk: reading %s back", humanSize(written))
-	if _, err := f.Seek(0, io.SeekStart); err != nil {
-		return toolbox.Result{}, fmt.Errorf("bench: disk: seek %s: %w", path, err)
-	}
-	var (
-		read int64
-		rsum = uint64(fnvOffset)
-	)
-	start = opts.Now()
-	for read < written {
-		if err := checkCtx(ctx, "disk/read"); err != nil {
-			return toolbox.Result{}, err
+	var rsum = uint64(fnvOffset)
+	readDur, readBytes, err := timedIO(opts.Now, func() (int64, error) {
+		if _, err := f.Seek(0, io.SeekStart); err != nil {
+			return 0, fmt.Errorf("bench: disk: seek %s: %w", path, err)
 		}
-		n := int64(len(block))
-		if remaining := written - read; remaining < n {
-			n = remaining
-		}
-		r, rerr := f.Read(block[:n])
-		if r > 0 {
-			read += int64(r)
-			// The fold reads a few bytes per block, so it costs nothing next to the IO and
-			// the read still cannot be dropped.
-			rsum = foldBlock(rsum, block[:r])
-		}
-		if rerr != nil {
-			if errors.Is(rerr, io.EOF) {
+		var read int64
+		for read < written {
+			if err := checkCtx(ctx, "disk/read"); err != nil {
+				return read, err
+			}
+			n := int64(len(block))
+			if remaining := written - read; remaining < n {
+				n = remaining
+			}
+			r, rerr := f.Read(block[:n])
+			if r > 0 {
+				read += int64(r)
+				// The fold reads a few bytes per block, so it costs nothing next to the IO
+				// and the read still cannot be dropped.
+				rsum = foldBlock(rsum, block[:r])
+			}
+			if rerr != nil {
+				if errors.Is(rerr, io.EOF) {
+					break
+				}
+				return read, fmt.Errorf("bench: disk: reading %s: %w", path, rerr)
+			}
+			if r == 0 {
 				break
 			}
-			return toolbox.Result{}, fmt.Errorf("bench: disk: reading %s: %w", path, rerr)
 		}
-		if r == 0 {
-			break
-		}
+		return read, nil
+	})
+	if err != nil {
+		return toolbox.Result{}, err
 	}
-	readDur := opts.Now().Sub(start)
 
 	// 4K random IO over the file that is now on the device. The offsets come from a fixed
 	// seed, so two runs of the same size walk the same pattern.
@@ -158,7 +169,7 @@ func RunDiskWith(ctx context.Context, opts toolbox.Options, s Scale) (toolbox.Re
 		readLat   time.Duration
 	)
 	if int64(randomBlock) > written {
-		res := diskResult(path, written, s, writeDur, syncDur, readDur, rsum, shrinkNote, nil)
+		res := diskResult(path, written, writeBytes, readBytes, s, writeDur, syncDur, readDur, rsum, shrinkNote, nil)
 		res.Note("The file is smaller than one %d-byte random block, so the random phases were skipped.", randomBlock)
 		return res, nil
 	}
@@ -172,58 +183,67 @@ func RunDiskWith(ctx context.Context, opts toolbox.Options, s Scale) (toolbox.Re
 
 	opts.Logf("bench/disk: %d random writes of %s", s.DiskRandomOps, humanSize(int64(randomBlock)))
 	wsum := uint64(fnvOffset)
-	start = opts.Now()
-	for i := 0; i < s.DiskRandomOps; i++ {
-		if i&0x3f == 0 {
-			if err := checkCtx(ctx, "disk/randwrite"); err != nil {
-				return toolbox.Result{}, err
+	writeDurR, writeOpsBytes, err := timedIO(opts.Now, func() (int64, error) {
+		for i := 0; i < s.DiskRandomOps; i++ {
+			if i&0x3f == 0 {
+				if err := checkCtx(ctx, "disk/randwrite"); err != nil {
+					return int64(i) * int64(randomBlock), err
+				}
+			}
+			// The block carries its own sequence number, so the checksum in the result
+			// proves every iteration wrote instead of one write being counted a thousand
+			// times.
+			putSequence(payload, i)
+			off := int64(rng.IntN(slots)) * int64(randomBlock)
+			if _, err := f.WriteAt(payload, off); err != nil {
+				return int64(i) * int64(randomBlock), fmt.Errorf("bench: disk: random write to %s at %d: %w", path, off, err)
+			}
+			wsum = foldBlock(wsum, payload)
+			if !s.DiskRandomBuffered {
+				// Without this the writes sit in the page cache and the IOPS number would
+				// describe memory, not the device.
+				if err := f.Sync(); err != nil {
+					return int64(i) * int64(randomBlock), fmt.Errorf("bench: disk: fsync after random write to %s: %w", path, err)
+				}
 			}
 		}
-		// The block carries its own sequence number, so the checksum in the result proves
-		// every iteration wrote instead of one write being counted a thousand times.
-		putSequence(payload, i)
-		off := int64(rng.IntN(slots)) * int64(randomBlock)
-		if _, err := f.WriteAt(payload, off); err != nil {
-			return toolbox.Result{}, fmt.Errorf("bench: disk: random write to %s at %d: %w", path, off, err)
-		}
-		wsum = foldBlock(wsum, payload)
-		if !s.DiskRandomBuffered {
-			// Without this the writes sit in the page cache and the IOPS number would
-			// describe memory, not the device.
-			if err := f.Sync(); err != nil {
-				return toolbox.Result{}, fmt.Errorf("bench: disk: fsync after random write to %s: %w", path, err)
-			}
-		}
+		return int64(s.DiskRandomOps) * int64(randomBlock), nil
+	})
+	if err != nil {
+		return toolbox.Result{}, err
 	}
-	writeDurR := opts.Now().Sub(start)
-	if s.DiskRandomOps > 0 {
-		writeIOPS = float64(s.DiskRandomOps) / writeDurR.Seconds()
-		writeLat = writeDurR / time.Duration(s.DiskRandomOps)
+	if ops := writeOpsBytes / int64(randomBlock); ops > 0 && writeDurR > 0 {
+		writeIOPS = float64(ops) / writeDurR.Seconds()
+		writeLat = writeDurR / time.Duration(ops)
 	}
 
 	opts.Logf("bench/disk: %d random reads of %s", s.DiskRandomOps, humanSize(int64(randomBlock)))
 	rng = rand.New(rand.NewPCG(1, 2))
 	rsumR := uint64(fnvOffset)
-	start = opts.Now()
-	for i := 0; i < s.DiskRandomOps; i++ {
-		if i&0x3f == 0 {
-			if err := checkCtx(ctx, "disk/randread"); err != nil {
-				return toolbox.Result{}, err
+	readDurR, readOpsBytes, err := timedIO(opts.Now, func() (int64, error) {
+		for i := 0; i < s.DiskRandomOps; i++ {
+			if i&0x3f == 0 {
+				if err := checkCtx(ctx, "disk/randread"); err != nil {
+					return int64(i) * int64(randomBlock), err
+				}
+			}
+			off := int64(rng.IntN(slots)) * int64(randomBlock)
+			n, err := f.ReadAt(buf, off)
+			if n > 0 {
+				rsumR = foldBlock(rsumR, buf[:n])
+			}
+			if err != nil && n < len(buf) {
+				return int64(i) * int64(randomBlock), fmt.Errorf("bench: disk: random read from %s at %d: %w", path, off, err)
 			}
 		}
-		off := int64(rng.IntN(slots)) * int64(randomBlock)
-		n, err := f.ReadAt(buf, off)
-		if n > 0 {
-			rsumR = foldBlock(rsumR, buf[:n])
-		}
-		if err != nil && n < len(buf) {
-			return toolbox.Result{}, fmt.Errorf("bench: disk: random read from %s at %d: %w", path, off, err)
-		}
+		return int64(s.DiskRandomOps) * int64(randomBlock), nil
+	})
+	if err != nil {
+		return toolbox.Result{}, err
 	}
-	readDurR := opts.Now().Sub(start)
-	if s.DiskRandomOps > 0 {
-		readIOPS = float64(s.DiskRandomOps) / readDurR.Seconds()
-		readLat = readDurR / time.Duration(s.DiskRandomOps)
+	if ops := readOpsBytes / int64(randomBlock); ops > 0 && readDurR > 0 {
+		readIOPS = float64(ops) / readDurR.Seconds()
+		readLat = readDurR / time.Duration(ops)
 	}
 
 	random := &randomRun{
@@ -237,7 +257,7 @@ func RunDiskWith(ctx context.Context, opts toolbox.Options, s Scale) (toolbox.Re
 		writeChecksum: wsum,
 		readChecksum:  rsumR,
 	}
-	return diskResult(path, written, s, writeDur, syncDur, readDur, rsum, shrinkNote, random), nil
+	return diskResult(path, written, writeBytes, readBytes, s, writeDur, syncDur, readDur, rsum, shrinkNote, random), nil
 }
 
 // randomRun is the 4K phase's outcome, kept separate from the sequential numbers so the
@@ -259,17 +279,17 @@ type randomRun struct {
 
 // diskResult assembles the table and the notes. It is shared by the full run and by the
 // run that skips the random phases because the file came out too small.
-func diskResult(path string, written int64, s Scale, writeDur, syncDur, readDur time.Duration, readSum uint64, shrinkNote string, random *randomRun) toolbox.Result {
+func diskResult(path string, written, writeBytes, readBytes int64, s Scale, writeDur, syncDur, readDur time.Duration, readSum uint64, shrinkNote string, random *randomRun) toolbox.Result {
 	res := toolbox.Result{Headers: []string{"Item", "Throughput", "Notes"}}
 	res.Rows = append(res.Rows, []string{
 		"Sequential write",
-		rate(mibPerSec(written, writeDur+syncDur), unitMBps),
+		rate(mibPerSec(writeBytes, writeDur+syncDur), unitMBps),
 		fmt.Sprintf("%s written in %s in %s blocks, including the final fsync (%s)",
 			humanSize(written), dur(writeDur+syncDur), humanSize(int64(s.DiskBlockBytes)), dur(syncDur)),
 	})
 	res.Rows = append(res.Rows, []string{
 		"Sequential read",
-		rate(mibPerSec(written, readDur), unitMBps),
+		rate(mibPerSec(readBytes, readDur), unitMBps),
 		fmt.Sprintf("%s read back in %s; checksum %#x", humanSize(written), dur(readDur), readSum),
 	})
 	if random != nil {
@@ -299,7 +319,7 @@ func diskResult(path string, written int64, s Scale, writeDur, syncDur, readDur 
 		res.Note("%s", shrinkNote)
 	}
 	res.Note("Options.ScratchDir is where this runs. It is the system temporary directory by default, which on many VPS images is a tmpfs in RAM: to measure a real disk, point the scratch directory at it.")
-	res.Summary = fmt.Sprintf("write %s, read %s", rate(mibPerSec(written, writeDur+syncDur), unitMBps), rate(mibPerSec(written, readDur), unitMBps))
+	res.Summary = fmt.Sprintf("write %s, read %s", rate(mibPerSec(writeBytes, writeDur+syncDur), unitMBps), rate(mibPerSec(readBytes, readDur), unitMBps))
 	if random != nil {
 		res.Summary += fmt.Sprintf(", 4K random %s write / %s read",
 			rate(random.writeIOPS, "IOPS"), rate(random.readIOPS, "IOPS"))

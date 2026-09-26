@@ -1305,14 +1305,14 @@ func TestMenuCursorKeepsUniformWidth(t *testing.T) {
 	a.ready = true
 
 	inner := a.width - 4
-	descCol := a.menuDescColumn(inner, a.menuLabelColumn())
-	// A selected row's bar spans the column it sits in, so the cursor does not change
-	// length as it moves through the menu.
-	cursorWidth := inner
+	// A row inside a section lists one entry per line and its bar spans the row, so the
+	// cursor keeps one size while it moves through entries of different lengths.
+	a.push(buildSubscribe())
+	labelCol := a.menuLabelColumn()
 	for i, n := range a.current().nodes {
-		bar := a.menuRow(true, i, n, inner, descCol, cursorWidth)
-		if got := lipgloss.Width(bar); got != cursorWidth {
-			t.Fatalf("row %d bar width = %d, want %d", i, got, cursorWidth)
+		bar := a.menuRow(true, i, n, inner, labelCol)
+		if got := lipgloss.Width(bar); got != inner {
+			t.Fatalf("row %d bar width = %d, want %d", i, got, inner)
 		}
 	}
 }
