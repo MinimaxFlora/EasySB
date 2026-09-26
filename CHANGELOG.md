@@ -6,6 +6,11 @@
 
 ## [Unreleased]
 
+### 新增
+
+- **Makefile**：常用命令从零散的 `go build` / `go test` / `gofmt` 收进一套目标——`make` 构建（读 `release/TAGS`、盖上提交短哈希）、`make check` 是提交前关卡（`gofmt -l` + `go vet` + 带标签测试）、`make dist` 交叉编译全部发布架构、`make render` / `make screens` 渲染并校验版式，另有 `run` / `test-plain` / `test-race` / `fmt` / `lint` / `install` / `tidy` / `version` / `clean`。`make help` 列出全部目标。标签与版本仍各读 `release/TAGS` / `VERSION`，Makefile 不另抄一份。
+- **发布工作流改为走 Makefile**：架构清单、构建标签、链接参数不再在工作流里另写一份——`make release-matrix` 输出架构矩阵 JSON 供动态矩阵使用，`make dist-asset` 按单一映射（armv7 = `GOARCH=arm` + `GOARM=7`）逐架构交叉编译，`make test` 跑带标签测试。测试从「每个架构各跑一遍」收敛为 `prepare` 作业里跑一次，构建矩阵随后基于同一份清单展开。
+
 ### 修复
 
 - **自签占位证书不再被当成已签发**：`Paths` 为了让内核在首次签发前有证书可服务，会解析自签占位对，但 `dueForRenewal` 曾把它的十年有效期当作真实证书，导致第一次签发 `Issue` 直接返回成功、其实什么都没签。现在自签占位一律视为到期，`Issue` / `Renew` 会真正走 ACME。

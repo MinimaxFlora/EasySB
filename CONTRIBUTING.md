@@ -14,11 +14,14 @@
 `internal/` 按职责拆分为独立包，入口为仓库根目录的 `main.go`。TUI 位于 `internal/tui/`，内核、证书、服务、订阅、防火墙等各自成包。
 
 ```bash
-# 编译二进制
-go build -o easysb .
+# 编译二进制（带 release/TAGS 标签）
+make
 
-# 静态检查
-go vet ./...
+# 渲染一帧界面，检查版式
+make render
+
+# 查看全部目标
+make help
 ```
 
 ## 提交前必做
@@ -26,12 +29,13 @@ go vet ./...
 所有改动在提交前必须通过构建与完整测试：
 
 ```bash
-# 运行全部测试
-go test ./...
-
-# 确认格式统一
-gofmt -l .
+# 格式 + vet + 全部测试
+make check
 ```
+
+`make check` 等价于 `make fmt-check vet test`，其中测试带 `release/TAGS` 的标签。只想
+跑测试用 `make test`（带标签）或 `make test-plain`（不带标签，覆盖无流量统计的构建）；
+格式有差异时用 `make fmt` 就地修正。发布用 `make dist` 交叉编译全部架构。
 
 测试未通过时不要提交。若改动了以下内容，请同步更新对应代码或文档：
 

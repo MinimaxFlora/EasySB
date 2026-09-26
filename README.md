@@ -314,7 +314,7 @@ numbers come from — including why there is no geekbench or fio — is in
 | Node | `ExecStart=/usr/local/bin/easysb core run -c /etc/sing-box/config.json`; `/etc/sing-box/sing-box` no longer exists |
 | Validation | `easysb core check -c <config>` builds the configuration with the same engine that would serve it, which is what the deploy path runs before restarting |
 | Counters | `with_v2ray_api` (`release/TAGS`) is compiled in, and the deploy path writes `experimental.v2ray_api` only when `sbcore.StatsCapable()` says so, because a core without the API rejects the whole document |
-| Release | `.github/workflows/easysb-go-release.yml` cross-compiles every architecture with the tags from `release/TAGS` and publishes them under the `v<VERSION>` tag |
+| Release | `.github/workflows/easysb-go-release.yml` reads the architecture list and every build flag from the `Makefile` (`make release-matrix` / `make dist-asset`, which read `release/TAGS`) and publishes the binaries under the `v<VERSION>` tag |
 
 ---
 
@@ -323,24 +323,33 @@ numbers come from — including why there is no geekbench or fio — is in
 Go implementation (primary, requires Go 1.27.1; `go.mod` declares `go 1.27.1`, and `GOTOOLCHAIN=auto` fetches that toolchain automatically). `internal/tui/` holds the TUI shell and interaction logic; the other packages under `internal/` cover the compiled-in core, certificates, service, subscription, unlock probes and firewall modules, mapped in `docs/architecture.md`:
 
 ```bash
+# Build, run the full pre-commit gate, or cross-compile every release architecture.
+# `make` alone builds ./easysb; `make help` lists every target.
+make
+make check
+make dist
+
+# Render the dashboard once without interaction (preview / screenshot / debug)
+make render
+```
+
+`make check` is `gofmt -l` + `go vet` + the tagged tests. `make test-plain` runs the
+untagged tests too, which is the build without per-account counters.
+
+The bare Go commands still work; only the tags and the commit stamp differ:
+
+```bash
 # The build tags are defined once, in release/TAGS
 tags=$(tr -d '[:space:]' < release/TAGS)
 
 # Build the binary (the core and its counters come with it)
 go build -tags "$tags" -o easysb .
 
-# Run tests, tagged and untagged
-go test -tags "$tags" ./...
-go test ./...
-
 # What this binary carries, and whether it can count traffic
 ./easysb core version
 
 # Validate a rendered node configuration with the compiled-in engine
 ./easysb core check -c /etc/sing-box/config.json
-
-# Render the dashboard once without interaction (preview / screenshot / debug)
-./easysb --render --width 100 --height 34
 
 # Print the service unlock report without a terminal
 ./easysb --unlock

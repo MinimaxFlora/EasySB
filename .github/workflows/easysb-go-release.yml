@@ -15,6 +15,7 @@ on:
       - 'go.sum'
       - 'VERSION'
       - 'release/TAGS'
+      - 'Makefile'
       - 'install.sh'
       - '.github/workflows/easysb-go-release.yml'
   workflow_dispatch:
@@ -32,27 +33,14 @@ env:
   TZ: Asia/Shanghai
 
 jobs:
-  build:
+  # 架构矩阵来自 Makefile 的 `release-matrix`，这样发布架构清单只有一处定义。测试也
+  # 只在这里跑一次，不用每个架构各跑一遍。
+  # The arch matrix comes from the Makefile's `release-matrix`, so the release arch list
+  # has one definition. Tests run once here instead of once per architecture.
+  prepare:
     runs-on: ubuntu-26.04
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # Go 使用 GOARCH=arm + GOARM=7 表示 armv7，资产名仍按终端习惯写作 armv7
-          # Go spells armv7 as GOARCH=arm with GOARM=7; the asset keeps the armv7 name.
-          - goarch: amd64
-            asset: amd64
-          - goarch: arm64
-            asset: arm64
-          - goarch: arm
-            goarm: '7'
-            asset: armv7
-          - goarch: '386'
-            asset: '386'
-          - goarch: riscv64
-            asset: riscv64
-          - goarch: s390x
-            asset: s390x
+    outputs:
+      assets: ${{ steps.matrix.outputs.assets }}
     steps:
       - name: 检出仓库
         uses: actions/checkout@v7
@@ -63,29 +51,36 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      # 构建标签只有一处定义：release/TAGS。with_v2ray_api 在其中，所以发布的二进制
-      # 带账号流量统计；少一个标签就是少一项能力，绝不在这里另抄一份。
-      # The build tags have exactly one definition, release/TAGS. with_v2ray_api is in
-      # it, which is what gives the released binary per-account traffic counters.
-      - name: 读取构建标签
-        id: tags
-        run: echo "tags=$(tr -d '[:space:]' < release/TAGS)" >> "$GITHUB_OUTPUT"
-
+      # 构建标签、LD 标志、架构映射都只在 Makefile / release/TAGS 里定义一次：
+      # make test 读 release/TAGS 的标签，make dist-asset 读同一处并盖上提交号。
+      # Tags, link flags and the arch mapping live once, in the Makefile and
+      # release/TAGS: make test reads the tags, make dist-asset reads the same file.
       - name: 单元测试
-        run: go test -tags "${{ steps.tags.outputs.tags }}" ./...
+        run: make test
+
+      - name: 生成架构矩阵
+        id: matrix
+        run: echo "assets=$(make release-matrix)" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: prepare
+    runs-on: ubuntu-26.04
+    strategy:
+      fail-fast: false
+      matrix:
+        asset: ${{ fromJSON(needs.prepare.outputs.assets) }}
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v7
+
+      - name: 安装 Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
 
       - name: 交叉编译 linux/${{ matrix.asset }}
-        env:
-          GOOS: linux
-          GOARCH: ${{ matrix.goarch }}
-          GOARM: ${{ matrix.goarm }}
-          CGO_ENABLED: '0'
-        run: |
-          set -euo pipefail
-          go build -trimpath -tags "${{ steps.tags.outputs.tags }}" \
-            -ldflags "-s -w -checklinkname=0 -X main.commit=${GITHUB_SHA}" \
-            -o "dist/easysb-linux-${{ matrix.asset }}" .
-          ls -lh "dist/easysb-linux-${{ matrix.asset }}"
+        run: make dist-asset ASSET=${{ matrix.asset }} COMMIT=${GITHUB_SHA}
 
       - name: 上传构建产物
         uses: actions/upload-artifact@v7

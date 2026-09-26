@@ -300,7 +300,7 @@ sb --unlock             # 17 项解锁一次跑完的报告
 | 节点 | `ExecStart=/usr/local/bin/easysb core run -c /etc/sing-box/config.json`；`/etc/sing-box/sing-box` 不再存在 |
 | 校验 | `easysb core check -c <配置>` 用将来真正服务节点的同一套引擎构建配置，部署路径重启服务前跑的就是它 |
 | 流量统计 | `with_v2ray_api`（定义在 `release/TAGS`）已编入；部署路径只在 `sbcore.StatsCapable()` 为真时写 `experimental.v2ray_api`，因为不带该 API 的内核会整份拒绝配置 |
-| 程序发行 | `.github/workflows/easysb-go-release.yml` 按 `release/TAGS` 的标签集交叉编译各架构二进制，以 tag `v<VERSION>` 发布 |
+| 程序发行 | `.github/workflows/easysb-go-release.yml` 从 `Makefile` 读取架构清单与全部构建参数（`make release-matrix` / `make dist-asset`，二者读的都是 `release/TAGS`），以 tag `v<VERSION>` 发布各架构二进制 |
 
 ---
 
@@ -309,24 +309,32 @@ sb --unlock             # 17 项解锁一次跑完的报告
 Go 版（主实现，需要 Go 1.27.1，`go.mod` 已声明 `go 1.27.1`，启用 `GOTOOLCHAIN=auto` 时会自动获取该工具链）。`internal/tui/` 是 TUI 主界面与交互逻辑，`internal/` 下其余包各自负责内置内核、证书、服务、订阅、解锁探测、防火墙等模块，包职责见 `docs/architecture.md`：
 
 ```bash
+# 构建、提交前关卡、交叉编译发布架构；`make` 即构建 ./easysb，`make help` 列出全部目标。
+make
+make check
+make dist
+
+# 无交互渲染一次仪表盘（用于预览 / 截图 / 排错）
+make render
+```
+
+`make check` 等于 `gofmt -l` + `go vet` + 带标签测试；`make test-plain` 再跑一遍不带标签
+的测试，也就是没有账号流量统计的那个构建。
+
+裸 Go 命令同样可用，区别只在标签与提交号：
+
+```bash
 # 构建标签只有一处定义：release/TAGS
 tags=$(tr -d '[:space:]' < release/TAGS)
 
 # 编译二进制（内核与流量统计能力都在里面）
 go build -tags "$tags" -o easysb .
 
-# 运行测试：带标签与不带标签都要通过
-go test -tags "$tags" ./...
-go test ./...
-
 # 查看本二进制携带的内核版本，以及能否统计流量
 ./easysb core version
 
 # 用编译进来的引擎校验一份节点配置
 ./easysb core check -c /etc/sing-box/config.json
-
-# 无交互渲染一次仪表盘（用于预览 / 截图 / 排错）
-./easysb --render --width 100 --height 34
 
 # 无终端环境下打印服务解锁报告
 ./easysb --unlock
