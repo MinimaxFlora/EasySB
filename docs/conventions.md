@@ -24,6 +24,9 @@
 ## Versioning
 
 - `VERSION` holds the program version, currently in `X.Y.Z` form.
+- `VERSION` is the only place the number is written: it is embedded with
+  `go:embed`, and `install.sh` reads it in a checkout or detects the latest
+  release otherwise. Do not add a `main.version` default or a script constant.
 - The program version is independent of the sing-box core version.
 - Release tags are `v<VERSION>`. The workflow, `install.sh`, and
   `internal/update` all derive the tag from the version; do not create a second

@@ -21,11 +21,12 @@ Traps already hit in this repository. Each entry names the symptom and the fix.
 ## Version and identity
 
 - **`/etc/os-release` shadows `VERSION`.** In the legacy shell, sourcing
-  `/etc/os-release` overwrote the script version variable. The Go build reads a
-  dedicated `VERSION` file and falls back to the injected `main.version`. Keep
-  those two in step.
+  `/etc/os-release` overwrote the script version variable. The Go build embeds a
+  dedicated `VERSION` file with `go:embed`, so there is exactly one number: there
+  is no `main.version` fallback to keep in step with it.
 - **One tag scheme.** `install.sh`, the workflow, and `internal/update` must all
-  derive `v<VERSION>`. A hardcoded tag in one place silently breaks downloads.
+  derive `v<VERSION>`. A hardcoded tag in one place silently breaks downloads, so
+  `install.sh` detects the latest release rather than pinning a version.
 
 ## sing-box integration
 
