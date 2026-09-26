@@ -455,6 +455,11 @@ func installPair(domain string, res *certificate.Resource) error {
 // dueForRenewal reports whether the certificate installed for a domain has less
 // than RenewBefore left, along with its expiry. A domain without a certificate at
 // all is due, which is what makes the same call usable for a first issuance.
+//
+// A self-signed placeholder counts as due. Paths resolves the placeholder so the
+// core always has something to serve, but it is not a certificate a client
+// accepts: treating its ten-year NotAfter as a real lifetime is what used to make
+// the first issuance a silent no-op, because Issue reads this answer and stops.
 func dueForRenewal(domain string, now time.Time) (bool, time.Time, error) {
 	fullchain, _, ok := Paths(domain)
 	if !ok {
@@ -463,6 +468,9 @@ func dueForRenewal(domain string, now time.Time) (bool, time.Time, error) {
 	expiry, err := expiryOf(domain)
 	if err != nil {
 		return false, time.Time{}, fmt.Errorf("read %s: %w", fullchain, err)
+	}
+	if selfSigned(fullchain) {
+		return true, time.Time{}, nil
 	}
 	return expiry.Before(now.Add(RenewBefore)), expiry, nil
 }

@@ -396,6 +396,27 @@ func TestDueForRenewal(t *testing.T) {
 	}
 }
 
+// TestDueForRenewalTreatsThePlaceholderAsDue pins the first-issuance path. Paths
+// resolves the self-signed placeholder so the core has something to serve, but its
+// ten-year NotAfter is not an issued certificate: reading it as one made Issue log
+// "still valid" and return success without ever contacting the CA.
+func TestDueForRenewalTreatsThePlaceholderAsDue(t *testing.T) {
+	dir := tempDir(t)
+	if err := os.MkdirAll(filepath.Join(dir, "example.com"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := GenerateSelfSigned(filepath.Join(dir, "example.com", fullchainName), filepath.Join(dir, "example.com", keyName), "example.com"); err != nil {
+		t.Fatalf("GenerateSelfSigned: %v", err)
+	}
+	due, _, err := dueForRenewal("example.com", time.Now())
+	if err != nil {
+		t.Fatalf("dueForRenewal: %v", err)
+	}
+	if !due {
+		t.Fatal("a self-signed placeholder is not an issued certificate and must be renewed")
+	}
+}
+
 func TestExpiryOfReadsTheLeaf(t *testing.T) {
 	dir := tempDir(t)
 	want := time.Now().AddDate(0, 0, 42).Truncate(time.Second)
