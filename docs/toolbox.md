@@ -47,6 +47,16 @@ The verdict words are deliberately short:
 `unknown` is the one that matters: a probe that cannot read an answer says so instead of
 guessing, and the note under the table says what it saw.
 
+### The board is stored
+
+Every finished run is written to `/etc/sing-box/easysb-toolbox.json` (override with
+`EASYSB_TOOLBOX_BOARD`), so the 看板 still shows the last result of each entry after the panel
+is closed and reopened — a traceroute or a disk benchmark is not something an operator should
+have to repeat to see yesterday's reading. The file is a cache of measurements and never a
+source of truth: an unreadable or truncated one loads as an empty board, an entry with no
+stored result still says 尚未检测, and a run that could not be written down still shows its
+table on screen.
+
 ## Where the numbers come from
 
 Nothing in the toolbox downloads a program. Every tool is Go code in this binary:

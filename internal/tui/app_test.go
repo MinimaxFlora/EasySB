@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"image/color"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -40,9 +41,10 @@ func typeRune(r rune) tea.KeyPressMsg {
 
 func newTestApp(t *testing.T) *App {
 	t.Helper()
-	// The interface choices are written to disk, so they go to a temporary file
-	// instead of the real panel directory.
+	// The interface choices and the toolbox board are written to disk, so they go to
+	// temporary files instead of the real panel directory.
 	t.Setenv(prefs.PathEnv, filepath.Join(t.TempDir(), "easysb-ui.conf"))
+	t.Setenv(toolbox.BoardEnv, filepath.Join(t.TempDir(), "easysb-toolbox.json"))
 	a := New("test", i18n.Chinese)
 	m, _ := a.Update(tea.WindowSizeMsg{Width: 100, Height: 34})
 	a = m.(*App)
@@ -634,6 +636,54 @@ func TestBBRMenuShape(t *testing.T) {
 		if !strings.Contains(qdisc, q) {
 			t.Fatalf("queue discipline menu missing %q:\n%s", q, qdisc)
 		}
+	}
+}
+
+// The board is what makes a run worth repeating: a panel that forgot every result when it was
+// closed would make an operator re-run a traceroute, a speed test and three benchmarks to see
+// what yesterday's reading was.
+func TestToolboxBoardSurvivesARestart(t *testing.T) {
+	t.Setenv(prefs.PathEnv, filepath.Join(t.TempDir(), "easysb-ui.conf"))
+	boardFile := filepath.Join(t.TempDir(), "easysb-toolbox.json")
+	t.Setenv(toolbox.BoardEnv, boardFile)
+
+	a := New("test", i18n.Chinese)
+	outcome := previewToolOutcome()
+	a.toolResults = map[string]toolOutcome{outcome.id: outcome}
+	a.saveBoard()
+	if _, err := os.Stat(boardFile); err != nil {
+		t.Fatalf("the run should have been written down: %v", err)
+	}
+
+	restarted := New("test", i18n.Chinese)
+	got, ok := restarted.toolResults["unlock-media"]
+	if !ok {
+		t.Fatalf("the board did not survive the restart: %v", restarted.toolResults)
+	}
+	if got.result.Summary != outcome.result.Summary || len(got.result.Rows) != len(outcome.result.Rows) {
+		t.Errorf("the stored table came back different: %+v", got.result)
+	}
+	if !got.when.Equal(outcome.when) {
+		t.Errorf("the stored time came back as %v, want %v", got.when, outcome.when)
+	}
+
+	// And the section draws it, so a restarted panel opens on what was measured.
+	m, _ := restarted.Update(tea.WindowSizeMsg{Width: 100, Height: 34})
+	restarted = m.(*App)
+	if !restarted.enterSection("toolbox") {
+		t.Fatal("the toolbox section should be reachable")
+	}
+	view := ansiSGR.ReplaceAllString(restarted.View().Content, "")
+	if !strings.Contains(view, outcome.result.Summary) {
+		t.Fatalf("the board should show the stored summary:\n%s", view)
+	}
+
+	// A file that cannot be parsed is an empty board, never a panel that will not start.
+	if err := os.WriteFile(boardFile, []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if broken := New("test", i18n.Chinese); len(broken.toolResults) != 0 {
+		t.Errorf("a corrupt board should load as empty, got %d records", len(broken.toolResults))
 	}
 }
 

@@ -2,8 +2,10 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -72,6 +74,9 @@ type App struct {
 	// prefsPath is where the interface choices are remembered. It is a field so
 	// the tests can point it at a temporary file instead of /etc/sing-box.
 	prefsPath string
+	// boardPath is where the toolbox 看板 is written down. It is a field for the same
+	// reason, and an empty value keeps the board in memory only.
+	boardPath string
 }
 
 // New builds the application. Interface choices the operator made earlier are
@@ -87,9 +92,60 @@ func New(scriptVersion string, lang i18n.Lang) *App {
 		stack:         []*menu{buildRoot()},
 		quote:         lang.Hitokoto(),
 		prefsPath:     prefs.Path(),
+		boardPath:     boardPath(),
 	}
 	a.setSkin(skin, dark)
+	a.loadBoard()
 	return a
+}
+
+// boardPath is where the toolbox 看板 is written down. The env override exists for the tests
+// and for a second panel on the same host, the way the preferences file has its own.
+func boardPath() string {
+	if path := os.Getenv(toolbox.BoardEnv); path != "" {
+		return path
+	}
+	return filepath.Join(sysinfo.WorkDir, "easysb-toolbox.json")
+}
+
+// loadBoard reads the stored outcomes so the section's 看板 shows the last run of every tool
+// the panel has already measured, instead of forgetting them when the panel was closed.
+func (a *App) loadBoard() {
+	if a.boardPath == "" {
+		return
+	}
+	stored := toolbox.LoadBoard(a.boardPath)
+	if len(stored) == 0 {
+		return
+	}
+	if a.toolResults == nil {
+		a.toolResults = make(map[string]toolOutcome, len(stored))
+	}
+	for id, record := range stored {
+		outcome := toolOutcome{id: record.ID, when: record.When, result: record.Result}
+		if record.Error != "" {
+			outcome.err = errors.New(record.Error)
+		}
+		a.toolResults[id] = outcome
+	}
+}
+
+// saveBoard writes the outcomes down. A board that cannot be written is a degraded
+// convenience, not a failed run: the table is on screen either way, so the error is dropped
+// rather than turned into an interruption.
+func (a *App) saveBoard() {
+	if a.boardPath == "" {
+		return
+	}
+	board := make(toolbox.Board, len(a.toolResults))
+	for id, outcome := range a.toolResults {
+		record := toolbox.Record{ID: id, When: outcome.when, Result: outcome.result}
+		if outcome.err != nil {
+			record.Error = outcome.err.Error()
+		}
+		board[id] = record
+	}
+	_ = toolbox.SaveBoard(a.boardPath, board)
 }
 
 // remember stores the interface choices so the next run starts where this one

@@ -94,6 +94,7 @@ func (a *App) adoptTaskResult() {
 	}
 	a.toolResults[outcome.id] = outcome
 	a.report = &outcome
+	a.saveBoard()
 }
 
 // rerunReport starts the reported tool again, which is the one thing an operator wants
@@ -266,10 +267,11 @@ func (a *App) toolboxBody(w int) []string {
 }
 
 // line is the board's rendering of an outcome: its summary and how long ago it ran, or the
-// word for a run that failed.
+// word for a run that failed. The time comes from the run, not from the moment it is read,
+// because a board loaded from disk is showing a measurement taken earlier.
 func (o toolOutcome) line(lang i18n.Lang) (string, ui.Kind) {
 	if o.err != nil {
-		return lang.T("toolbox_failed") + " · " + lang.T("toolbox_just_now"), ui.KindErr
+		return lang.T("toolbox_failed") + " · " + sinceText(lang, o.when), ui.KindErr
 	}
 	summary := o.result.Summary
 	if summary == "" {

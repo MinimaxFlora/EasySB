@@ -85,18 +85,20 @@ func (o Options) ScratchDir() string {
 	return filepath.Join(os.TempDir(), "easysb-toolbox")
 }
 
-// Result is one tool's output, shaped as a table.
+// Result is one tool's output, shaped as a table. The JSON tags are the stored form of the
+// board (see SaveBoard): a stored result has to keep loading after a field here is renamed,
+// and an explicit name is what makes that possible.
 type Result struct {
 	// Headers labels the columns. A tool that reports one value per row leaves this
 	// empty, and the panel draws a two-column label/value table.
-	Headers []string
+	Headers []string `json:"headers,omitempty"`
 	// Rows is the table body: one row, same number of cells, per line of output.
-	Rows [][]string
+	Rows [][]string `json:"rows,omitempty"`
 	// Notes are the lines that do not belong in a cell: where a number came from, why
 	// one is missing, what the tool skipped.
-	Notes []string
+	Notes []string `json:"notes,omitempty"`
 	// Summary is one short line for the toolbox board, e.g. "解锁 12 · 屏蔽 3".
-	Summary string
+	Summary string `json:"summary,omitempty"`
 }
 
 // Add appends a label/value row.
