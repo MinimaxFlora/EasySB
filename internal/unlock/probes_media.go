@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // netflixTitles are the two films the reference script plays off each other:
@@ -208,26 +209,71 @@ var amazonTerritory = regexp.MustCompile(`"currentTerritory":"([^"]+)"`)
 // non-prime homepage, and the geo block travels with the page either way.
 const primeVideoHome = "https://www.primevideo.com"
 
+// primeVideoAttempts is how many times the storefront is asked before a probe reports a
+// failure. The page is served in several shapes from the same address — a ~520 KB one that
+// carries the geo block, a lean one around 40 KB that carries nothing, and now and then a
+// 503 — and which one arrives varies between requests, for the same IP and the same
+// client. Measured on one host: the reference script's own curl command hit the empty
+// shape once in three runs, this probe three times in six, while the debug client beside
+// it got two 503s in six runs. The reference script cannot retry, so its readers re-run
+// it; the probe simply asks again before it says a country is unreadable.
+const primeVideoAttempts = 3
+
 // probePrimeVideo reads the storefront page the reference script reads, following it to
-// its geo block instead of stopping at the default cap: the page is served in two shapes,
-// a ~500 KB one whose block sits about 170 KB in and a multi-megabyte one whose block sits
-// further, and cutting the read at a megabyte turned a served country into "failed".
+// its geo block instead of stopping at the default cap, and asking again when the shape
+// that arrives carries nothing to read.
 func probePrimeVideo(ctx context.Context, d *Detector, s Service) Result {
-	r, err := d.getDeep(ctx, primeVideoHome, nil, deepBody, "currentTerritory", "isServiceRestricted")
-	if err != nil {
-		return s.result(StatusFailed, "", ReasonNetwork, err.Error())
+	var (
+		last      reply
+		lastErr   error
+		attempted int
+	)
+	for attempt := 0; attempt < primeVideoAttempts; attempt++ {
+		if attempt > 0 {
+			// Nothing is known about how long a lean shape lasts; one second is
+			// enough to leave the edge that served it.
+			select {
+			case <-ctx.Done():
+				return s.result(StatusFailed, "", ReasonNetwork, ctx.Err().Error())
+			case <-time.After(time.Second):
+			}
+		}
+		r, err := d.getDeep(ctx, primeVideoHome, nil, deepBody, "currentTerritory", "isServiceRestricted")
+		attempted++
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		last = r
+		if !r.ok() {
+			continue
+		}
+		if r.has("isServiceRestricted") || firstGroup(amazonTerritory, r.body) != "" {
+			last = r
+			break
+		}
+		// A page carrying neither marker proves nothing: ask again.
 	}
-	if !r.ok() {
-		return s.result(StatusFailed, "", ReasonHTTP, "primevideo.com answered "+r.statusText())
+	if lastErr != nil && last.status == 0 {
+		return s.result(StatusFailed, "", ReasonNetwork, lastErr.Error())
 	}
-	blocked := r.has("isServiceRestricted")
-	region := firstGroup(amazonTerritory, r.body)
+	if !last.ok() {
+		if last.status == 0 {
+			return s.result(StatusFailed, "", ReasonNetwork, "the storefront could not be reached")
+		}
+		return s.result(StatusFailed, "", ReasonHTTP,
+			fmt.Sprintf("primevideo.com answered %s (%d attempts)", last.statusText(), attempted))
+	}
+	blocked := last.has("isServiceRestricted")
+	region := firstGroup(amazonTerritory, last.body)
 	if !blocked && region == "" {
-		if strings.TrimSpace(r.body) == "" {
-			return s.result(StatusFailed, "", ReasonBody, "the storefront returned an empty page")
+		if strings.TrimSpace(last.body) == "" {
+			return s.result(StatusFailed, "", ReasonBody,
+				fmt.Sprintf("the storefront returned an empty page (%d attempts)", attempted))
 		}
 		return s.result(StatusFailed, "", ReasonBody,
-			fmt.Sprintf("no geo block in the first %d KB the storefront served", len(r.body)/1024))
+			fmt.Sprintf("no geo block in the first %d KB the storefront served (%d attempts)",
+				len(last.body)/1024, attempted))
 	}
 	if blocked {
 		return s.result(StatusBlocked, region, "", "Amazon Prime Video is not offered here")

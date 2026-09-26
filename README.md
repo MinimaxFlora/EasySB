@@ -279,7 +279,7 @@ The region column is **the service's own answer**, not something the panel compu
 
 Two verdicts that invite a second look:
 
-- **Prime Video** serves its storefront in two shapes: a ~500 KB one whose geo block sits about 170 KB in, and a multi-megabyte one whose block sits further. The probe reads until it finds the marker (cap 8 MB), so a served country is no longer reported as failed; when nothing is found, the failure says how many KB were read.
+- **Prime Video** serves its storefront in several shapes: a ~520 KB page whose geo block sits about 170 KB in, a multi-megabyte one whose block sits further, and a lean ~40 KB one that carries no geo information at all — plus the odd 503. Which one arrives varies between requests for the same IP, and the reference script's own `curl` command hits the empty shape too (measured: once in three runs there, three times in six here). The probe reads to the marker (cap 8 MB) and simply asks again — up to three attempts — before it reports a country as unreadable, which the failure text states.
 - **Claude** answers a datacenter address with a Cloudflare challenge (HTTP 403). The reference script would call that "yes" because the URL never changed, which is a guess; the panel reports a failed check and attaches the region read from `claude.ai/cdn-cgi/trace`, because a challenge says Cloudflare distrusts the address — it says nothing about the country.
 
 ## The core inside the panel

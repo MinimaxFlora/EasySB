@@ -19,6 +19,10 @@ type route struct {
 	url    string // matched as a prefix
 	status int
 	body   string
+	// seq replaces body per call: the first call gets seq[0], the second seq[1], and
+	// the last entry repeats for every call after it. A probe that asks again is
+	// tested with this.
+	seq    []string
 	header http.Header
 	final  string // the URL the client "landed on" after redirects
 	err    error
@@ -31,8 +35,9 @@ type fakeClient struct {
 	t      *testing.T
 	routes []route
 
-	mu   sync.Mutex
-	seen []string
+	mu    sync.Mutex
+	seen  []string
+	calls map[int]int
 }
 
 func (c *fakeClient) Do(req *http.Request) (*http.Response, error) {
@@ -41,7 +46,7 @@ func (c *fakeClient) Do(req *http.Request) (*http.Response, error) {
 	c.seen = append(c.seen, req.Method+" "+target)
 	c.mu.Unlock()
 
-	for _, r := range c.routes {
+	for idx, r := range c.routes {
 		if r.method != "" && r.method != req.Method {
 			continue
 		}
@@ -50,6 +55,20 @@ func (c *fakeClient) Do(req *http.Request) (*http.Response, error) {
 		}
 		if r.err != nil {
 			return nil, r.err
+		}
+		body := r.body
+		if len(r.seq) > 0 {
+			c.mu.Lock()
+			if c.calls == nil {
+				c.calls = make(map[int]int)
+			}
+			n := c.calls[idx]
+			c.calls[idx]++
+			c.mu.Unlock()
+			if n >= len(r.seq) {
+				n = len(r.seq) - 1
+			}
+			body = r.seq[n]
 		}
 		final := r.final
 		if final == "" {
@@ -62,7 +81,7 @@ func (c *fakeClient) Do(req *http.Request) (*http.Response, error) {
 		return &http.Response{
 			StatusCode: r.status,
 			Header:     r.header,
-			Body:       io.NopCloser(strings.NewReader(r.body)),
+			Body:       io.NopCloser(strings.NewReader(body)),
 			Request:    &http.Request{Method: req.Method, URL: u, Header: req.Header},
 		}, nil
 	}

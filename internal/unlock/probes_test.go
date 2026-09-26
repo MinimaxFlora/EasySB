@@ -354,6 +354,37 @@ func TestProbePrimeVideo(t *testing.T) {
 			t.Fatalf("got %q (%s), want a failure that says how much was read", got.Status, got.Text)
 		}
 	})
+
+	// The storefront answers the same request with different shapes, so the probe asks
+	// again before it reports a country as unreadable. These cases pin that: a lean page
+	// followed by a full one is a verdict, and three lean pages is a failure that says how
+	// many attempts it cost.
+	t.Run("a lean page is retried", func(t *testing.T) {
+		lean := strings.Repeat("x", 40<<10)
+		got := runProbe(t, "primevideo", route{
+			url:    url,
+			status: 200,
+			seq:    []string{lean, `<html>"currentTerritory":"US"</html>`},
+		})
+		if got.Status != StatusUnlocked || got.Region != "US" {
+			t.Fatalf("got %q region %q (%s), want unlocked/US after a retry", got.Status, got.Region, got.Text)
+		}
+	})
+
+	t.Run("a storefront that only errors is reported as a status failure", func(t *testing.T) {
+		got := runProbe(t, "primevideo", route{url: url, status: 503, body: "", seq: nil})
+		if got.Status != StatusFailed || !strings.Contains(got.Text, "503") {
+			t.Fatalf("got %q (%s), want a failure naming the status", got.Status, got.Text)
+		}
+	})
+
+	t.Run("three lean pages report the attempts", func(t *testing.T) {
+		lean := strings.Repeat("x", 40<<10)
+		got := runProbe(t, "primevideo", route{url: url, status: 200, body: lean})
+		if got.Status != StatusFailed || !strings.Contains(got.Text, "3 attempts") {
+			t.Fatalf("got %q (%s), want a failure naming the attempts", got.Status, got.Text)
+		}
+	})
 }
 
 // TestReadUntil covers the read the Prime Video probe uses: it must stop at the first
