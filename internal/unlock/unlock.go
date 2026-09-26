@@ -323,6 +323,9 @@ type reply struct {
 	header   http.Header
 	body     string
 	finalURL string
+	// truncated says the body read stopped at the cap rather than at the end of
+	// the document, so a missing marker means "not read" instead of "not there".
+	truncated bool
 }
 
 // ok reports a 2xx status.
@@ -355,8 +358,11 @@ const deepBody = 8 << 20
 
 // readUntil reads at most limit bytes, stopping as soon as one of the markers
 // has arrived. Markers are matched against a window that overlaps the previous
-// chunk, so a marker split across a read boundary is still found.
-func readUntil(r io.Reader, limit int64, markers []string) (string, error) {
+// chunk, so a marker split across a read boundary is still found. The second
+// result says the read stopped because it ran into the limit rather than because
+// the document ended or a marker arrived, which is what a failure text needs to
+// tell "not there" from "not read".
+func readUntil(r io.Reader, limit int64, markers []string) (string, bool, error) {
 	var (
 		buf     []byte
 		chunk   = make([]byte, 32<<10)
@@ -377,7 +383,7 @@ func readUntil(r io.Reader, limit int64, markers []string) (string, error) {
 			}
 			for _, m := range markers {
 				if bytes.Contains(window, []byte(m)) {
-					return string(buf), nil
+					return string(buf), false, nil
 				}
 			}
 		}
@@ -385,10 +391,10 @@ func readUntil(r io.Reader, limit int64, markers []string) (string, error) {
 			if errors.Is(err, io.EOF) {
 				break
 			}
-			return string(buf), err
+			return string(buf), false, err
 		}
 	}
-	return string(buf), nil
+	return string(buf), int64(len(buf)) >= limit, nil
 }
 
 func (d *Detector) do(ctx context.Context, r request) (reply, error) {
@@ -418,23 +424,26 @@ func (d *Detector) do(ctx context.Context, r request) (reply, error) {
 	}
 	defer resp.Body.Close()
 	var data []byte
+	var truncated bool
 	if r.limit > 0 {
-		text, err := readUntil(resp.Body, r.limit, r.markers)
+		text, cut, err := readUntil(resp.Body, r.limit, r.markers)
 		if err != nil {
 			return reply{}, err
 		}
-		data = []byte(text)
+		data, truncated = []byte(text), cut
 	} else {
 		data, err = io.ReadAll(io.LimitReader(resp.Body, maxBody))
 		if err != nil {
 			return reply{}, err
 		}
+		truncated = len(data) >= maxBody
 	}
 	out := reply{
-		status:   resp.StatusCode,
-		header:   resp.Header,
-		body:     string(data),
-		finalURL: r.url,
+		status:    resp.StatusCode,
+		header:    resp.Header,
+		body:      string(data),
+		finalURL:  r.url,
+		truncated: truncated,
 	}
 	// A client that follows redirects reports the last hop here; a stub that
 	// does not leaves it at the requested URL.

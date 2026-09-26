@@ -282,6 +282,22 @@ Two verdicts that invite a second look:
 - **Prime Video** serves its storefront in several shapes: a ~520 KB page whose geo block sits about 170 KB in, a multi-megabyte one whose block sits further, and a lean ~40 KB one that carries no geo information at all — plus the odd 503. Which one arrives varies between requests for the same IP, and the reference script's own `curl` command hits the empty shape too (measured: once in three runs there, three times in six here). The probe reads to the marker (cap 8 MB) and simply asks again — up to three attempts — before it reports a country as unreadable, which the failure text states.
 - **Claude** answers a datacenter address with a Cloudflare challenge (HTTP 403). The reference script would call that "yes" because the URL never changed, which is a guess; the panel reports a failed check and attaches the region read from `claude.ai/cdn-cgi/trace`, because a challenge says Cloudflare distrusts the address — it says nothing about the country.
 
+### Where this differs from the reference script
+
+Sixteen of the seventeen services ask the same endpoint and read the same field as the reference script. The differences are deliberate and all of them are listed here:
+
+| Item | Difference | Why |
+| :--- | :--- | :--- |
+| Prime Video | reads to the geo marker (cap 8 MB) and makes up to three attempts before failing | the script makes one `curl`, and reports `Failed (Error: PAGE ERROR)` whenever the storefront answers with its lean shape |
+| YouTube Premium | also requires `ad-free` before it says yes, reading to that marker | same final gate as the script, so a region alone cannot pass as an offer |
+| Claude | a challenge page is a failed check, with the region attached | the script reads an unchanged URL as "yes", which would call a Cloudflare challenge available |
+| ChatGPT | reads the value of `unsupported_country` | the script's `grep` also matches `"unsupported_country":false`, turning a working country into a "no" |
+| Disney+ | asks the GraphQL session for `location{countryCode}`; an unread region is a failure, not a "no" | the script's query returns no location, and an empty region is reported as "No" |
+| Steam | parses `meta itemprop="priceCurrency"` and falls back to the `steamCountry` cookie | the script's `cut -d '"' -f4` depends on field order |
+| TikTok | the script has no TikTok check | ours adds one browser-header retry to tell "region only under browser headers" from a block |
+| IPv6 | no IPv6 branch | the script reports these services as unsupported over IPv6; the panel judges from the host's default egress |
+| The rest | the script also measures OneTrust, iQyi, Bing/Apple regions, Wikipedia editability, Google Play, CDN ownership and more | the panel keeps the seventeen that matter to running a node |
+
 ## The core inside the panel
 
 | Item | Description |

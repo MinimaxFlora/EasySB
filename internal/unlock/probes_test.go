@@ -276,9 +276,17 @@ func TestProbeYouTubePremium(t *testing.T) {
 	}{
 		{
 			name:   "sold here",
-			body:   `<html>"INNERTUBE_CONTEXT_GL":"de","INNERTUBE_CONTEXT_HL":"de"</html>`,
+			body:   `<html>"INNERTUBE_CONTEXT_GL":"de",<span>Premium is ad-free</span></html>`,
 			status: StatusUnlocked,
 			region: "de",
+		},
+		{
+			// The reference script's last gate: a page that names a region but never
+			// offers the ad-free plan is a page error, not a yes.
+			name:   "a region without the offer",
+			body:   `<html>"INNERTUBE_CONTEXT_GL":"de"</html>`,
+			status: StatusFailed,
+			region: "",
 		},
 		{
 			name:   "landed on google.cn",
@@ -395,7 +403,7 @@ func TestReadUntil(t *testing.T) {
 
 	t.Run("stops at the marker", func(t *testing.T) {
 		body := strings.Repeat("a", 100) + marker + strings.Repeat("b", 1<<20)
-		got, err := readUntil(strings.NewReader(body), limit, []string{marker})
+		got, _, err := readUntil(strings.NewReader(body), limit, []string{marker})
 		if err != nil {
 			t.Fatalf("readUntil: %v", err)
 		}
@@ -411,7 +419,7 @@ func TestReadUntil(t *testing.T) {
 
 	t.Run("finds a marker split across chunks", func(t *testing.T) {
 		body := strings.Repeat("a", 32<<10-5) + marker + strings.Repeat("b", 4096)
-		got, err := readUntil(strings.NewReader(body), limit, []string{marker})
+		got, _, err := readUntil(strings.NewReader(body), limit, []string{marker})
 		if err != nil {
 			t.Fatalf("readUntil: %v", err)
 		}
@@ -422,12 +430,25 @@ func TestReadUntil(t *testing.T) {
 
 	t.Run("honours the limit", func(t *testing.T) {
 		body := strings.Repeat("a", 4*limit)
-		got, err := readUntil(strings.NewReader(body), limit, []string{marker})
+		got, truncated, err := readUntil(strings.NewReader(body), limit, []string{marker})
 		if err != nil {
 			t.Fatalf("readUntil: %v", err)
 		}
 		if int64(len(got)) != limit {
 			t.Fatalf("read %d bytes, want the limit %d", len(got), limit)
+		}
+		if !truncated {
+			t.Fatal("a read that stopped at the limit must say so: the failure text depends on it")
+		}
+	})
+
+	t.Run("a document that ends is not truncated", func(t *testing.T) {
+		got, truncated, err := readUntil(strings.NewReader("short page"), limit, []string{marker})
+		if err != nil {
+			t.Fatalf("readUntil: %v", err)
+		}
+		if got != "short page" || truncated {
+			t.Fatalf("got %q truncated=%v, want the whole short page and no truncation", got, truncated)
 		}
 	})
 }

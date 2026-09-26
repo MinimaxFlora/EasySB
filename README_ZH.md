@@ -280,6 +280,22 @@ NAT 规则重启即失效，因此脚本会生成开机恢复单元：
 - **Prime Video** 的店面前台有几种形态：约 520 KB、地区标记在第 170 KB 左右的一版，标记更靠后的大页面，以及约 40 KB、完全不带地区信息的精简版（偶尔还有 503）。同一台机器连着发同样的请求，来哪种并不固定；参考脚本自己的 `curl` 命令也会碰到精简版（实测：那边三次里碰到一次，这边六次里碰到三次）。探测器会读到标记为止（上限 8 MB），并且在报「读不到」之前再问几次（最多 3 次），失败文案会写明用了几次。
 - **Claude** 对数据中心 IP 会返回 Cloudflare 挑战页（HTTP 403）。参考脚本在这种情况下会因为 URL 没变而判「可用」，那是猜；面板判「检测失败」并附上从 `claude.ai/cdn-cgi/trace` 读到的地区——挑战只说明 Cloudflare 不信任这个地址，说明不了国家。
 
+### 与参考脚本的差异
+
+17 项里 16 项与参考脚本同源（同一接口、同一判据字段），差异只有下面几处，都是刻意为之：
+
+| 项 | 差异 | 原因 |
+| :--- | :--- | :--- |
+| Prime Video | 读到地区标记为止（上限 8 MB），失败前最多请求 3 次 | 他一次 `curl`，店面随机给精简页时就报 `Failed (Error: PAGE ERROR)` |
+| YouTube Premium | 同样要求 `ad-free` 才判「可以」（读到该标记为止） | 与他最后一道门槛一致，避免只看到地区就判 Yes |
+| Claude | 挑战页判「检测失败」并给出地区 | 他「URL 没跳走就是 Yes」，会把 Cloudflare 挑战当成可用 |
+| ChatGPT | 读 `unsupported_country` 的值 | 他的 `grep` 连 `"unsupported_country":false` 也命中，会把可用判成不可用 |
+| Disney+ | graphql 查询里补了 `location{countryCode}`；地区读不到时报失败而不是 No | 他的查询不返回地区，`region` 为空时直接判「No」 |
+| Steam | 解析 `meta itemprop="priceCurrency"` + `steamCountry` cookie 兜底 | 他的 `cut -d '"' -f4` 依赖字段顺序 |
+| TikTok | 他脚本里没有这一项 | 我们加的一次直接 + 一次带浏览器头的请求，用于区分「地区只在浏览器头下出现」 |
+| IPv6 | 不区分 IPv6 | 他的脚本在 IPv6 模式下对这些项直接报不支持；面板按主机默认出口判定 |
+| 其余 | 他还有 OneTrust、iQyi、Bing/Apple 地区、Wikipedia、Google Play、CDN 归属等项 | 面板只保留对搭节点有意义的 17 项 |
+
 ## 内核在面板里
 
 | 环节 | 说明 |

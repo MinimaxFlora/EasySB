@@ -177,13 +177,18 @@ var (
 	youTubeRegion = regexp.MustCompile(`"INNERTUBE_CONTEXT_GL":"([^"]+)"`)
 )
 
-// probeYouTubePremium reads the Premium landing page. The page identity and the
-// region come from the player context near the top of the document; the
-// reference script additionally requires the phrase "ad-free", which on the
-// real page sits 700 KB in, past the body cap, so the negative markers below
-// carry that decision instead.
+// youTubePremium is the landing page both this probe and the reference script read.
+const youTubePremium = "https://www.youtube.com/premium"
+
+// probeYouTubePremium reads the Premium landing page the way the reference script does,
+// including its last gate: the phrase "ad-free" is required before the page counts as an
+// offer, so a page that merely mentions a region cannot be read as a yes. The page is
+// about 900 KB and the phrase sits about 760 KB in, so the read follows the page to it
+// instead of stopping at the default cap; when it is not there, the failure says how much
+// was read, because "not in the first N KB" and "not in a trimmed page" are different
+// answers.
 func probeYouTubePremium(ctx context.Context, d *Detector, s Service) Result {
-	r, err := d.get(ctx, "https://www.youtube.com/premium", nil)
+	r, err := d.getDeep(ctx, youTubePremium, nil, deepBody, "ad-free")
 	if err != nil {
 		return s.result(StatusFailed, "", ReasonNetwork, err.Error())
 	}
@@ -197,8 +202,18 @@ func probeYouTubePremium(ctx context.Context, d *Detector, s Service) Result {
 		return s.result(StatusBlocked, firstGroup(youTubeRegion, r.body), "", "Premium is not sold in this region")
 	}
 	region := firstGroup(youTubeRegion, r.body)
-	if region == "" {
+	if region == "" && !r.hasFold("ad-free") {
 		return s.result(StatusFailed, "", ReasonBody, "the page carried no YouTube player context")
+	}
+	if !r.hasFold("ad-free") {
+		if r.truncated {
+			return s.result(StatusFailed, "", ReasonBody,
+				fmt.Sprintf("no ad-free marker in the first %d KB the page served", len(r.body)/1024))
+		}
+		return s.result(StatusFailed, "", ReasonBody, "the Premium page carried no ad-free marker")
+	}
+	if region == "" {
+		return s.result(StatusFailed, "", ReasonRegion, "the page offered Premium but named no region")
 	}
 	return s.result(StatusUnlocked, region, "", "")
 }
